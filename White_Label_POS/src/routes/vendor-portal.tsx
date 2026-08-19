@@ -1,5 +1,5 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
-import { getSessionRole, roleRoutes } from "@/lib/auth";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import { getSessionServerFn, roleRoutes, type Role } from "@/lib/auth";
 import { DemoShell, StatCard } from "@/components/demo/DemoShell";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -11,23 +11,44 @@ import {
   AlertCircle
 } from "lucide-react";
 import { aed } from "@/lib/demo-data";
+import { getVendorPortalDataServerFn } from "@/lib/vendor-server";
 
 export const Route = createFileRoute("/vendor-portal")({
-  beforeLoad: () => {
-    const role = getSessionRole();
-    if (!role) throw redirect({ to: "/login" });
+  beforeLoad: async () => {
+    const res = await getSessionServerFn();
+    if (!res.success || !res.session) throw redirect({ to: "/login" });
+    const role = res.session.role as Role;
     if (role !== "Vendor") {
       throw redirect({ to: roleRoutes[role] });
     }
+  },
+  loader: async () => {
+    const data = await getVendorPortalDataServerFn();
+    if (!data.vendor) {
+      throw redirect({ to: "/login" });
+    }
+    return data;
   },
   component: VendorPortal,
 });
 
 function VendorPortal() {
+  const data = Route.useLoaderData();
+  const { vendor, purchaseOrders, invoices } = data;
+
+  // Calculate totals
+  const totalOrdered = purchaseOrders.reduce((sum: number, po: any) => sum + Number(po.total), 0);
+  const activeOrders = purchaseOrders.filter((po: any) => po.status !== 'Fulfilled' && po.status !== 'Invoiced').length;
+  const newOrders = purchaseOrders.filter((po: any) => po.status === 'Draft' || po.status === 'Ordered').length;
+
+  const totalInvoiced = invoices.reduce((sum: number, inv: any) => sum + Number(inv.total), 0);
+  const totalPaid = invoices.filter((inv: any) => inv.status === 'paid').reduce((sum: number, inv: any) => sum + Number(inv.total), 0);
+  const outstandingBalance = totalInvoiced - totalPaid;
+
   return (
     <DemoShell
       title="Vendor Portal"
-      subtitle="Al Ain Farms · Supplier to Al Barsha Hypermarket Group"
+      subtitle={`${vendor.name} · Supplier to ${data.tenant?.name || "Company"}`}
       actions={
         <Button className="rounded-xl font-semibold" onClick={() => toast.success("Statement downloaded")}>
           <Download className="mr-1.5 h-4 w-4" /> Download Statement
@@ -45,9 +66,9 @@ function VendorPortal() {
         <main className="min-w-0 flex-1">
           <TabsContent value="pos" className="mt-0 space-y-5">
             <div className="grid gap-4 sm:grid-cols-3">
-              <StatCard label="New Orders (Action Req.)" value="2" icon={AlertCircle} tone="accent" />
-              <StatCard label="Active Orders" value="8" icon={ShoppingCart} />
-              <StatCard label="Total Ordered (YTD)" value={aed(450200)} icon={ShoppingCart} tone="success" />
+              <StatCard label="New Orders (Action Req.)" value={newOrders.toString()} icon={AlertCircle} tone="accent" />
+              <StatCard label="Active Orders" value={activeOrders.toString()} icon={ShoppingCart} />
+              <StatCard label="Total Ordered (YTD)" value={aed(totalOrdered)} icon={ShoppingCart} tone="success" />
             </div>
 
             <div className="panel overflow-hidden">
@@ -65,20 +86,16 @@ function VendorPortal() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {[
-                    { id: "PO-2024-1042", date: "Today", del: "Tomorrow, 08:00 AM", value: 12400, status: "Pending Confirmation" },
-                    { id: "PO-2024-1038", date: "2 days ago", del: "Today", value: 8400, status: "Confirmed" },
-                    { id: "PO-2024-1020", date: "10 Aug 2024", del: "11 Aug 2024", value: 15600, status: "Fulfilled" },
-                  ].map((po) => (
+                  {purchaseOrders.map((po: any) => (
                     <tr key={po.id} className="hover:bg-surface-2/50 transition-colors">
-                      <td className="px-4 py-3 font-medium text-primary">{po.id}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{po.date}</td>
-                      <td className="px-4 py-3 text-ink">{po.del}</td>
-                      <td className="px-4 py-3 text-right font-medium">{aed(po.value)}</td>
+                      <td className="px-4 py-3 font-medium text-primary">{po.id.slice(0, 13)}...</td>
+                      <td className="px-4 py-3 text-muted-foreground">{new Date(po.createdAt).toISOString().split('T')[0]}</td>
+                      <td className="px-4 py-3 text-ink">N/A</td>
+                      <td className="px-4 py-3 text-right font-medium">{aed(Number(po.total))}</td>
                       <td className="px-4 py-3 text-right">
-                        {po.status === 'Pending Confirmation' && <span className="inline-flex items-center rounded-full bg-warning/10 px-2.5 py-0.5 text-xs font-bold text-warning-foreground">{po.status}</span>}
-                        {po.status === 'Confirmed' && <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-bold text-primary">{po.status}</span>}
-                        {po.status === 'Fulfilled' && <span className="inline-flex items-center rounded-full bg-surface-2 px-2.5 py-0.5 text-xs font-bold text-muted-foreground">{po.status}</span>}
+                        {po.status === 'Ordered' && <span className="inline-flex items-center rounded-full bg-warning/10 px-2.5 py-0.5 text-xs font-bold text-warning-foreground">{po.status}</span>}
+                        {(po.status === 'Draft' || po.status === 'GRN') && <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-bold text-primary">{po.status}</span>}
+                        {po.status === 'Invoiced' && <span className="inline-flex items-center rounded-full bg-surface-2 px-2.5 py-0.5 text-xs font-bold text-muted-foreground">{po.status}</span>}
                       </td>
                     </tr>
                   ))}
@@ -89,8 +106,8 @@ function VendorPortal() {
 
           <TabsContent value="invoices" className="mt-0 space-y-5">
             <div className="grid gap-4 sm:grid-cols-2">
-              <StatCard label="Outstanding Balance" value={aed(20800)} icon={CreditCard} tone="accent" />
-              <StatCard label="Last Payment Received" value={aed(15600)} icon={CreditCard} tone="success" />
+              <StatCard label="Outstanding Balance" value={aed(outstandingBalance)} icon={CreditCard} tone="accent" />
+              <StatCard label="Last Payment Received" value={aed(totalPaid)} icon={CreditCard} tone="success" />
             </div>
 
             <div className="panel overflow-hidden">
@@ -109,24 +126,19 @@ function VendorPortal() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  <tr className="hover:bg-surface-2/50 transition-colors">
-                    <td className="px-4 py-3 font-medium text-ink">INV-ALM-002</td>
-                    <td className="px-4 py-3 text-muted-foreground">PO-2024-1038</td>
-                    <td className="px-4 py-3 text-muted-foreground">Today</td>
-                    <td className="px-4 py-3 text-right font-bold">{aed(8400)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="inline-flex items-center rounded bg-warning/10 px-2 py-0.5 text-xs font-bold text-warning-foreground">Processing</span>
-                    </td>
-                  </tr>
-                  <tr className="hover:bg-surface-2/50 transition-colors">
-                    <td className="px-4 py-3 font-medium text-ink">INV-ALM-001</td>
-                    <td className="px-4 py-3 text-muted-foreground">PO-2024-1020</td>
-                    <td className="px-4 py-3 text-muted-foreground">11 Aug 2024</td>
-                    <td className="px-4 py-3 text-right font-bold">{aed(15600)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="inline-flex items-center rounded bg-success/10 px-2 py-0.5 text-xs font-bold text-success">Paid</span>
-                    </td>
-                  </tr>
+                  {invoices.map((inv: any) => (
+                    <tr key={inv.id} className="hover:bg-surface-2/50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-ink">{inv.invoiceNumber}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{inv.purchaseOrderId ? inv.purchaseOrderId.slice(0, 13) + '...' : 'N/A'}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{new Date(inv.createdAt).toISOString().split('T')[0]}</td>
+                      <td className="px-4 py-3 text-right font-bold">{aed(Number(inv.total))}</td>
+                      <td className="px-4 py-3 text-right">
+                        {inv.status === 'pending' && <span className="inline-flex items-center rounded bg-warning/10 px-2 py-0.5 text-xs font-bold text-warning-foreground">Processing</span>}
+                        {inv.status === 'paid' && <span className="inline-flex items-center rounded bg-success/10 px-2 py-0.5 text-xs font-bold text-success">Paid</span>}
+                        {inv.status === 'overdue' && <span className="inline-flex items-center rounded bg-destructive/10 px-2 py-0.5 text-xs font-bold text-destructive">Overdue</span>}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

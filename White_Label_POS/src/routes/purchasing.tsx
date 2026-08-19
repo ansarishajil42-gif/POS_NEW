@@ -1,6 +1,6 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
-import { getSessionRole, roleRoutes } from "@/lib/auth";
+import { getSessionServerFn, roleRoutes, type Role } from "@/lib/auth";
 import { DemoShell, StatCard } from "@/components/demo/DemoShell";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -26,65 +26,141 @@ import {
   AlertCircle
 } from "lucide-react";
 import { aed } from "@/lib/demo-data";
+import { getPurchasingDataServerFn, createPurchaseOrderServerFn, recordGRNServerFn } from "@/lib/purchasing-server";
 
 export const Route = createFileRoute("/purchasing")({
-  beforeLoad: () => {
-    const role = getSessionRole();
-    if (!role) throw redirect({ to: "/login" });
+  beforeLoad: async () => {
+    const res = await getSessionServerFn();
+    if (!res.success || !res.session) throw redirect({ to: "/login" });
+    const role = res.session.role as Role;
     if (role !== "Purchasing Officer") {
       throw redirect({ to: roleRoutes[role] });
     }
+  },
+  loader: async () => {
+    return await getPurchasingDataServerFn();
   },
   component: PurchasingOfficer,
 });
 
 function PurchasingOfficer() {
-  const [pos, setPos] = useState([
-    { id: "PO-2024-1042", vendor: "Al Ain Farms", date: "Today", value: 12400, status: "Sent" },
-    { id: "PO-2024-1041", vendor: "Unilever Gulf", date: "Tomorrow", value: 45000, status: "Approved" },
-    { id: "PO-2024-1040", vendor: "Nestlé Middle East", date: "24 Aug 2024", value: 18200, status: "Draft" },
-  ]);
+  const data = Route.useLoaderData();
+  const router = useRouter();
+
+  if ((data as any).error) {
+    return (
+      <div className="p-8">
+        <h1 className="text-red-500 font-bold text-xl">Backend API Error</h1>
+        <pre className="mt-4 p-4 bg-red-50 text-red-900 rounded whitespace-pre-wrap">{(data as any).error}</pre>
+      </div>
+    );
+  }
+
+  const { vendors, products, branches, purchaseOrders: pos, grns, invoices } = data;
+
+  // Derived AP State
+  const today = new Date();
+  const next7Days = new Date(today);
+  next7Days.setDate(today.getDate() + 7);
+
+  let totalAP = 0;
+  let due7Days = 0;
+  let overdue = 0;
+
+  invoices.forEach((inv: any) => {
+    if (inv.status !== "Paid") {
+      const amount = Number(inv.total) || 0;
+      totalAP += amount;
+      const dueDate = new Date(inv.dueDate);
+      if (dueDate < today) {
+        overdue += amount;
+      } else if (dueDate <= next7Days) {
+        due7Days += amount;
+      }
+    }
+  });
+
   const [poOpen, setPoOpen] = useState(false);
-  const [poForm, setPoForm] = useState({ vendor: "", date: "" });
-  const [poLines, setPoLines] = useState([{ product: "", qty: 1, price: 0 }]);
+  const [poForm, setPoForm] = useState({ vendorId: "", branchId: "" });
+  const [poLines, setPoLines] = useState([{ productId: "", qty: 1, unitPrice: 0 }]);
+  const [isSubmittingPO, setIsSubmittingPO] = useState(false);
   
-  const [grns, setGrns] = useState([
-    { id: "GRN-8821", po: "PO-2024-1038", vendor: "Almarai UAE", variance: "-2 Cartons" },
-    { id: "GRN-8820", po: "PO-2024-1035", vendor: "Oman National Food", variance: "Exact Match" },
-  ]);
   const [grnOpen, setGrnOpen] = useState(false);
-  const [grnForm, setGrnForm] = useState({ po: "", orderedQty: 100, receivedQty: 100 });
+  const [grnForm, setGrnForm] = useState({ poId: "", grnNumber: "", receivedQty: 0 });
+  const [isSubmittingGRN, setIsSubmittingGRN] = useState(false);
 
-  const [invoices, setInvoices] = useState([
-    { id: "INV-ALM-001", vendor: "Almarai UAE", date: "Tomorrow", amount: 8400, status: "Pending" },
-    { id: "INV-UNI-442", vendor: "Unilever Gulf", date: "12 Sep 2024", amount: 12500, status: "Paid" },
-  ]);
+  const addPoLine = () => setPoLines([...poLines, { productId: "", qty: 1, unitPrice: 0 }]);
+  const totalPoValue = poLines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
 
-  const addPoLine = () => setPoLines([...poLines, { product: "", qty: 1, price: 0 }]);
-  const totalPoValue = poLines.reduce((s, l) => s + l.qty * l.price, 0);
+  const submitPo = async () => {
+    if (!poForm.vendorId || !poForm.branchId) {
+      toast.error("Please select a vendor and a branch");
+      return;
+    }
+    const validLines = poLines.filter(l => l.productId && l.qty > 0 && l.unitPrice >= 0);
+    if (validLines.length === 0) {
+      toast.error("Please add at least one valid product line");
+      return;
+    }
 
-  const submitPo = () => {
-    if (!poForm.vendor || !poForm.date) return toast.error("Please fill vendor and date");
-    setPos([{ id: `PO-2024-${Math.floor(Math.random()*1000)+2000}`, vendor: poForm.vendor, date: poForm.date, value: totalPoValue, status: "Draft" }, ...pos]);
-    setPoOpen(false);
-    setPoForm({ vendor: "", date: "" });
-    setPoLines([{ product: "", qty: 1, price: 0 }]);
-    toast.success("Purchase Order Draft Created");
+    setIsSubmittingPO(true);
+    try {
+      await createPurchaseOrderServerFn({ data: {
+        vendorId: poForm.vendorId,
+        branchId: poForm.branchId,
+        items: validLines
+      }});
+      toast.success("Purchase Order Draft Created");
+      setPoOpen(false);
+      setPoForm({ vendorId: "", branchId: "" });
+      setPoLines([{ productId: "", qty: 1, unitPrice: 0 }]);
+      router.invalidate();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to create PO");
+    } finally {
+      setIsSubmittingPO(false);
+    }
   };
 
-  const submitGrn = () => {
-    if (!grnForm.po) return toast.error("Select a PO");
-    const diff = grnForm.receivedQty - grnForm.orderedQty;
-    const variance = diff === 0 ? "Exact Match" : diff > 0 ? `+${diff} Units` : `${diff} Units`;
-    setGrns([{ id: `GRN-${Math.floor(Math.random()*1000)+8000}`, po: grnForm.po, vendor: "Vendor", variance }, ...grns]);
-    setGrnOpen(false);
-    toast.success("Goods Received Note Recorded");
+  const submitGrn = async () => {
+    if (!grnForm.poId || !grnForm.grnNumber) {
+      toast.error("Please provide PO reference and GRN number");
+      return;
+    }
+    const targetPo = pos.find((p: any) => p.id === grnForm.poId);
+    if (!targetPo) {
+      toast.error("PO not found");
+      return;
+    }
+
+    setIsSubmittingGRN(true);
+    try {
+      await recordGRNServerFn({ data: {
+        purchaseOrderId: targetPo.id,
+        vendorId: targetPo.vendorId,
+        branchId: targetPo.branchId,
+        grnNumber: grnForm.grnNumber,
+        items: targetPo.items.map((i: any) => ({
+          productId: i.productId,
+          orderedQty: i.qty,
+          receivedQty: grnForm.receivedQty // Note: simplistic bulk receive for demo
+        }))
+      }});
+      toast.success("Goods Received Note Recorded");
+      setGrnOpen(false);
+      setGrnForm({ poId: "", grnNumber: "", receivedQty: 0 });
+      router.invalidate();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to record GRN");
+    } finally {
+      setIsSubmittingGRN(false);
+    }
   };
 
   return (
     <DemoShell
       title="Purchasing Dashboard"
-      subtitle="Al Barsha Hypermarket Group · Procurement"
+      subtitle={`${data.tenant?.name || "Company"} · Procurement`}
       actions={
         <Dialog open={poOpen} onOpenChange={setPoOpen}>
           <DialogTrigger asChild>
@@ -96,16 +172,29 @@ function PurchasingOfficer() {
             <DialogHeader>
               <DialogTitle>Create Purchase Order</DialogTitle>
               <DialogDescription>Draft a new PO and add line items.</DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
+            </DialogHeader>            <div className="grid gap-4 py-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Vendor</Label>
-                  <Input placeholder="Vendor name..." value={poForm.vendor} onChange={e => setPoForm({...poForm, vendor: e.target.value})} />
+                  <select 
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={poForm.vendorId} 
+                    onChange={e => setPoForm({...poForm, vendorId: e.target.value})}
+                  >
+                    <option value="">Select Vendor...</option>
+                    {vendors.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                  </select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Delivery Date</Label>
-                  <Input placeholder="e.g. Tomorrow" value={poForm.date} onChange={e => setPoForm({...poForm, date: e.target.value})} />
+                  <Label>Delivery Branch</Label>
+                  <select 
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={poForm.branchId} 
+                    onChange={e => setPoForm({...poForm, branchId: e.target.value})}
+                  >
+                    <option value="">Select Branch...</option>
+                    {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
                 </div>
               </div>
               <div className="mt-4">
@@ -116,10 +205,17 @@ function PurchasingOfficer() {
                 <div className="space-y-3">
                   {poLines.map((line, idx) => (
                     <div key={idx} className="flex items-center gap-3">
-                      <Input className="flex-1" placeholder="Product name" value={line.product} onChange={e => { const newL = [...poLines]; newL[idx].product = e.target.value; setPoLines(newL); }} />
-                      <Input type="number" className="w-24" placeholder="Qty" value={line.qty || ""} onChange={e => { const newL = [...poLines]; newL[idx].qty = Number(e.target.value); setPoLines(newL); }} />
-                      <Input type="number" className="w-28" placeholder="Price" value={line.price || ""} onChange={e => { const newL = [...poLines]; newL[idx].price = Number(e.target.value); setPoLines(newL); }} />
-                      <div className="w-20 text-right font-medium text-sm">{aed(line.qty * line.price)}</div>
+                      <select 
+                        className="flex-1 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        value={line.productId} 
+                        onChange={e => { const newL = [...poLines]; if (newL[idx]) { newL[idx]!.productId = e.target.value; setPoLines(newL); } }}
+                      >
+                        <option value="">Select Product...</option>
+                        {products.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                      <Input type="number" className="w-24" placeholder="Qty" value={line.qty || ""} onChange={e => { const newL = [...poLines]; if (newL[idx]) { newL[idx]!.qty = Number(e.target.value); setPoLines(newL); } }} />
+                      <Input type="number" className="w-28" placeholder="Price" value={line.unitPrice || ""} onChange={e => { const newL = [...poLines]; if (newL[idx]) { newL[idx]!.unitPrice = Number(e.target.value); setPoLines(newL); } }} />
+                      <div className="w-20 text-right font-medium text-sm">{aed(line.qty * line.unitPrice)}</div>
                     </div>
                   ))}
                 </div>
@@ -130,7 +226,7 @@ function PurchasingOfficer() {
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setPoOpen(false)}>Cancel</Button>
-              <Button onClick={submitPo}>Submit PO</Button>
+              <Button disabled={isSubmittingPO} onClick={submitPo}>{isSubmittingPO ? "Submitting..." : "Submit PO"}</Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -150,10 +246,10 @@ function PurchasingOfficer() {
         <main className="min-w-0 flex-1">
           <TabsContent value="po" className="mt-0 space-y-5">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <StatCard label="Open POs" value="24" icon={ShoppingCart} tone="accent" />
-              <StatCard label="Pending Approval" value="6" icon={AlertCircle} />
-              <StatCard label="Value Ordered (MTD)" value={aed(450200)} icon={FileText} tone="success" />
-              <StatCard label="Vendors Active" value="82" icon={Briefcase} />
+              <StatCard label="Open POs" value={pos.length.toString()} icon={ShoppingCart} tone="accent" />
+              <StatCard label="Pending Approval" value={pos.filter((p: any) => p.status === 'Draft').length.toString()} icon={AlertCircle} />
+              <StatCard label="Value Ordered (MTD)" value={aed(pos.reduce((acc: number, p: any) => acc + Number(p.total), 0))} icon={FileText} tone="success" />
+              <StatCard label="Vendors Active" value={vendors.length.toString()} icon={Briefcase} />
             </div>
 
             <div className="panel overflow-hidden">
@@ -174,16 +270,21 @@ function PurchasingOfficer() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {pos.map((po) => (
+                  {pos.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-4 text-center text-muted-foreground">No Purchase Orders found.</td>
+                    </tr>
+                  )}
+                  {pos.map((po: any) => (
                     <tr key={po.id} className="hover:bg-surface-2/50 transition-colors">
-                      <td className="px-4 py-3 font-medium text-primary">{po.id}</td>
-                      <td className="px-4 py-3 font-semibold text-ink">{po.vendor}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{po.date}</td>
-                      <td className="px-4 py-3 text-right font-medium">{aed(po.value)}</td>
+                      <td className="px-4 py-3 font-medium text-primary font-mono text-xs" title={po.id}>{po.id.split('-')[0].toUpperCase()}</td>
+                      <td className="px-4 py-3 font-semibold text-ink">{po.vendor?.name}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{new Date(po.createdAt).toISOString().split('T')[0]}</td>
+                      <td className="px-4 py-3 text-right font-medium">{aed(Number(po.total))}</td>
                       <td className="px-4 py-3 text-right">
                         <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${
                           po.status === 'Draft' ? 'bg-surface-2 text-muted-foreground' : 
-                          po.status === 'Sent' ? 'bg-primary/10 text-primary' : 'bg-success/10 text-success'
+                          po.status === 'Ordered' ? 'bg-primary/10 text-primary' : 'bg-success/10 text-success'
                         }`}>
                           {po.status}
                         </span>
@@ -213,22 +314,28 @@ function PurchasingOfficer() {
                   <div className="grid gap-4 py-4">
                     <div className="space-y-2">
                       <Label>PO Reference</Label>
-                      <Input placeholder="e.g. PO-2024-1042" value={grnForm.po} onChange={e => setGrnForm({...grnForm, po: e.target.value})} />
+                      <select 
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        value={grnForm.poId} 
+                        onChange={e => setGrnForm({...grnForm, poId: e.target.value})}
+                      >
+                        <option value="">Select PO...</option>
+                        {pos.filter((p: any) => p.status === "Ordered").map((p: any) => <option key={p.id} value={p.id}>{p.id.split('-')[0].toUpperCase()} - {p.vendor?.name}</option>)}
+                      </select>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Ordered Qty</Label>
-                        <Input type="number" value={grnForm.orderedQty} onChange={e => setGrnForm({...grnForm, orderedQty: Number(e.target.value)})} />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Received Qty</Label>
-                        <Input type="number" value={grnForm.receivedQty} onChange={e => setGrnForm({...grnForm, receivedQty: Number(e.target.value)})} />
-                      </div>
+                    <div className="space-y-2">
+                      <Label>Supplier GRN Number</Label>
+                      <Input placeholder="e.g. GRN-9912" value={grnForm.grnNumber} onChange={e => setGrnForm({...grnForm, grnNumber: e.target.value})} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Bulk Received Quantity</Label>
+                      <Input type="number" placeholder="Enter bulk qty received for demo..." value={grnForm.receivedQty} onChange={e => setGrnForm({...grnForm, receivedQty: Number(e.target.value)})} />
+                      <p className="text-xs text-muted-foreground">In a real scenario, this would be an item-by-item breakdown.</p>
                     </div>
                   </div>
                   <div className="flex justify-end gap-2">
                     <Button variant="outline" onClick={() => setGrnOpen(false)}>Cancel</Button>
-                    <Button onClick={submitGrn}>Record Receipt</Button>
+                    <Button disabled={isSubmittingGRN} onClick={submitGrn}>{isSubmittingGRN ? "Recording..." : "Record Receipt"}</Button>
                   </div>
                 </DialogContent>
               </Dialog>
@@ -241,22 +348,29 @@ function PurchasingOfficer() {
                     <th className="px-4 py-3 font-medium">PO Reference</th>
                     <th className="px-4 py-3 font-medium">Vendor</th>
                     <th className="px-4 py-3 font-medium text-right">Variance</th>
-                    <th className="px-4 py-3 font-medium text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {grns.map((grn) => (
-                    <tr key={grn.id} className="hover:bg-surface-2/50 transition-colors">
-                      <td className="px-4 py-3 font-medium text-ink">{grn.id}</td>
-                      <td className="px-4 py-3 text-primary">{grn.po}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{grn.vendor}</td>
+                  {grns.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="p-4 text-center text-muted-foreground">No GRNs recorded.</td>
+                    </tr>
+                  )}
+                  {grns.map((g: any) => (
+                    <tr key={g.id} className="hover:bg-surface-2/50 transition-colors">
+                      <td className="px-4 py-3 font-semibold text-primary">{g.grnNumber}</td>
+                      <td className="px-4 py-3 font-mono text-xs">{g.purchaseOrderId?.split('-')[0].toUpperCase()}</td>
+                      <td className="px-4 py-3 text-ink">{g.vendor?.name}</td>
                       <td className="px-4 py-3 text-right">
-                        <span className={`font-bold text-xs ${grn.variance === 'Exact Match' ? 'text-success' : 'text-destructive'}`}>
-                          {grn.variance}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <Button variant="outline" size="sm">Convert to Invoice</Button>
+                        {g.items?.reduce((acc: number, item: any) => acc + item.variance, 0) === 0 ? (
+                          <span className="inline-flex items-center rounded-full bg-success/10 px-2.5 py-0.5 text-xs font-bold text-success">
+                            Exact Match
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center rounded-full bg-warning/10 px-2.5 py-0.5 text-xs font-bold text-warning-foreground">
+                            Variance Detected
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -281,15 +395,21 @@ function PurchasingOfficer() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {invoices.map((inv) => (
+                  {invoices.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-4 text-center text-muted-foreground">No invoices found.</td>
+                    </tr>
+                  )}
+                  {invoices.map((inv: any) => (
                     <tr key={inv.id} className="hover:bg-surface-2/50 transition-colors">
-                      <td className="px-4 py-3 font-medium text-ink">{inv.id}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{inv.vendor}</td>
-                      <td className={`px-4 py-3 font-medium ${inv.status === 'Pending' ? 'text-warning-foreground' : 'text-muted-foreground'}`}>{inv.date}</td>
-                      <td className="px-4 py-3 text-right font-bold">{aed(inv.amount)}</td>
+                      <td className="px-4 py-3 font-semibold text-primary">{inv.invoiceNumber}</td>
+                      <td className="px-4 py-3 text-ink">{inv.vendor?.name}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{new Date(inv.dueDate).toISOString().split('T')[0]}</td>
+                      <td className="px-4 py-3 text-right font-medium">{aed(Number(inv.total))}</td>
                       <td className="px-4 py-3 text-right">
-                        <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-bold ${
-                          inv.status === 'Pending' ? 'bg-warning/10 text-warning-foreground' : 'bg-success/10 text-success'
+                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                          inv.status === 'Paid' ? 'bg-success/10 text-success' : 
+                          inv.status === 'Pending' ? 'bg-warning/10 text-warning-foreground' : 'bg-destructive/10 text-destructive'
                         }`}>
                           {inv.status}
                         </span>
@@ -305,15 +425,15 @@ function PurchasingOfficer() {
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="panel p-6">
                 <h3 className="text-sm font-semibold text-muted-foreground">Total AP Balance</h3>
-                <p className="mt-2 text-3xl font-extrabold text-ink">{aed(142000)}</p>
+                <p className="mt-2 text-3xl font-extrabold text-ink">{aed(totalAP)}</p>
               </div>
               <div className="panel p-6">
                 <h3 className="text-sm font-semibold text-muted-foreground">Due within 7 Days</h3>
-                <p className="mt-2 text-3xl font-extrabold text-warning-foreground">{aed(48500)}</p>
+                <p className="mt-2 text-3xl font-extrabold text-warning-foreground">{aed(due7Days)}</p>
               </div>
               <div className="panel p-6">
                 <h3 className="text-sm font-semibold text-muted-foreground">Overdue</h3>
-                <p className="mt-2 text-3xl font-extrabold text-destructive">{aed(0)}</p>
+                <p className="mt-2 text-3xl font-extrabold text-destructive">{aed(overdue)}</p>
               </div>
             </div>
 
@@ -332,15 +452,18 @@ function PurchasingOfficer() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {[...invoices]
-                    .filter(i => i.status !== "Paid")
-                    .sort((a, b) => a.date.localeCompare(b.date))
-                    .map((inv) => (
+                  {invoices.filter((i: any) => i.status !== "Paid").length === 0 && (
+                    <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">No outstanding invoices.</td></tr>
+                  )}
+                  {invoices
+                    .filter((i: any) => i.status !== "Paid")
+                    .sort((a: any, b: any) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
+                    .map((inv: any) => (
                       <tr key={inv.id} className="hover:bg-surface-2/50 transition-colors">
-                        <td className="px-4 py-3 font-medium text-ink">{inv.id}</td>
-                        <td className="px-4 py-3 text-muted-foreground">{inv.vendor}</td>
-                        <td className="px-4 py-3 text-warning-foreground font-medium">{inv.date}</td>
-                        <td className="px-4 py-3 text-right font-bold">{aed(inv.amount)}</td>
+                        <td className="px-4 py-3 font-medium text-primary font-mono text-xs">{inv.invoiceNumber}</td>
+                        <td className="px-4 py-3 text-ink">{inv.vendor?.name}</td>
+                        <td className="px-4 py-3 text-warning-foreground font-medium">{new Date(inv.dueDate).toISOString().split('T')[0]}</td>
+                        <td className="px-4 py-3 text-right font-bold">{aed(Number(inv.total))}</td>
                         <td className="px-4 py-3 text-right">
                           <span className="inline-flex items-center rounded bg-warning/10 px-2 py-0.5 text-xs font-bold text-warning-foreground">{inv.status}</span>
                         </td>
@@ -367,15 +490,16 @@ function PurchasingOfficer() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {[
-                    { name: "Al Ain Farms", contact: "Ahmed R.", cat: "Dairy, Fresh" },
-                    { name: "Unilever Gulf", contact: "Sarah L.", cat: "FMCG, Personal Care" },
-                    { name: "Nestlé Middle East", contact: "John M.", cat: "Food, Beverages" },
-                  ].map((v, i) => (
-                    <tr key={i} className="hover:bg-surface-2/50 transition-colors">
+                  {vendors.length === 0 && (
+                    <tr><td colSpan={4} className="p-4 text-center text-muted-foreground">No vendors found.</td></tr>
+                  )}
+                  {vendors.map((v: any) => (
+                    <tr key={v.id} className="hover:bg-surface-2/50 transition-colors">
                       <td className="px-4 py-3 font-semibold text-ink">{v.name}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{v.contact}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{v.cat}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{v.contactEmail || "N/A"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">
+                        <span className="inline-flex items-center rounded-full bg-surface-2 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">Active</span>
+                      </td>
                       <td className="px-4 py-3 text-right">
                         <Button variant="ghost" size="sm">View <ArrowRight className="ml-1 h-3 w-3" /></Button>
                       </td>

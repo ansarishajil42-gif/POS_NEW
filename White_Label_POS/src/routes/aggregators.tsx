@@ -1,6 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useState } from "react";
-import { getSessionRole, roleRoutes } from "@/lib/auth";
+import { getSessionServerFn, roleRoutes, type Role } from "@/lib/auth";
 import { Eye, EyeOff, KeyRound, Link2, RefreshCw, Rocket, Timer } from "lucide-react";
 import { DemoShell, StatCard } from "@/components/demo/DemoShell";
 import { Badge } from "@/components/ui/badge";
@@ -11,9 +11,10 @@ import { aed, aggOrders, aggregators, outlets, type Aggregator } from "@/lib/dem
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/aggregators")({
-  beforeLoad: () => {
-    const role = getSessionRole();
-    if (!role) throw redirect({ to: "/login" });
+  beforeLoad: async () => {
+    const res = await getSessionServerFn();
+    if (!res.success || !res.session) throw redirect({ to: "/login" });
+    const role = res.session.role as Role;
     if (!["Head Office Admin", "Store Manager", "Inventory Manager", "Purchasing Officer"].includes(role)) {
       throw redirect({ to: roleRoutes[role] });
     }

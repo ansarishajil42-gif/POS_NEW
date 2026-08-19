@@ -35,6 +35,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import CareemLogo from "@/assets/Careem.png";
+import DeliverooLogo from "@/assets/Deliveroo.jpg";
+import InstaShopLogo from "@/assets/InstaShop.png";
+import TalabatLogo from "@/assets/talabat.png";
 
 export const Route = createFileRoute("/")({
     head: () => ({
@@ -444,10 +448,10 @@ function Vat() {
 }
 
 const aggregatorCards = [
-    { name: "Talabat", copy: "Order ingestion, menu publishing and live stock sync." },
-    { name: "Careem", copy: "Quick-commerce orders routed straight to the branch queue." },
-    { name: "InstaShop", copy: "Full grocery catalog sync with promo pricing support." },
-    { name: "Deliveroo", copy: "Fulfilment counter printing and status callbacks." },
+    { name: "Talabat", logo: TalabatLogo, copy: "Order ingestion, menu publishing and live stock sync." },
+    { name: "Careem", logo: CareemLogo, copy: "Quick-commerce orders routed straight to the branch queue." },
+    { name: "InstaShop", logo: InstaShopLogo, copy: "Full grocery catalog sync with promo pricing support." },
+    { name: "Deliveroo", logo: DeliverooLogo, copy: "Fulfilment counter printing and status callbacks." },
 ];
 
 function Integrations() {
@@ -465,8 +469,21 @@ function Integrations() {
                     {aggregatorCards.map((a, i) => (
                         <Reveal key={a.name} delay={i * 80}>
                             <div className="panel h-full p-6 text-center transition-transform hover:-translate-y-1">
-                                <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-primary/10 text-sm font-extrabold text-primary">
-                                    {a.name.slice(0, 2).toUpperCase()}
+                                <div className="mx-auto flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl bg-surface shadow-sm border border-border p-2">
+                                    <img 
+                                        src={a.logo} 
+                                        alt={`${a.name} logo`} 
+                                        className="h-full w-full object-contain" 
+                                        onError={(e) => {
+                                            e.currentTarget.style.display = 'none';
+                                            if (e.currentTarget.nextElementSibling) {
+                                                (e.currentTarget.nextElementSibling as HTMLElement).style.display = 'flex';
+                                            }
+                                        }} 
+                                    />
+                                    <div className="hidden h-full w-full items-center justify-center text-sm font-extrabold text-primary">
+                                        {a.name.slice(0, 2).toUpperCase()}
+                                    </div>
                                 </div>
                                 <h3 className="mt-4 text-base font-bold text-ink">{a.name}</h3>
                                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{a.copy}</p>

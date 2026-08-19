@@ -1,6 +1,6 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { getSessionRole, roleRoutes } from "@/lib/auth";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import { useMemo, useState, useEffect } from "react";
+import { getSessionServerFn, roleRoutes, type Role } from "@/lib/auth";
 import {
     Activity,
     Building2,
@@ -45,14 +45,40 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { initialTenants, platformSeries, aedShort, type Tenant } from "@/lib/demo-data";
+import { aedShort, type Tenant } from "@/lib/demo-data";
 import { toast } from "sonner";
+import {
+    getTenantsServerFn,
+    getBranchesServerFn,
+    createTenantServerFn,
+    updateTenantStatusServerFn,
+    upgradeTenantPlanServerFn,
+    createBranchServerFn,
+    deleteBranchServerFn,
+    getGlobalTaxSettingsServerFn,
+    getAnalyticsServerFn
+} from "@/lib/super-admin-server";
 
 export const Route = createFileRoute("/super-admin")({
-    beforeLoad: () => {
-        const role = getSessionRole();
-        if (!role) throw redirect({ to: "/login" });
+    beforeLoad: async () => {
+        const res = await getSessionServerFn();
+        if (!res.success || !res.session) throw redirect({ to: "/login" });
+        const role = res.session.role as Role;
         if (role !== "Super Admin") throw redirect({ to: roleRoutes[role] });
+    },
+    loader: async () => {
+        const [tenantsRes, branchesRes, taxRes, analyticsRes] = await Promise.all([
+            getTenantsServerFn(),
+            getBranchesServerFn(),
+            getGlobalTaxSettingsServerFn(),
+            getAnalyticsServerFn()
+        ]);
+        return {
+            initialTenants: tenantsRes.success ? tenantsRes.tenants : [],
+            initialBranches: branchesRes.success ? branchesRes.branches : [],
+            taxSettings: taxRes.success ? taxRes : { vatRate: "0", inclusive: false },
+            analytics: analyticsRes.success ? analyticsRes : { totalGmv: 0, systemLogs: [], platformSeries: [] }
+        };
     },
     head: () => ({
         meta: [
@@ -76,33 +102,35 @@ const statusTone: Record<Tenant["status"], string> = {
 };
 
 function SuperAdmin() {
-    const [tenants, setTenants] = useState<Tenant[]>(initialTenants);
-    const [open, setOpen] = useState(false);
-    const [form, setForm] = useState({ name: "", outlets: 2, tills: 6, trn: "" });
-    const [vatRate, setVatRate] = useState("5");
-    const [inclusive, setInclusive] = useState(true);
-
-    type Branch = { id: string; tenantId: string; name: string; location: string; status: string; createdAt: string };
+    const router = useRouter();
+    const loaderData = Route.useLoaderData();
     
-    const [branches, setBranches] = useState<Branch[]>(() => initialTenants.flatMap(t => 
-        Array.from({ length: t.outlets }).map((_, i) => ({
-            id: `b-${t.id}-${i}`,
-            tenantId: t.id,
-            name: `${t.name} - Branch ${i + 1}`,
-            location: ["Dubai", "Abu Dhabi", "Sharjah"][i % 3],
-            status: i % 5 === 0 ? "Suspended" : "Active",
-            createdAt: new Date().toISOString().split('T')[0]
-        }))
-    ));
+    const [tenants, setTenants] = useState<any[]>(loaderData.initialTenants);
+    const [open, setOpen] = useState(false);
+    const [form, setForm] = useState({ name: "", subdomain: "", plan: "Starter", trn: "", outlets: 0, tills: 0 });
+    const [vatRate, setVatRate] = useState(loaderData.taxSettings.vatRate);
+    const [inclusive, setInclusive] = useState(loaderData.taxSettings.inclusive);
+    
+    const { platformSeries, systemLogs, totalGmv } = loaderData.analytics;
+
+    type Branch = { id: string; tenantId: string; name: string; address: string | null; tillCount: number | null; status: string; createdAt: string | Date };
+    
+    const [branches, setBranches] = useState<Branch[]>(loaderData.initialBranches);
+
+    // Sync state if loader data changes (after router.invalidate)
+    useEffect(() => {
+        setTenants(loaderData.initialTenants);
+        setBranches(loaderData.initialBranches);
+    }, [loaderData]);
     
     // Manage Branches dialog state
-    const [manageTenant, setManageTenant] = useState<Tenant | null>(null);
+    const [manageTenant, setManageTenant] = useState<any | null>(null);
     const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
-    const [newBranchForm, setNewBranchForm] = useState({ name: "", location: "" });
+    const [newBranchForm, setNewBranchForm] = useState({ name: "", address: "" });
     const [branchToDelete, setBranchToDelete] = useState<string | null>(null);
 
     const [globalAddBranchOpen, setGlobalAddBranchOpen] = useState(false);
-    const [globalNewBranchForm, setGlobalNewBranchForm] = useState({ tenantId: "", name: "", location: "", status: "Active" });
+    const [globalNewBranchForm, setGlobalNewBranchForm] = useState({ tenantId: "", name: "", address: "", status: "Active" });
 
 
     const totals = useMemo(
@@ -115,33 +143,36 @@ function SuperAdmin() {
         [tenants],
     );
 
-    const toggleStatus = (id: string) => {
-        setTenants((prev) =>
-            prev.map((t) =>
-                t.id === id ? { ...t, status: t.status === "Suspended" ? "Active" : "Suspended" } : t,
-            ),
-        );
-        toast.success("Tenant status updated");
+    const toggleStatus = async (id: string) => {
+        const tenant = tenants.find(t => t.id === id);
+        if (!tenant) return;
+        const newStatus = tenant.status === "Suspended" ? "Active" : "Suspended";
+        const res = await updateTenantStatusServerFn({ data: { id, status: newStatus } });
+        if (res.success) {
+            router.invalidate();
+            toast.success("Tenant status updated");
+        } else {
+            toast.error("Failed to update status");
+        }
     };
 
-    const upgrade = (id: string) => {
-        setTenants((prev) =>
-            prev.map((t) =>
-                t.id === id
-                    ? { ...t, plan: t.plan === "Starter" ? "Growth" : "Enterprise" }
-                    : t,
-            ),
-        );
-        toast.success("Plan upgraded");
+    const upgrade = async (id: string) => {
+        const res = await upgradeTenantPlanServerFn({ data: { id } });
+        if (res.success) {
+            router.invalidate();
+            toast.success(`Plan upgraded to ${res.newPlan}`);
+        } else {
+            toast.error("Failed to upgrade plan");
+        }
     };
 
-    const handleManageBranches = (tenant: Tenant) => {
+    const handleManageBranches = (tenant: any) => {
         setManageTenant(tenant);
-        setNewBranchForm({ name: "", location: "" });
+        setNewBranchForm({ name: "", address: "" });
         setSelectedBranch(null);
     };
 
-    const addBranch = () => {
+    const addBranch = async () => {
         if (!manageTenant) return;
         const currentBranches = branches.filter(b => b.tenantId === manageTenant.id);
         
@@ -150,42 +181,40 @@ function SuperAdmin() {
             return;
         }
 
-        if (!newBranchForm.name.trim() || !newBranchForm.location.trim()) {
+        if (!newBranchForm.name.trim() || !newBranchForm.address.trim()) {
             toast.error("Please fill all fields");
             return;
         }
 
-        const newBranch: Branch = {
-            id: `b-${Math.random().toString(36).slice(2, 6)}`,
-            tenantId: manageTenant.id,
-            name: newBranchForm.name,
-            location: newBranchForm.location,
-            status: "Active",
-            createdAt: new Date().toISOString().split('T')[0]
-        };
+        const res = await createBranchServerFn({
+            data: {
+                tenantId: manageTenant.id,
+                name: newBranchForm.name,
+                address: newBranchForm.address
+            }
+        });
 
-        setBranches(prev => [...prev, newBranch]);
-        
-        setTenants(prev => prev.map(t => 
-            t.id === manageTenant.id ? { ...t, outlets: t.outlets + 1 } : t
-        ));
-        
-        setNewBranchForm({ name: "", location: "" });
-        toast.success("Branch added successfully");
+        if (res.success) {
+            router.invalidate();
+            setNewBranchForm({ name: "", address: "" });
+            toast.success("Branch added successfully");
+        } else {
+            toast.error("Failed to add branch");
+        }
     };
 
-    const confirmRemoveBranch = () => {
+    const confirmRemoveBranch = async () => {
         if (!manageTenant || !branchToDelete) return;
 
-        setBranches(prev => prev.filter(b => b.id !== branchToDelete));
-        
-        setTenants(prev => prev.map(t => 
-            t.id === manageTenant.id ? { ...t, outlets: Math.max(0, t.outlets - 1) } : t
-        ));
-
-        toast.success("Branch removed");
-        setBranchToDelete(null);
-        setSelectedBranch(null);
+        const res = await deleteBranchServerFn({ data: { id: branchToDelete } });
+        if (res.success) {
+            router.invalidate();
+            toast.success("Branch removed");
+            setBranchToDelete(null);
+            setSelectedBranch(null);
+        } else {
+            toast.error("Failed to remove branch");
+        }
     };
 
     return (
@@ -248,7 +277,6 @@ function SuperAdmin() {
                                     id="ttrn"
                                     value={form.trn}
                                     onChange={(e) => setForm({ ...form, trn: e.target.value })}
-                                    placeholder="100000000000003"
                                 />
                             </div>
                             <p className="rounded-lg bg-surface-2 p-3 text-xs text-muted-foreground">
@@ -262,27 +290,29 @@ function SuperAdmin() {
                             </Button>
                             <Button
                                 className="rounded-xl"
-                                onClick={() => {
+                                onClick={async () => {
                                     if (!form.name.trim()) {
                                         toast.error("Chain name is required");
                                         return;
                                     }
-                                    setTenants((p) => [
-                                        {
-                                            id: `t-${Math.random().toString(36).slice(2, 6)}`,
+                                    
+                                    const res = await createTenantServerFn({
+                                        data: {
                                             name: form.name,
-                                            plan: "Starter",
-                                            status: "Trial",
-                                            outlets: form.outlets,
-                                            tills: form.tills,
-                                            monthlyOrders: 0,
-                                            trn: form.trn || "100000000000003",
-                                        },
-                                        ...p,
-                                    ]);
-                                    setForm({ name: "", outlets: 2, tills: 6, trn: "" });
-                                    setOpen(false);
-                                    toast.success("Tenant provisioned", { description: "Trial environment is live." });
+                                            subdomain: form.subdomain || form.name.toLowerCase().replace(/[^a-z0-9]/g, ''),
+                                            plan: form.plan,
+                                            trn: form.trn
+                                        }
+                                    });
+
+                                    if (res.success) {
+                                        router.invalidate();
+                                        setForm({ name: "", subdomain: "", plan: "Starter", outlets: 0, tills: 0, trn: "" });
+                                        setOpen(false);
+                                        toast.success("Tenant provisioned", { description: "Trial environment is live." });
+                                    } else {
+                                        toast.error("Failed to provision tenant");
+                                    }
                                 }}
                             >
                                 Create tenant
@@ -294,10 +324,10 @@ function SuperAdmin() {
             }
         >
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <StatCard label="Active tenants" value={String(totals.tenants)} delta="+2 this month" icon={Building2} />
-                <StatCard label="Outlets on platform" value={String(totals.outlets)} delta="+6 this month" icon={ShieldCheck} tone="success" />
-                <StatCard label="Active tills" value={String(totals.tills)} delta="97% online" icon={Monitor} />
-                <StatCard label="Monthly orders" value={`${(totals.orders / 1000).toFixed(0)}k`} delta="+11.2%" icon={Activity} tone="accent" />
+                <StatCard label="Active tenants" value={String(totals.tenants)} delta={undefined} icon={Building2} />
+                <StatCard label="Outlets on platform" value={String(totals.outlets)} delta={undefined} icon={ShieldCheck} tone="success" />
+                <StatCard label="Active tills" value={String(totals.tills)} delta={undefined} icon={Monitor} />
+                <StatCard label="Monthly orders" value={`${totals.orders}`} delta={undefined} icon={Activity} tone="accent" />
             </div>
 
             <Tabs defaultValue="tenants" className="mt-8">
@@ -386,7 +416,7 @@ function SuperAdmin() {
 
                 <TabsContent value="analytics" className="mt-5">
                     <div className="grid gap-5 lg:grid-cols-2">
-                        <div className="panel p-6">
+                        <div className="panel p-6 lg:col-span-2">
                             <h2 className="text-sm font-bold text-ink">Network sales volume (AED 000s)</h2>
                             <div className="mt-4 h-64">
                                 <ResponsiveContainer width="100%" height="100%">
@@ -406,55 +436,20 @@ function SuperAdmin() {
                                 </ResponsiveContainer>
                             </div>
                         </div>
-                        <div className="panel p-6">
-                            <h2 className="text-sm font-bold text-ink">Active tills</h2>
-                            <div className="mt-4 h-64">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <BarChart data={platformSeries}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                                        <XAxis dataKey="t" tickLine={false} axisLine={false} fontSize={12} />
-                                        <YAxis tickLine={false} axisLine={false} fontSize={12} width={36} />
-                                        <Tooltip />
-                                        <Bar dataKey="tills" radius={[6, 6, 0, 0]}>
-                                            {platformSeries.map((entry, index) => {
-                                                const isUp = index === 0 || entry.tills >= platformSeries[index - 1].tills;
-                                                return <Cell key={`cell-${index}`} fill={isUp ? "#39ff14" : "#ef4444"} />;
-                                            })}
-                                        </Bar>
-                                    </BarChart>
-                                </ResponsiveContainer>
-                            </div>
-                        </div>
-                        <div className="panel p-6 lg:col-span-2">
-                            <h2 className="text-sm font-bold text-ink">API traffic (requests / second)</h2>
-                            <div className="mt-4 h-56">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={platformSeries}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                                        <XAxis dataKey="t" tickLine={false} axisLine={false} fontSize={12} />
-                                        <YAxis tickLine={false} axisLine={false} fontSize={12} width={44} />
-                                        <Tooltip />
-                                        <Line dataKey="api" stroke="var(--chart-3)" strokeWidth={2.5} dot={false} />
-                                    </LineChart>
-                                </ResponsiveContainer>
-                            </div>
-                        </div>
+
+
                         <div className="panel p-6 lg:col-span-2">
                             <h2 className="text-sm font-bold text-ink">System log</h2>
                             <ul className="mt-4 space-y-2 font-mono text-xs">
-                                {[
-                                    ["12:04:11", "INFO", "tenant t-005 published catalog to 4 aggregators"],
-                                    ["12:03:58", "WARN", "till DEIRA-11 entered offline buffering mode"],
-                                    ["12:02:40", "INFO", "VAT template UAE-5 applied to tenant t-003"],
-                                    ["12:01:12", "INFO", "GRN variance alert raised Â· PO-4821"],
-                                    ["11:59:03", "INFO", "nightly Z-report archived for 132 tills"],
-                                ].map(([time, lvl, msg]) => (
+                                {systemLogs.length === 0 ? (
+                                    <li className="text-muted-foreground">No recent activity</li>
+                                ) : systemLogs.map(([time, lvl, msg]) => (
                                     <li key={String(msg)} className="flex gap-3 rounded-lg bg-surface-2 px-3 py-2">
                                         <span className="text-muted-foreground">{time}</span>
                                         <span className={lvl === "WARN" ? "font-bold text-warning-foreground" : "font-bold text-primary"}>
-                                            {lvl}
+                                            {lvl as string}
                                         </span>
-                                        <span className="text-ink">{msg}</span>
+                                        <span className="text-ink">{msg as string}</span>
                                     </li>
                                 ))}
                             </ul>
@@ -478,14 +473,6 @@ function SuperAdmin() {
                                     </div>
                                     <Switch checked={inclusive} onCheckedChange={setInclusive} />
                                 </div>
-                                <div className="rounded-xl border border-border p-4 text-sm">
-                                    <p className="font-semibold text-ink">Templates</p>
-                                    <ul className="mt-2 space-y-1.5 text-muted-foreground">
-                                        <li>UAE VAT Standard â€” {vatRate}%</li>
-                                        <li>UAE Zero-rated â€” 0% (basic food, exports)</li>
-                                        <li>Out of scope â€” exempt supplies</li>
-                                    </ul>
-                                </div>
                                 <Button className="rounded-xl" onClick={() => toast.success("Tax template saved")}>
                                     Save template
                                 </Button>
@@ -494,22 +481,6 @@ function SuperAdmin() {
                         <div className="panel p-6">
                             <h2 className="text-sm font-bold text-ink">Regional & currency settings</h2>
                             <div className="mt-5 space-y-3 text-sm">
-                                {[
-                                    ["Base currency", "AED â€” UAE Dirham"],
-                                    ["Rounding", "Nearest 0.25 AED (cash)"],
-                                    ["Fiscal calendar", "January â€“ December"],
-                                    ["Timezone", "Asia/Dubai (GMT+4)"],
-                                    ["Data residency", "UAE region"],
-                                ].map(([k, v]) => (
-                                    <div key={k} className="flex items-center justify-between rounded-xl bg-surface-2 px-4 py-3">
-                                        <span className="text-muted-foreground">{k}</span>
-                                        <span className="font-semibold text-ink">{v}</span>
-                                    </div>
-                                ))}
-                                <div className="flex items-center gap-2 rounded-xl border border-border px-4 py-3 text-xs text-muted-foreground">
-                                    <Coins className="h-4 w-4 text-primary" /> Platform-wide GMV this month:{" "}
-                                    {aedShort(48620000)}
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -607,11 +578,11 @@ function SuperAdmin() {
                             </div>
                             <div>
                                 <p className="text-muted-foreground text-xs uppercase tracking-wider font-bold mb-1">Location</p>
-                                <p className="font-semibold text-ink">{selectedBranch.location}</p>
+                                <p className="font-semibold text-ink">{selectedBranch.address}</p>
                             </div>
                             <div>
                                 <p className="text-muted-foreground text-xs uppercase tracking-wider font-bold mb-1">Created At</p>
-                                <p className="font-semibold text-ink">{selectedBranch.createdAt}</p>
+                                <p className="font-semibold text-ink">{new Date(selectedBranch.createdAt).toLocaleDateString()}</p>
                             </div>
                             <div className="pt-4 border-t border-border/50 flex gap-3 justify-end">
                                 <Button variant="outline" className="rounded-xl" onClick={() => setSelectedBranch(null)}>Back to List</Button>
@@ -678,11 +649,11 @@ function SuperAdmin() {
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label>Location</Label>
+                                <Label>Location (Address)</Label>
                                 <Input 
                                     placeholder="e.g. Dubai"
-                                    value={globalNewBranchForm.location}
-                                    onChange={e => setGlobalNewBranchForm({...globalNewBranchForm, location: e.target.value})}
+                                    value={globalNewBranchForm.address}
+                                    onChange={e => setGlobalNewBranchForm({...globalNewBranchForm, address: e.target.value})}
                                     className="rounded-xl border-border/50 bg-surface-2"
                                 />
                             </div>
@@ -705,8 +676,8 @@ function SuperAdmin() {
                     </div>
                     <DialogFooter>
                         <Button variant="outline" className="rounded-xl" onClick={() => setGlobalAddBranchOpen(false)}>Cancel</Button>
-                        <Button className="rounded-xl" onClick={() => {
-                            if (!globalNewBranchForm.tenantId || !globalNewBranchForm.name || !globalNewBranchForm.location) {
+                        <Button className="rounded-xl" onClick={async () => {
+                            if (!globalNewBranchForm.tenantId || !globalNewBranchForm.name || !globalNewBranchForm.address) {
                                 toast.error("Please fill all fields");
                                 return;
                             }
@@ -718,19 +689,23 @@ function SuperAdmin() {
                                     toast.error("Outlet limit reached — upgrade plan to add more branches");
                                     return;
                                 }
-                                const newBranch = {
-                                    id: `b-${Math.random().toString(36).slice(2, 6)}`,
-                                    tenantId: t.id,
-                                    name: globalNewBranchForm.name,
-                                    location: globalNewBranchForm.location,
-                                    status: globalNewBranchForm.status,
-                                    createdAt: new Date().toISOString().split('T')[0]
-                                };
-                                setBranches(prev => [...prev, newBranch]);
-                                setTenants(prev => prev.map(x => x.id === t.id ? { ...x, outlets: x.outlets + 1 } : x));
-                                toast.success("Branch created successfully");
-                                setGlobalAddBranchOpen(false);
-                                setGlobalNewBranchForm({ tenantId: "", name: "", location: "", status: "Active" });
+
+                                const res = await createBranchServerFn({
+                                    data: {
+                                        tenantId: t.id,
+                                        name: globalNewBranchForm.name,
+                                        address: globalNewBranchForm.address
+                                    }
+                                });
+
+                                if (res.success) {
+                                    router.invalidate();
+                                    toast.success("Branch created successfully");
+                                    setGlobalAddBranchOpen(false);
+                                    setGlobalNewBranchForm({ tenantId: "", name: "", address: "", status: "Active" });
+                                } else {
+                                    toast.error("Failed to add branch");
+                                }
                             }
                         }}>Save Branch</Button>
                     </DialogFooter>

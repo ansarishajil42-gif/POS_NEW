@@ -58,66 +58,54 @@ async function main() {
   }).returning())[0];
 
   // 4. Users
-  const defaultPassword = await hash("Test@1234");
   const cashier1Pin = await hash("1234");
   const cashier2Pin = await hash("5678");
-  const cashier3Pin = await hash("1111");
 
   await db.insert(schema.staffUsers).values([
     {
       email: "superadmin@cloudynationpos.com",
-      passwordHash: defaultPassword,
+      passwordHash: await hash("superadmin@cloudynationpos.com"),
       role: "super_admin",
     },
     {
       email: "admin@almadina.com",
-      passwordHash: defaultPassword,
+      passwordHash: await hash("admin@almadina.com"),
       role: "head_office_admin",
       tenantId: tenantMadina.id,
     },
     {
-      email: "manager.barsha@almadina.com",
-      passwordHash: defaultPassword,
+      email: "manager@almadina.com",
+      passwordHash: await hash("manager@almadina.com"),
       role: "branch_manager",
       tenantId: tenantMadina.id,
       branchId: madinaBarsha.id,
     },
     {
       email: "inventory@almadina.com",
-      passwordHash: defaultPassword,
+      passwordHash: await hash("inventory@almadina.com"),
       role: "inventory_manager",
       tenantId: tenantMadina.id,
       branchId: madinaBarsha.id,
     },
     {
       email: "purchasing@almadina.com",
-      passwordHash: defaultPassword,
+      passwordHash: await hash("purchasing@almadina.com"),
       role: "purchasing_officer",
       tenantId: tenantMadina.id,
     },
     {
+      email: "cashier@almadina.com",
+      passwordHash: await hash("cashier@almadina.com"),
       pinHash: cashier1Pin,
       role: "cashier",
       tenantId: tenantMadina.id,
       branchId: madinaBarsha.id,
     },
     {
-      pinHash: cashier2Pin,
-      role: "cashier",
+      email: "vendor@globalfmcg.ae",
+      passwordHash: await hash("vendor@globalfmcg.ae"),
+      role: "vendor",
       tenantId: tenantMadina.id,
-      branchId: madinaBarsha.id,
-    },
-    {
-      email: "admin@freshmart.com",
-      passwordHash: defaultPassword,
-      role: "head_office_admin",
-      tenantId: tenantFresh.id,
-    },
-    {
-      pinHash: cashier3Pin,
-      role: "cashier",
-      tenantId: tenantFresh.id,
-      branchId: freshAbuDhabi.id,
     }
   ]);
 

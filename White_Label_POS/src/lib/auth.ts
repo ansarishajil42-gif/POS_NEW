@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { getSessionServerFn, loginServerFn, logoutServerFn, pinLoginServerFn, getTenantsAndBranchesFn } from "./auth-server.js";
 
 export type Role =
   | "Super Admin"
@@ -20,8 +21,10 @@ export const roleRoutes: Record<Role, string> = {
   "Vendor": "/vendor-portal",
 };
 
+// Client-side quick check (useful for instant rendering, secured by server guards)
 export function getSessionRole(): Role | null {
-  return (typeof window !== "undefined" ? localStorage.getItem("demo_role") : null) as Role | null;
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("user_role") as Role | null;
 }
 
 export function useAuth() {
@@ -30,24 +33,71 @@ export function useAuth() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const storedRole = getSessionRole();
-    if (storedRole) {
-      setRole(storedRole);
+    async function initAuth() {
+      try {
+        const res = await getSessionServerFn();
+        if (res.success && res.session) {
+          const userRole = res.session.role as Role;
+          setRole(userRole);
+          localStorage.setItem("user_role", userRole);
+        } else {
+          setRole(null);
+          localStorage.removeItem("user_role");
+        }
+      } catch (err) {
+        console.error("Auth initialization failed:", err);
+      } finally {
+        setIsLoaded(true);
+      }
     }
-    setIsLoaded(true);
+    initAuth();
   }, []);
 
-  const login = (selectedRole: Role) => {
-    localStorage.setItem("demo_role", selectedRole);
-    setRole(selectedRole);
-    navigate({ to: roleRoutes[selectedRole] });
+  const login = async (email: string, password: string) => {
+    try {
+      const res = await loginServerFn({ data: { email, password } });
+      if (res.success && res.user) {
+        const userRole = res.user.role as Role;
+        setRole(userRole);
+        localStorage.setItem("user_role", userRole);
+        navigate({ to: roleRoutes[userRole] });
+        return { success: true };
+      } else {
+        return { success: false, error: res.error || "Login failed" };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || "An error occurred during login" };
+    }
   };
 
-  const logout = () => {
-    localStorage.removeItem("demo_role");
+  const pinLogin = async (tenantId: string, branchId: string, pin: string) => {
+    try {
+      const res = await pinLoginServerFn({ data: { tenantId, branchId, pin } });
+      if (res.success && res.user) {
+        const userRole = res.user.role as Role;
+        setRole(userRole);
+        localStorage.setItem("user_role", userRole);
+        navigate({ to: roleRoutes[userRole] });
+        return { success: true };
+      } else {
+        return { success: false, error: res.error || "Login failed" };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || "An error occurred during login" };
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await logoutServerFn();
+    } catch (err) {
+      console.error("Logout error on server:", err);
+    }
     setRole(null);
+    localStorage.removeItem("user_role");
     navigate({ to: "/login" });
   };
 
-  return { role, isLoaded, login, logout };
+  return { role, isLoaded, login, pinLogin, logout };
 }
+export { getSessionServerFn, getTenantsAndBranchesFn };

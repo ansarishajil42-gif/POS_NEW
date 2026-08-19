@@ -58,7 +58,8 @@ export function DashboardMock({ className }: { className?: string }) {
                         </div>
                         <div className="flex h-24 items-end gap-1.5">
                         {bars.map((b, i) => {
-                            const isUp = i === 0 || b >= bars[i - 1];
+                            const prevBar = bars[i - 1];
+                            const isUp = i === 0 || !prevBar || b >= prevBar;
                             return (
                                 <div
                                     key={i}

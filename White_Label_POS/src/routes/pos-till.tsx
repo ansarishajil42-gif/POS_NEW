@@ -1,6 +1,6 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { getSessionRole, roleRoutes } from "@/lib/auth";
+import { getSessionServerFn, roleRoutes, type Role } from "@/lib/auth";
 import {
     Banknote,
     CreditCard,
@@ -27,14 +27,24 @@ import {
     DialogFooter,
     DialogHeader,
     DialogTitle,
+    DialogTrigger,
 } from "@/components/ui/dialog";
-import { aed, tillProducts, type TillProduct } from "@/lib/demo-data";
+import { aed } from "@/lib/demo-data";
+import { 
+    getPosCatalogServerFn, 
+    getActiveShiftServerFn, 
+    openShiftServerFn, 
+    closeShiftServerFn,
+    recordCashDropServerFn,
+    checkoutServerFn
+} from "@/lib/pos-server";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/pos-till")({
-    beforeLoad: () => {
-        const role = getSessionRole();
-        if (!role) throw redirect({ to: "/login" });
+    beforeLoad: async () => {
+        const res = await getSessionServerFn();
+        if (!res.success || !res.session) throw redirect({ to: "/login" });
+        const role = res.session.role as Role;
         if (role !== "Cashier") throw redirect({ to: roleRoutes[role] });
     },
     head: () => ({
@@ -49,30 +59,49 @@ export const Route = createFileRoute("/pos-till")({
             { property: "og:description", content: "Touch-first checkout that keeps billing during outages." },
         ],
     }),
+    loader: async () => {
+        const [catalogRes, shiftRes] = await Promise.all([
+            getPosCatalogServerFn(),
+            getActiveShiftServerFn()
+        ]);
+        return { catalog: catalogRes, shift: shiftRes.shift };
+    },
     component: PosTill,
 });
 
-type Line = TillProduct & { qty: number };
+type Line = any & { qty: number };
 
 function PosTill() {
+    const { catalog, shift } = Route.useLoaderData();
+    const router = useRouter();
+
     const [cart, setCart] = useState<Line[]>([]);
     const [search, setSearch] = useState("");
     const [online, setOnline] = useState(true);
     const [buffered, setBuffered] = useState(0);
     const [payOpen, setPayOpen] = useState(false);
     const [split, setSplit] = useState({ cash: 0, card: 0, points: 0, credit: 0 });
+    
+    // Shift states
+    const [openingFloat, setOpeningFloat] = useState(500);
+    const [cashDropAmount, setCashDropAmount] = useState(0);
+    const [dropOpen, setDropOpen] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const filtered = useMemo(
-        () => tillProducts.filter((p) => p.name.toLowerCase().includes(search.toLowerCase())),
-        [search],
+        () => catalog.filter((p: any) => p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode?.includes(search)),
+        [search, catalog],
     );
 
-    const net = cart.reduce((s, l) => s + l.price * l.qty, 0);
-    const vat = cart.reduce((s, l) => s + l.price * l.qty * l.vat, 0);
+    // If a product has a priceOverride in the branch, use it. Else use basePrice.
+    const getPrice = (p: any) => Number(p.priceOverride || p.basePrice || 0);
+
+    const net = cart.reduce((s, l) => s + getPrice(l) * l.qty, 0);
+    const vat = net * 0.05; // 5% VAT assumption
     const total = net + vat;
     const allocated = split.cash + split.card + split.points + split.credit;
 
-    const add = (p: TillProduct) =>
+    const add = (p: any) =>
         setCart((prev) => {
             const found = prev.find((l) => l.id === p.id);
             return found
@@ -85,22 +114,114 @@ function PosTill() {
             prev.flatMap((l) => (l.id === id ? (l.qty + d <= 0 ? [] : [{ ...l, qty: l.qty + d }]) : [l])),
         );
 
-    const settle = () => {
+    const settle = async () => {
         if (Math.abs(allocated - total) > 0.01) {
             toast.error("Payment allocation must match the total");
             return;
         }
+
+        if (online) {
+            setIsSubmitting(true);
+            try {
+                const payments = [];
+                if (split.cash > 0) payments.push({ method: "Cash", amount: split.cash });
+                if (split.card > 0) payments.push({ method: "Card", amount: split.card });
+                if (split.points > 0) payments.push({ method: "Loyalty Points", amount: split.points });
+                if (split.credit > 0) payments.push({ method: "Store Credit", amount: split.credit });
+
+                await checkoutServerFn({ data: {
+                    subtotal: net,
+                    vat: vat,
+                    total: total,
+                    payments,
+                    items: cart.map(l => ({ productId: l.id, qty: l.qty, unitPrice: getPrice(l) }))
+                }});
+                toast.success("Sale completed · receipt printed");
+                router.invalidate();
+            } catch (err: any) {
+                toast.error(err.message || "Failed to process sale");
+                setIsSubmitting(false);
+                return;
+            }
+            setIsSubmitting(false);
+        } else {
+            setBuffered((b) => b + 1);
+            toast.success("Sale stored offline · will sync on reconnect");
+        }
+
         setPayOpen(false);
         setCart([]);
         setSplit({ cash: 0, card: 0, points: 0, credit: 0 });
-        if (!online) setBuffered((b) => b + 1);
-        toast.success(online ? "Sale completed · receipt printed" : "Sale stored offline · will sync on reconnect");
     };
+
+    const handleOpenShift = async () => {
+        setIsSubmitting(true);
+        try {
+            await openShiftServerFn({ data: { openingFloat }});
+            toast.success("Shift opened successfully");
+            router.invalidate();
+        } catch (err: any) {
+            toast.error(err.message);
+        }
+        setIsSubmitting(false);
+    };
+
+    const handleRecordDrop = async () => {
+        if (cashDropAmount <= 0) return toast.error("Enter a valid amount");
+        setIsSubmitting(true);
+        try {
+            await recordCashDropServerFn({ data: { shiftId: shift.id, amount: cashDropAmount, reason: "Mid-shift drop" }});
+            toast.success(`Cash drop of ${aed(cashDropAmount)} recorded`);
+            setDropOpen(false);
+            setCashDropAmount(0);
+            router.invalidate();
+        } catch (err: any) {
+            toast.error(err.message);
+        }
+        setIsSubmitting(false);
+    };
+
+    const handleCloseShift = async () => {
+        if (!confirm("Are you sure you want to close this shift? This cannot be undone.")) return;
+        setIsSubmitting(true);
+        try {
+            // Note: in a real app, actual cash is counted by the cashier and entered.
+            // Using 0 here forces the server to calculate a variance against the expected drawer.
+            const res = await closeShiftServerFn({ data: { shiftId: shift.id, actualCash: 0 }});
+            toast.success(`Z report generated · shift closed with variance of ${aed(res.variance)}`);
+            router.invalidate();
+        } catch (err: any) {
+            toast.error(err.message);
+        }
+        setIsSubmitting(false);
+    };
+
+    if (!shift) {
+        return (
+            <div className="flex h-[80vh] items-center justify-center p-4">
+                <div className="panel max-w-md w-full p-8 text-center space-y-4">
+                    <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-primary/10">
+                        <Wallet className="h-8 w-8 text-primary" />
+                    </div>
+                    <h2 className="text-xl font-bold text-ink">Till Closed</h2>
+                    <p className="text-sm text-muted-foreground">You must open a shift and declare the opening float to start processing sales.</p>
+                    <div className="text-left space-y-2 mt-6">
+                        <Label>Opening Float Amount (AED)</Label>
+                        <Input type="number" value={openingFloat} onChange={e => setOpeningFloat(Number(e.target.value))} />
+                    </div>
+                    <Button disabled={isSubmitting} onClick={handleOpenShift} className="w-full text-base py-6 font-bold rounded-xl mt-4">
+                        {isSubmitting ? "Opening..." : "Open Shift"}
+                    </Button>
+                </div>
+            </div>
+        );
+    }
+
 
     return (
         <DemoShell
             title="POS Till Terminal"
-            subtitle="Till 04 · Al Barsha Hypermarket · Cashier 118 · Shift opened 08:02"
+            subtitle={`Till ${shift.tillId || "01"} · ${shift.branch?.name || "Branch"} · ${shift.cashier?.email?.split('@')[0] || "Cashier"} · Shift opened ${new Date(shift.openedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
             actions={
                 <div className="flex items-center gap-3">
                     <span
@@ -180,7 +301,7 @@ function PosTill() {
                                         )}
                                         <p className="text-sm font-semibold text-ink">{p.name}</p>
                                         <p className="text-xs text-muted-foreground">
-                                            {aed(p.price)} / {p.unit}
+                                            {aed(getPrice(p))} / {p.unit}
                                         </p>
                                     </button>
                                 ))}
@@ -217,7 +338,7 @@ function PosTill() {
                                         <div className="min-w-0 flex-1">
                                             <p className="truncate text-sm font-semibold text-ink">{l.name}</p>
                                             <p className="text-xs text-muted-foreground">
-                                                {aed(l.price)} · VAT {l.vat * 100}%
+                                                {aed(getPrice(l))} · VAT 5%
                                             </p>
                                         </div>
                                         <div className="flex items-center gap-1">
@@ -238,7 +359,7 @@ function PosTill() {
                                             </button>
                                         </div>
                                         <span className="w-16 text-right text-sm font-bold tabular-nums text-ink">
-                                            {(l.price * l.qty).toFixed(2)}
+                                            {(getPrice(l) * l.qty).toFixed(2)}
                                         </span>
                                     </div>
                                 ))}
@@ -247,7 +368,7 @@ function PosTill() {
                             <div className="mt-5 space-y-1.5 border-t border-border pt-4 text-sm">
                                 <div className="flex justify-between text-muted-foreground">
                                     <span>Net</span>
-                                    <span className="tabular-nums">{net.toFixed(2)}</span>
+                                    <span className="tabular-nums">{aed(net)}</span>
                                 </div>
                                 <div className="flex justify-between text-muted-foreground">
                                     <span>VAT 5%</span>
@@ -280,11 +401,8 @@ function PosTill() {
                             <h2 className="text-sm font-bold text-ink">Shift control</h2>
                             <div className="mt-4 space-y-3 text-sm">
                                 {[
-                                    ["Opening float", "AED 500.00"],
-                                    ["Cash sales", "AED 8,412.25"],
-                                    ["Card sales", "AED 21,904.60"],
-                                    ["Cash drops", "AED 4,000.00"],
-                                    ["Expected drawer", "AED 4,912.25"],
+                                    ["Opening float", aed(Number(shift.openingFloat))],
+                                    ["Cash drops (Total)", aed(JSON.parse(shift.cashDrops || "[]").reduce((s: number, d: any) => s + d.amount, 0))],
                                 ].map(([k, v]) => (
                                     <div key={k} className="flex justify-between rounded-xl bg-surface-2 px-4 py-3">
                                         <span className="text-muted-foreground">{k}</span>
@@ -293,12 +411,27 @@ function PosTill() {
                                 ))}
                             </div>
                             <div className="mt-5 flex flex-wrap gap-2">
-                                <Button variant="outline" className="rounded-xl" onClick={() => toast.success("Cash drop of AED 2,000 recorded")}>
-                                    Record cash drop
-                                </Button>
-                                <Button variant="outline" className="rounded-xl" onClick={() => toast.success("Float adjusted")}>
-                                    Adjust float
-                                </Button>
+                                <Dialog open={dropOpen} onOpenChange={setDropOpen}>
+                                    <DialogTrigger asChild>
+                                        <Button variant="outline" className="rounded-xl">Record cash drop</Button>
+                                    </DialogTrigger>
+                                    <DialogContent>
+                                        <DialogHeader>
+                                            <DialogTitle>Record Cash Drop</DialogTitle>
+                                            <DialogDescription>Move excess cash from the till to the safe.</DialogDescription>
+                                        </DialogHeader>
+                                        <div className="space-y-4 py-4">
+                                            <div className="space-y-2">
+                                                <Label>Amount (AED)</Label>
+                                                <Input type="number" value={cashDropAmount} onChange={e => setCashDropAmount(Number(e.target.value))} />
+                                            </div>
+                                        </div>
+                                        <DialogFooter>
+                                            <Button variant="outline" onClick={() => setDropOpen(false)}>Cancel</Button>
+                                            <Button disabled={isSubmitting} onClick={handleRecordDrop}>{isSubmitting ? "Saving..." : "Save Drop"}</Button>
+                                        </DialogFooter>
+                                    </DialogContent>
+                                </Dialog>
                             </div>
                         </div>
 
@@ -306,12 +439,12 @@ function PosTill() {
                             <h2 className="text-sm font-bold text-ink">X report (mid-shift)</h2>
                             <p className="mt-1 text-xs text-muted-foreground">Non-resetting snapshot · 12:41</p>
                             <ul className="mt-4 space-y-2 font-mono text-xs text-ink">
-                                <li className="flex justify-between"><span>Transactions</span><span>184</span></li>
-                                <li className="flex justify-between"><span>Items sold</span><span>1,942</span></li>
-                                <li className="flex justify-between"><span>Avg basket</span><span>AED 164.76</span></li>
-                                <li className="flex justify-between"><span>Voids</span><span>3</span></li>
-                                <li className="flex justify-between"><span>Refunds</span><span>1</span></li>
-                                <li className="flex justify-between"><span>VAT collected</span><span>AED 1,443.18</span></li>
+                                <li className="flex justify-between"><span>Transactions</span><span>{shift.stats?.transactions || 0}</span></li>
+                                <li className="flex justify-between"><span>Items sold</span><span>{shift.stats?.itemsSold || 0}</span></li>
+                                <li className="flex justify-between"><span>Avg basket</span><span>{aed(shift.stats?.avgBasket || 0)}</span></li>
+                                <li className="flex justify-between"><span>Voids</span><span>{shift.stats?.voids || 0}</span></li>
+                                <li className="flex justify-between"><span>Refunds</span><span>{shift.stats?.refunds || 0}</span></li>
+                                <li className="flex justify-between"><span>VAT collected</span><span>{aed(shift.stats?.vatCollected || 0)}</span></li>
                             </ul>
                             <Button className="mt-5 w-full rounded-xl" variant="outline" onClick={() => toast.success("X report printed")}>
                                 <Printer className="mr-1.5 h-4 w-4" /> Print X report
@@ -330,9 +463,10 @@ function PosTill() {
                             </ul>
                             <Button
                                 className="mt-5 w-full rounded-xl font-semibold"
-                                onClick={() => toast.success("Z report generated · shift closed")}
+                                disabled={isSubmitting}
+                                onClick={handleCloseShift}
                             >
-                                Close shift & print Z
+                                {isSubmitting ? "Closing..." : "Close shift & print Z"}
                             </Button>
                         </div>
                     </div>
@@ -381,8 +515,8 @@ function PosTill() {
                         <Button variant="outline" className="rounded-xl" onClick={() => setPayOpen(false)}>
                             Cancel
                         </Button>
-                        <Button className="rounded-xl font-semibold" onClick={settle}>
-                            Settle & print
+                        <Button className="rounded-xl font-semibold" disabled={isSubmitting} onClick={settle}>
+                            {isSubmitting ? "Processing..." : "Settle & print"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

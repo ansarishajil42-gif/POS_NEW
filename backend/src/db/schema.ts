@@ -8,6 +8,7 @@ export const roleEnum = pgEnum("role", [
   "inventory_manager",
   "purchasing_officer",
   "cashier",
+  "vendor",
 ]);
 
 // 1. tenants
@@ -18,6 +19,18 @@ export const tenants = pgTable("tenants", {
   plan: text("plan").notNull().default("Starter"),
   status: text("status").notNull().default("Active"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// 1.1 tenant_settings
+export const tenantSettings = pgTable("tenant_settings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  vatRate: decimal("vat_rate", { precision: 5, scale: 2 }).notNull().default("5.00"),
+  vatInclusive: boolean("vat_inclusive").notNull().default(true),
+  loyaltyRedemptionRate: decimal("loyalty_redemption_rate", { precision: 5, scale: 2 }).notNull().default("0.01"), // e.g. 1 point = 0.01 currency
+  currency: text("currency").notNull().default("AED"),
+  taxRegistrationNumber: text("trn"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // 2. branches
@@ -65,6 +78,20 @@ export const stockLevels = pgTable("stock_levels", {
   branchId: uuid("branch_id").notNull().references(() => branches.id, { onDelete: "cascade" }),
   stock: integer("stock").notNull().default(0),
   reorderLevel: integer("reorder_level").notNull().default(10),
+  priceOverride: decimal("price_override", { precision: 10, scale: 2 }), // Branch-specific pricing
+});
+
+// 5.1 promotions
+export const promotions = pgTable("promotions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  discountType: text("discount_type").notNull(), // percentage, fixed
+  discountValue: decimal("discount_value", { precision: 10, scale: 2 }).notNull(),
+  startDate: timestamp("start_date").notNull(),
+  endDate: timestamp("end_date").notNull(),
+  status: text("status").notNull().default("Active"), // Active, Inactive
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // 6. batches
@@ -82,6 +109,8 @@ export const vendors = pgTable("vendors", {
   id: uuid("id").primaryKey().defaultRandom(),
   tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
+  email: text("email").unique(),
+  passwordHash: text("password_hash"),
   contact: text("contact"),
   trn: text("trn"),
 });
@@ -165,6 +194,21 @@ export const customerTransactions = pgTable("customer_transactions", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// 14.1 shifts
+export const shifts = pgTable("shifts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  branchId: uuid("branch_id").notNull().references(() => branches.id, { onDelete: "cascade" }),
+  cashierId: uuid("cashier_id").notNull().references(() => staffUsers.id),
+  openedAt: timestamp("opened_at").defaultNow().notNull(),
+  closedAt: timestamp("closed_at"),
+  openingFloat: decimal("opening_float", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  cashDrops: text("cash_drops").default("[]"), // JSON string array of drops
+  expectedCash: decimal("expected_cash", { precision: 12, scale: 2 }),
+  actualCash: decimal("actual_cash", { precision: 12, scale: 2 }),
+  status: text("status").notNull().default("Open"), // Open, Closed
+});
+
 // 15. orders
 export const orders = pgTable("orders", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -176,9 +220,17 @@ export const orders = pgTable("orders", {
   subtotal: decimal("subtotal", { precision: 12, scale: 2 }).notNull(),
   vat: decimal("vat", { precision: 12, scale: 2 }).notNull(),
   total: decimal("total", { precision: 12, scale: 2 }).notNull(),
-  paymentMethod: text("payment_method"), // Cash, Card, Split, Online
+  paymentMethod: text("payment_method"), // Deprecated: Replaced by order_payments table. Kept temporarily.
   status: text("status").notNull().default("completed"), // completed, voided, refunded, auto-synced
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// 15.1 order_payments
+export const orderPayments = pgTable("order_payments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orderId: uuid("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  method: text("method").notNull(), // Cash, Card, Loyalty, Store Credit
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
 });
 
 // 16. order_items
@@ -217,10 +269,13 @@ export const aggregatorOrders = pgTable("aggregator_orders", {
 });
 
 // Relations
-export const tenantsRelations = relations(tenants, ({ many }) => ({
+export const tenantsRelations = relations(tenants, ({ one, many }) => ({
+  settings: one(tenantSettings),
   branches: many(branches),
   staffUsers: many(staffUsers),
   products: many(products),
+  promotions: many(promotions),
+  shifts: many(shifts),
   orders: many(orders),
   vendors: many(vendors),
   customers: many(customers),
@@ -231,6 +286,7 @@ export const tenantsRelations = relations(tenants, ({ many }) => ({
 export const branchesRelations = relations(branches, ({ one, many }) => ({
   tenant: one(tenants, { fields: [branches.tenantId], references: [tenants.id] }),
   staffUsers: many(staffUsers),
+  shifts: many(shifts),
   orders: many(orders),
   stockLevels: many(stockLevels),
   batches: many(batches),
@@ -241,6 +297,7 @@ export const branchesRelations = relations(branches, ({ one, many }) => ({
 export const staffUsersRelations = relations(staffUsers, ({ one, many }) => ({
   tenant: one(tenants, { fields: [staffUsers.tenantId], references: [tenants.id] }),
   branch: one(branches, { fields: [staffUsers.branchId], references: [branches.id] }),
+  shifts: many(shifts),
   orders: many(orders),
 }));
 
@@ -266,6 +323,7 @@ export const ordersRelations = relations(orders, ({ one, many }) => ({
   tenant: one(tenants, { fields: [orders.tenantId], references: [tenants.id] }),
   branch: one(branches, { fields: [orders.branchId], references: [branches.id] }),
   cashier: one(staffUsers, { fields: [orders.cashierId], references: [staffUsers.id] }),
+  payments: many(orderPayments),
   items: many(orderItems),
 }));
 
@@ -315,4 +373,22 @@ export const vendorInvoicesRelations = relations(vendorInvoices, ({ one }) => ({
   tenant: one(tenants, { fields: [vendorInvoices.tenantId], references: [tenants.id] }),
   vendor: one(vendors, { fields: [vendorInvoices.vendorId], references: [vendors.id] }),
   purchaseOrder: one(purchaseOrders, { fields: [vendorInvoices.purchaseOrderId], references: [purchaseOrders.id] }),
+}));
+
+export const tenantSettingsRelations = relations(tenantSettings, ({ one }) => ({
+  tenant: one(tenants, { fields: [tenantSettings.tenantId], references: [tenants.id] }),
+}));
+
+export const promotionsRelations = relations(promotions, ({ one }) => ({
+  tenant: one(tenants, { fields: [promotions.tenantId], references: [tenants.id] }),
+}));
+
+export const shiftsRelations = relations(shifts, ({ one }) => ({
+  tenant: one(tenants, { fields: [shifts.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [shifts.branchId], references: [branches.id] }),
+  cashier: one(staffUsers, { fields: [shifts.cashierId], references: [staffUsers.id] }),
+}));
+
+export const orderPaymentsRelations = relations(orderPayments, ({ one }) => ({
+  order: one(orders, { fields: [orderPayments.orderId], references: [orders.id] }),
 }));
