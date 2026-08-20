@@ -1,5 +1,13 @@
-import { pgTable, text, timestamp, pgEnum, uuid, decimal, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, pgEnum, uuid, decimal, integer, boolean, index, uniqueIndex, json, unique } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
+
+export const platformSettings = pgTable("platform_settings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  currency: text("currency").notNull().default("AED"),
+  timezone: text("timezone").notNull().default("Asia/Dubai"),
+  dateFormat: text("date_format").notNull().default("DD/MM/YYYY"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
 
 export const roleEnum = pgEnum("role", [
   "super_admin",
@@ -49,6 +57,9 @@ export const staffUsers = pgTable("staff_users", {
   id: uuid("id").primaryKey().defaultRandom(),
   tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }),
   branchId: uuid("branch_id").references(() => branches.id, { onDelete: "set null" }),
+  name: text("name"),
+  phone: text("phone"),
+  address: text("address"),
   email: text("email").unique(),
   passwordHash: text("password_hash"),
   pinHash: text("pin_hash"),
@@ -126,6 +137,11 @@ export const vendors = pgTable("vendors", {
   passwordHash: text("password_hash"),
   contact: text("contact"),
   trn: text("trn"),
+  phone: text("phone"),
+  address: text("address"),
+  status: text("status").notNull().default("Active"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdateFn(() => new Date()),
 });
 
 // 8. purchase_orders
@@ -256,30 +272,71 @@ export const orderItems = pgTable("order_items", {
 });
 
 // 17. aggregator_credentials
-export const aggregatorCredentials = pgTable("aggregator_credentials", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
-  branchId: uuid("branch_id").notNull().references(() => branches.id, { onDelete: "cascade" }),
-  channel: text("channel").notNull(), // Talabat, Careem, Deliveroo, InstaShop
-  apiKey: text("api_key").notNull(),
-  apiSecret: text("api_secret"),
-  status: text("status").notNull().default("active"), // active, sandbox, suspended
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const aggregatorCredentials = pgTable(
+  "aggregator_credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    branchId: uuid("branch_id").notNull().references(() => branches.id, { onDelete: "cascade" }),
+    platform: text("platform").notNull(),
+    encryptedKey: text("encrypted_key").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdateFn(() => new Date()),
+  },
+  (table) => ({
+    uniqueConstraint: unique("aggregator_credentials_unique").on(table.tenantId, table.branchId, table.platform),
+    tenantIdx: index("aggregator_credentials_tenant_idx").on(table.tenantId),
+    branchIdx: index("aggregator_credentials_branch_idx").on(table.branchId),
+    platformIdx: index("aggregator_credentials_platform_idx").on(table.platform),
+  })
+);
 
 // 18. aggregator_orders
-export const aggregatorOrders = pgTable("aggregator_orders", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
-  branchId: uuid("branch_id").notNull().references(() => branches.id, { onDelete: "cascade" }),
-  channel: text("channel").notNull(), // Talabat, Careem, Deliveroo, InstaShop
-  externalOrderId: text("external_order_id").notNull(),
-  customerName: text("customer_name"),
-  itemsJson: text("items_json").notNull(), // JSON list of synced items
-  total: decimal("total", { precision: 12, scale: 2 }).notNull(),
-  status: text("status").notNull().default("new"), // new, preparing, packed, dispatched, completed
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const aggregatorOrders = pgTable(
+  "aggregator_orders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    branchId: uuid("branch_id").notNull().references(() => branches.id, { onDelete: "cascade" }),
+    channel: text("channel").notNull(), // Talabat, Careem, Deliveroo, InstaShop
+    orderReference: text("order_reference").notNull(),
+    platform: text("platform").notNull(),
+    items: json("items").notNull(), // JSON array of order items
+    status: text("status").notNull().default("new"), // new, preparing, packed, dispatched, completed
+    total: decimal("total", { precision: 12, scale: 2 }).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdateFn(() => new Date()),
+  },
+  (table) => ({
+    tenantIdx: index("aggregator_orders_tenant_idx").on(table.tenantId),
+    branchIdx: index("aggregator_orders_branch_idx").on(table.branchId),
+    statusIdx: index("aggregator_orders_status_idx").on(table.status),
+    createdAtIdx: index("aggregator_orders_created_at_idx").on(table.createdAt),
+    platformIdx: index("aggregator_orders_platform_idx").on(table.platform),
+  })
+);
+
+// 19. aggregator_sync_settings
+export const aggregatorSyncSettings = pgTable(
+  "aggregator_sync_settings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    branchId: uuid("branch_id").notNull().references(() => branches.id, { onDelete: "cascade" }),
+    platform: text("platform").notNull(),
+    enabled: boolean("enabled").default(false).notNull(),
+    lastPublishedAt: timestamp("last_published_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdateFn(() => new Date()),
+  },
+  (table) => ({
+    uniqueConstraint: unique("aggregator_sync_unique").on(table.tenantId, table.branchId, table.platform),
+    tenantIdx: index("aggregator_sync_tenant_idx").on(table.tenantId),
+    branchIdx: index("aggregator_sync_branch_idx").on(table.branchId),
+    platformIdx: index("aggregator_sync_platform_idx").on(table.platform),
+  })
+);
+
 
 // Relations
 export const tenantsRelations = relations(tenants, ({ one, many }) => ({
@@ -404,4 +461,19 @@ export const shiftsRelations = relations(shifts, ({ one }) => ({
 
 export const orderPaymentsRelations = relations(orderPayments, ({ one }) => ({
   order: one(orders, { fields: [orderPayments.orderId], references: [orders.id] }),
+}));
+
+export const rolePermissions = pgTable("role_permissions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  role: roleEnum("role").notNull(),
+  permission: text("permission").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdateFn(() => new Date()),
+}, (t) => [
+  unique("role_perm_unique").on(t.tenantId, t.role, t.permission)
+]);
+
+export const rolePermissionsRelations = relations(rolePermissions, ({ one }) => ({
+  tenant: one(tenants, { fields: [rolePermissions.tenantId], references: [tenants.id] }),
 }));

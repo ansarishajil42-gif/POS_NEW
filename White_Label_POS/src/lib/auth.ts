@@ -5,7 +5,7 @@ import { getSessionServerFn, loginServerFn, logoutServerFn, pinLoginServerFn, ge
 export type Role =
   | "Super Admin"
   | "Head Office Admin"
-  | "Store Manager"
+  | "Branch Manager"
   | "Inventory Manager"
   | "Purchasing Officer"
   | "Cashier"
@@ -14,7 +14,7 @@ export type Role =
 export const roleRoutes: Record<Role, string> = {
   "Super Admin": "/super-admin",
   "Head Office Admin": "/head-office",
-  "Store Manager": "/store-manager",
+  "Branch Manager": "/store-manager",
   "Inventory Manager": "/inventory-manager",
   "Purchasing Officer": "/purchasing",
   "Cashier": "/pos-till",

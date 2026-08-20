@@ -1,8 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import { db } from "@/server/db";
-import { tenants, branches, tenantSettings, orders } from "@/server/db/schema";
+import { tenants, branches, tenantSettings, orders, platformSettings, staffUsers } from "@/server/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
+import * as argon2 from "argon2";
 
 // Middleware to ensure Super Admin access
 async function ensureSuperAdmin() {
@@ -45,27 +46,149 @@ export const getBranchesServerFn = createServerFn({ method: "GET" })
     });
 
 export const createTenantServerFn = createServerFn({ method: "POST" })
-    .validator((d: { name: string; subdomain: string; plan: string; trn: string }) => d)
+    .validator((d: { 
+        name: string; subdomain: string; plan: string; trn: string;
+        adminName: string; adminEmail: string; adminPhone: string; adminAddress: string; adminPassword: string;
+    }) => d)
     .handler(async ({ data }) => {
         await ensureSuperAdmin();
         
-        // Insert tenant
-        const [tenant] = await db.insert(tenants).values({
-            name: data.name,
-            subdomain: data.subdomain,
-            plan: data.plan,
-            status: "Active",
-        }).returning();
+        try {
+            const tenant = await db.transaction(async (tx) => {
+                // Insert tenant
+                const [newTenant] = await tx.insert(tenants).values({
+                    name: data.name,
+                    subdomain: data.subdomain,
+                    plan: data.plan,
+                    status: "Active",
+                }).returning();
 
-        if (tenant) {
-            // Insert settings
-            await db.insert(tenantSettings).values({
-                tenantId: tenant.id,
-                taxRegistrationNumber: data.trn,
+                // Insert settings
+                await tx.insert(tenantSettings).values({
+                    tenantId: newTenant.id,
+                    taxRegistrationNumber: data.trn,
+                });
+                
+                // Hash password
+                const passwordHash = await argon2.hash(data.adminPassword);
+
+                // Insert Head Office Admin (branchId: null)
+                await tx.insert(staffUsers).values({
+                    tenantId: newTenant.id,
+                    branchId: null,
+                    name: data.adminName,
+                    email: data.adminEmail,
+                    phone: data.adminPhone,
+                    address: data.adminAddress,
+                    passwordHash: passwordHash,
+                    role: "head_office_admin",
+                    isActive: true
+                });
+                
+                return newTenant;
             });
+            return { success: true, tenant };
+        } catch (error: any) {
+            console.error("Tenant creation error:", error);
+            if (error.code === '23505') { // Postgres unique violation for email or subdomain
+                return { success: false, error: "Email or Subdomain already exists" };
+            }
+            return { success: false, error: "Failed to create tenant and admin" };
         }
+    });
 
-        return { success: true, tenant };
+export const getTenantAdminServerFn = createServerFn({ method: "GET" })
+    .validator((d: { tenantId: string }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+        
+        const [admin] = await db.select({
+            id: staffUsers.id,
+            name: staffUsers.name,
+            email: staffUsers.email,
+            phone: staffUsers.phone,
+            address: staffUsers.address,
+            role: staffUsers.role,
+            isActive: staffUsers.isActive,
+            createdAt: staffUsers.createdAt
+        })
+        .from(staffUsers)
+        .where(sql`${staffUsers.tenantId} = ${data.tenantId} AND ${staffUsers.role} = 'head_office_admin'`)
+        .limit(1);
+        
+        if (!admin) return { success: true, admin: null };
+        return { success: true, admin };
+    });
+
+export const createExistingTenantAdminServerFn = createServerFn({ method: "POST" })
+    .validator((d: { 
+        tenantId: string;
+        name: string; email: string; phone: string; address: string; password: string;
+    }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+        
+        try {
+            const passwordHash = await argon2.hash(data.password);
+
+            await db.insert(staffUsers).values({
+                tenantId: data.tenantId,
+                branchId: null,
+                name: data.name,
+                email: data.email,
+                phone: data.phone,
+                address: data.address,
+                passwordHash: passwordHash,
+                role: "head_office_admin",
+                isActive: true
+            });
+            
+            return { success: true };
+        } catch (error: any) {
+            console.error("Existing tenant admin creation error:", error);
+            if (error.code === '23505') { // Postgres unique violation for email
+                return { success: false, error: "Email already exists" };
+            }
+            return { success: false, error: "Failed to create admin" };
+        }
+    });
+
+export const updateTenantAdminServerFn = createServerFn({ method: "POST" })
+    .validator((d: { 
+        id: string;
+        name: string; email: string; phone: string; address: string; password?: string;
+    }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+        
+        try {
+            const updates: any = {
+                name: data.name,
+                email: data.email,
+                phone: data.phone,
+                address: data.address
+            };
+            if (data.password) {
+                updates.passwordHash = await argon2.hash(data.password);
+            }
+
+            await db.update(staffUsers).set(updates).where(eq(staffUsers.id, data.id));
+            return { success: true };
+        } catch (error: any) {
+            console.error("Existing tenant admin update error:", error);
+            if (error.code === '23505') {
+                return { success: false, error: "Email already exists" };
+            }
+            return { success: false, error: "Failed to update admin" };
+        }
+    });
+
+export const deleteTenantAdminServerFn = createServerFn({ method: "POST" })
+    .validator((d: { id: string }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+        await db.delete(staffUsers).where(eq(staffUsers.id, data.id));
+        return { success: true };
     });
 
 export const updateTenantStatusServerFn = createServerFn({ method: "POST" })
@@ -85,6 +208,19 @@ export const upgradeTenantPlanServerFn = createServerFn({ method: "POST" })
         if (!tenant) return { success: false, error: "Not found" };
         
         const newPlan = tenant.plan === "Starter" ? "Growth" : "Enterprise";
+        await db.update(tenants).set({ plan: newPlan }).where(eq(tenants.id, data.id));
+        return { success: true, newPlan };
+    });
+
+export const downgradeTenantPlanServerFn = createServerFn({ method: "POST" })
+    .validator((d: { id: string }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+        // Downgrade Enterprise -> Growth, Growth -> Starter
+        const [tenant] = await db.select({ plan: tenants.plan }).from(tenants).where(eq(tenants.id, data.id));
+        if (!tenant) return { success: false, error: "Not found" };
+        
+        const newPlan = tenant.plan === "Enterprise" ? "Growth" : "Starter";
         await db.update(tenants).set({ plan: newPlan }).where(eq(tenants.id, data.id));
         return { success: true, newPlan };
     });
@@ -172,4 +308,37 @@ export const getAnalyticsServerFn = createServerFn({ method: "GET" })
             systemLogs,
             platformSeries
         };
+    });
+
+export const getPlatformSettingsServerFn = createServerFn({ method: "GET" })
+    .handler(async () => {
+        try {
+            await ensureSuperAdmin();
+            const settings = await db.select().from(platformSettings).limit(1);
+            if (settings.length > 0) {
+                return { success: true, data: settings[0] };
+            }
+        } catch (error) {
+            // Table might not exist yet
+            console.error("Failed to fetch platform settings:", error);
+        }
+        return { success: true, data: { currency: "AED", timezone: "Asia/Dubai", dateFormat: "DD/MM/YYYY" } };
+    });
+
+export const updatePlatformSettingsServerFn = createServerFn({ method: "POST" })
+    .validator((d: { currency: string; timezone: string; dateFormat: string }) => d)
+    .handler(async ({ data }) => {
+        try {
+            await ensureSuperAdmin();
+            const settings = await db.select().from(platformSettings).limit(1);
+            if (settings.length > 0) {
+                await db.update(platformSettings).set(data).where(eq(platformSettings.id, settings[0].id));
+            } else {
+                await db.insert(platformSettings).values(data);
+            }
+            return { success: true };
+        } catch (error) {
+            console.error("Failed to update platform settings:", error);
+            return { success: false };
+        }
     });

@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getSessionServerFn } from "./auth-server";
 import { db } from "../server/db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { 
     branches, 
     stockLevels, 
@@ -14,7 +14,7 @@ import {
 // Middleware
 async function getInventoryManagerContext() {
     const res = await getSessionServerFn();
-    if (!res.success || !res.session || res.session.role !== "Inventory Manager") {
+    if (!res.success || !res.session || (res.session.role !== "Inventory Manager" && res.session.role !== "Head Office Admin")) {
         throw new Error("Unauthorized");
     }
     return {
@@ -134,8 +134,15 @@ export const stockTransferServerFn = createServerFn({ method: "POST" })
     .handler(async ({ data }) => {
         const { tenantId } = await getInventoryManagerContext();
 
+        if (data.sourceBranchId === data.targetBranchId) throw new Error("Source and destination must be different");
+        if (data.quantity <= 0) throw new Error("Quantity must be positive");
+
         // Perform transactional update using db.transaction
         await db.transaction(async (tx) => {
+            // Tenant Isolation check for branches
+            const branchCheck = await tx.select({ id: branches.id }).from(branches).where(and(eq(branches.tenantId, tenantId), inArray(branches.id, [data.sourceBranchId, data.targetBranchId])));
+            if (branchCheck.length !== 2) throw new Error("Unauthorized or invalid branches");
+
             // Decrement from source
             const sourceStock = await tx.select().from(stockLevels)
                 .where(and(eq(stockLevels.productId, data.productId), eq(stockLevels.branchId, data.sourceBranchId)))

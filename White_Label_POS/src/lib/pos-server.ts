@@ -2,19 +2,19 @@ import { createServerFn } from "@tanstack/react-start";
 import { getSessionServerFn } from "./auth-server";
 import { db } from "../server/db";
 import { eq, and, desc, gte, sql } from "drizzle-orm";
-import { 
-    products, 
-    stockLevels, 
-    shifts, 
-    orders, 
-    orderItems, 
-    orderPayments 
+import {
+    products,
+    stockLevels,
+    shifts,
+    orders,
+    orderItems,
+    orderPayments
 } from "../server/db/schema";
 
 // Middleware
 async function getPosContext() {
     const res = await getSessionServerFn();
-    if (!res.success || !res.session || (res.session.role !== "Cashier" && res.session.role !== "Store Manager")) {
+    if (!res.success || !res.session || (res.session.role !== "Cashier" && res.session.role !== "Branch Manager")) {
         throw new Error("Unauthorized");
     }
     if (!res.session.branchId) {
@@ -196,10 +196,10 @@ export const closeShiftServerFn = createServerFn({ method: "POST" })
     });
 
 export const checkoutServerFn = createServerFn({ method: "POST" })
-    .validator((d: { 
-        subtotal: number, 
-        vat: number, 
-        total: number, 
+    .validator((d: {
+        subtotal: number,
+        vat: number,
+        total: number,
         payments: { method: string, amount: number }[],
         items: { productId: string, qty: number, unitPrice: number }[]
     }) => d)

@@ -151,16 +151,16 @@ router.get("/report/summary", async (req, res) => {
       totalSales: sql<number>`sum(${orders.total})`,
       totalVat: sql<number>`sum(${orders.vat})`,
     })
-    .from(orders)
-    .where(
-      and(
-        eq(orders.tenantId, tenantId as string),
-        eq(orders.branchId, branchId as string),
-        eq(orders.status, "completed"),
-        sql`${orders.createdAt} >= ${startOfDay} AND ${orders.createdAt} <= ${endOfDay}`
+      .from(orders)
+      .where(
+        and(
+          eq(orders.tenantId, tenantId as string),
+          eq(orders.branchId, branchId as string),
+          eq(orders.status, "completed"),
+          sql`${orders.createdAt} >= ${startOfDay} AND ${orders.createdAt} <= ${endOfDay}`
+        )
       )
-    )
-    .groupBy(orders.paymentMethod);
+      .groupBy(orders.paymentMethod);
 
     res.json({
       date: targetDate.toISOString().split('T')[0],

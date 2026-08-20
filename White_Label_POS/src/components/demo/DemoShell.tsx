@@ -35,7 +35,7 @@ export function DemoShell({
         if (!role) return false;
         if (role === "Super Admin") return n.to === "/super-admin";
         if (role === "Head Office Admin") return n.to === "/head-office" || n.to === "/aggregators";
-        if (role === "Store Manager") return n.to === "/store-manager";
+        if (role === "Branch Manager") return n.to === "/store-manager";
         if (role === "Inventory Manager") return n.to === "/inventory-manager";
         if (role === "Purchasing Officer") return n.to === "/purchasing";
         if (role === "Cashier") return n.to === "/pos-till";

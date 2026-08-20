@@ -15,7 +15,7 @@ export const Route = createFileRoute("/aggregators")({
     const res = await getSessionServerFn();
     if (!res.success || !res.session) throw redirect({ to: "/login" });
     const role = res.session.role as Role;
-    if (!["Head Office Admin", "Store Manager", "Inventory Manager", "Purchasing Officer"].includes(role)) {
+    if (!["Head Office Admin", "Branch Manager", "Inventory Manager", "Purchasing Officer"].includes(role)) {
       throw redirect({ to: roleRoutes[role] });
     }
   },

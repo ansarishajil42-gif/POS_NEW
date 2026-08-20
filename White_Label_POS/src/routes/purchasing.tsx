@@ -182,7 +182,7 @@ function PurchasingOfficer() {
                     onChange={e => setPoForm({...poForm, vendorId: e.target.value})}
                   >
                     <option value="">Select Vendor...</option>
-                    {vendors.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                    {vendors.filter((v: any) => v.status === "Active").map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}
                   </select>
                 </div>
                 <div className="space-y-2">
@@ -485,8 +485,8 @@ function PurchasingOfficer() {
                   <tr>
                     <th className="px-4 py-3 font-medium">Vendor Name</th>
                     <th className="px-4 py-3 font-medium">Contact Person</th>
-                    <th className="px-4 py-3 font-medium">Categories</th>
-                    <th className="px-4 py-3 font-medium text-right">Action</th>
+                    <th className="px-4 py-3 font-medium">Email</th>
+                    <th className="px-4 py-3 font-medium">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -496,12 +496,10 @@ function PurchasingOfficer() {
                   {vendors.map((v: any) => (
                     <tr key={v.id} className="hover:bg-surface-2/50 transition-colors">
                       <td className="px-4 py-3 font-semibold text-ink">{v.name}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{v.contactEmail || "N/A"}</td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        <span className="inline-flex items-center rounded-full bg-surface-2 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">Active</span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <Button variant="ghost" size="sm">View <ArrowRight className="ml-1 h-3 w-3" /></Button>
+                      <td className="px-4 py-3 text-muted-foreground">{v.contact || "-"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{v.email || "-"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${v.status === "Active" ? "bg-success/10 text-success border border-success/20" : "bg-muted/10 text-muted-foreground border border-border"}`}>{v.status || "Active"}</span>
                       </td>
                     </tr>
                   ))}

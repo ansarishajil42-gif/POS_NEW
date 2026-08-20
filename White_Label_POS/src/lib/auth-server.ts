@@ -13,7 +13,7 @@ const JWT_SECRET = new TextEncoder().encode(
 export const dbRoleToFrontendRole: Record<string, string> = {
   super_admin: "Super Admin",
   head_office_admin: "Head Office Admin",
-  branch_manager: "Store Manager",
+  branch_manager: "Branch Manager",
   inventory_manager: "Inventory Manager",
   purchasing_officer: "Purchasing Officer",
   cashier: "Cashier",
@@ -23,7 +23,7 @@ export const dbRoleToFrontendRole: Record<string, string> = {
 export const frontendRoleToDbRole: Record<string, string> = {
   "Super Admin": "super_admin",
   "Head Office Admin": "head_office_admin",
-  "Store Manager": "branch_manager",
+  "Branch Manager": "branch_manager",
   "Inventory Manager": "inventory_manager",
   "Purchasing Officer": "purchasing_officer",
   "Cashier": "cashier",
