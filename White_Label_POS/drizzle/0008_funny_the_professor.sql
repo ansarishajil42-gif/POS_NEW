@@ -1,0 +1,2 @@
+ALTER TABLE "platform_settings" ADD COLUMN "vat_rate" numeric(5, 2) DEFAULT '5.00' NOT NULL;--> statement-breakpoint
+ALTER TABLE "platform_settings" ADD COLUMN "vat_inclusive" boolean DEFAULT true NOT NULL;

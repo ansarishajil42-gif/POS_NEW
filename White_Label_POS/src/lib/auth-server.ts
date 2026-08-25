@@ -100,7 +100,11 @@ export const loginServerFn = createServerFn()
         const tenant = await db.query.tenants.findFirst({
           where: eq(tenants.id, tenantId),
         });
-        if (tenant) tenantName = tenant.name;
+        if (!tenant) throw new Error("Tenant not found");
+        if (tenant.status === "Archived") {
+          throw new Error("Tenant is archived and cannot be accessed");
+        }
+        tenantName = tenant.name;
       }
 
       return {
@@ -285,7 +289,11 @@ export const pinLoginServerFn = createServerFn({ method: "POST" })
         const tenant = await db.query.tenants.findFirst({
           where: eq(tenants.id, cashier.tenantId),
         });
-        if (tenant) tenantName = tenant.name;
+        if (!tenant) throw new Error("Tenant not found");
+        if (tenant.status === "Archived") {
+          throw new Error("Tenant is archived and cannot be accessed");
+        }
+        tenantName = tenant.name;
       }
 
       return {

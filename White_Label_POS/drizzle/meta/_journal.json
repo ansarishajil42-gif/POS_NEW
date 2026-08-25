@@ -29,6 +29,55 @@
       "when": 1787234703570,
       "tag": "0003_add_vendor_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787498715280,
+      "tag": "0004_rare_unicorn",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787507134148,
+      "tag": "0005_sticky_captain_stacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787510143193,
+      "tag": "0006_careful_robbie_robertson",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787510183949,
+      "tag": "0007_puzzling_alex_power",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787572241583,
+      "tag": "0008_funny_the_professor",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787578652558,
+      "tag": "0009_unusual_blue_shield",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787588680414,
+      "tag": "0010_ambitious_sharon_carter",
+      "breakpoints": true
     }
   ]
 }

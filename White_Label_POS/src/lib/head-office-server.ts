@@ -21,19 +21,111 @@ import {
   orderItems,
   rolePermissions,
   priceOverrideRequests,
+  customerTransactions,
 } from "@/server/db/schema";
-import { eq, and, sql, desc, inArray, ne } from "drizzle-orm";
+import { eq, and, sql, desc, inArray, ne, or, ilike, lte, gte } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
+import { logAuditAction } from "@/lib/audit-logger";
 import * as argon2 from "argon2";
+import { createBranchInternal } from "@/lib/branch-server-helpers";
+import { z } from "zod";
 
 // Middleware
-async function getHeadOfficeTenant() {
+async function getHeadOfficeSession() {
   const res = await getSessionServerFn();
   if (!res.success || !res.session || res.session.role !== "Head Office Admin") {
     throw new Error("Unauthorized");
   }
-  return res.session.tenantId;
+  return { tenantId: res.session.tenantId, userId: res.session.userId };
 }
+
+async function getHeadOfficeTenant() {
+  const session = await getHeadOfficeSession();
+  return session.tenantId;
+}
+
+export const createBranchForTenantFn = createServerFn({ method: "POST" })
+  .validator((d: { name: string; address: string }) => d)
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+    try {
+      const branch = await createBranchInternal({
+        tenantId: session.tenantId,
+        name: data.name,
+        address: data.address,
+        userId: session.userId,
+      });
+      return { success: true, branchId: branch.id };
+    } catch (e: any) {
+      throw new Error(e.message);
+    }
+  });
+
+export const updateBranchFn = createServerFn({ method: "POST" })
+  .validator((d: { branchId: string; name: string; address: string }) => d)
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+    const branchCheck = await db.query.branches.findFirst({
+      where: and(eq(branches.id, data.branchId), eq(branches.tenantId, session.tenantId)),
+    });
+    if (!branchCheck) throw new Error("Branch not found or unauthorized");
+
+    await db.update(branches)
+      .set({ name: data.name, address: data.address })
+      .where(eq(branches.id, data.branchId));
+      
+    await logAuditAction({
+      action: "Update Branch",
+      entityType: "branch",
+      entityId: data.branchId,
+      tenantId: session.tenantId,
+      userId: session.userId,
+      afterValue: { name: data.name, address: data.address }
+    });
+    return { success: true };
+  });
+
+export const activateBranchFn = createServerFn({ method: "POST" })
+  .validator((d: { branchId: string }) => d)
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+    const branchCheck = await db.query.branches.findFirst({
+      where: and(eq(branches.id, data.branchId), eq(branches.tenantId, session.tenantId)),
+    });
+    if (!branchCheck) throw new Error("Branch not found or unauthorized");
+
+    await db.update(branches).set({ status: "Active" }).where(eq(branches.id, data.branchId));
+    await logAuditAction({ action: "Activate Branch", entityType: "branch", entityId: data.branchId, tenantId: session.tenantId, userId: session.userId, afterValue: { status: "Active" } });
+    return { success: true };
+  });
+
+export const deactivateBranchFn = createServerFn({ method: "POST" })
+  .validator((d: { branchId: string }) => d)
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+    const branchCheck = await db.query.branches.findFirst({
+      where: and(eq(branches.id, data.branchId), eq(branches.tenantId, session.tenantId)),
+    });
+    if (!branchCheck) throw new Error("Branch not found or unauthorized");
+
+    await db.update(branches).set({ status: "Inactive" }).where(eq(branches.id, data.branchId));
+    await logAuditAction({ action: "Deactivate Branch", entityType: "branch", entityId: data.branchId, tenantId: session.tenantId, userId: session.userId, afterValue: { status: "Inactive" } });
+    return { success: true };
+  });
+
+export const getBranchDetailsFn = createServerFn({ method: "GET" })
+  .validator((d: { branchId: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    const branch = await db.query.branches.findFirst({
+      where: and(eq(branches.id, data.branchId), eq(branches.tenantId, tenantId)),
+      with: {
+        staffUsers: true,
+      }
+    });
+    if (!branch) throw new Error("Branch not found");
+    return { branch };
+  });
 
 export const getHeadOfficeDataFn = createServerFn({ method: "GET" }).handler(async () => {
   const tenantId = await getHeadOfficeTenant();
@@ -1198,7 +1290,7 @@ export const createVendorFn = createServerFn({ method: "POST" })
       data.email === "" || data.email === undefined || data.email === null ? null : data.email;
     if (cleanEmail) {
       // Check for valid email format
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const emailRegex = /^[^s@]+@[^s@]+.[^s@]+$/;
       if (!emailRegex.test(cleanEmail)) {
         return { success: false, error: "Invalid email format" };
       }
@@ -1252,7 +1344,7 @@ export const updateVendorFn = createServerFn({ method: "POST" })
       data.email === "" || data.email === undefined || data.email === null ? null : data.email;
     if (cleanEmail && cleanEmail !== existingVendor.email) {
       // Check for valid email format
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const emailRegex = /^[^s@]+@[^s@]+.[^s@]+$/;
       if (!emailRegex.test(cleanEmail)) {
         return { success: false, error: "Invalid email format" };
       }
@@ -1372,4 +1464,580 @@ export const toggleRolePermissionFn = createServerFn({ method: "POST" })
     });
 
     return { success: true };
+  });
+
+// ==========================================
+// CUSTOMER CRM & LOYALTY (HEAD OFFICE ADMIN)
+// ==========================================
+
+export const createCustomerFn = createServerFn({ method: "POST" })
+  .validator((d: { name: string; phone?: string; email?: string; tier?: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    
+    const emailToUse = data.email?.toLowerCase().trim() || null;
+    const phoneToUse = data.phone?.trim() || null;
+    
+    if (emailToUse) {
+      const existingEmail = await db
+        .select({ id: customers.id })
+        .from(customers)
+        .where(and(eq(customers.tenantId, tenantId), eq(customers.email, emailToUse)))
+        .limit(1);
+      if (existingEmail.length > 0) {
+        throw new Error("Email is already in use by another customer in this tenant.");
+      }
+    }
+    
+    if (phoneToUse) {
+      const existingPhone = await db
+        .select({ id: customers.id })
+        .from(customers)
+        .where(and(eq(customers.tenantId, tenantId), eq(customers.phone, phoneToUse)))
+        .limit(1);
+      if (existingPhone.length > 0) {
+        throw new Error("Phone number is already in use by another customer in this tenant.");
+      }
+    }
+    
+    const [newCustomer] = await db.insert(customers).values({
+      tenantId,
+      name: data.name,
+      phone: phoneToUse,
+      email: emailToUse,
+      tier: data.tier || "Bronze",
+      points: 0,
+      storeCredit: "0.00",
+      isActive: true,
+    }).returning();
+    
+    await logAuditAction({ action: "Customer Profile Created", entityType: "Customer", entityId: newCustomer.id });
+    
+    return { success: true, customer: newCustomer };
+  });
+
+export const updateCustomerFn = createServerFn({ method: "POST" })
+  .validator((d: { id: string; name: string; phone?: string; email?: string; isActive?: boolean }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    
+    const emailToUse = data.email?.toLowerCase().trim() || null;
+    const phoneToUse = data.phone?.trim() || null;
+    
+    if (emailToUse) {
+      const existingEmail = await db
+        .select({ id: customers.id })
+        .from(customers)
+        .where(and(eq(customers.tenantId, tenantId), eq(customers.email, emailToUse), ne(customers.id, data.id)))
+        .limit(1);
+      if (existingEmail.length > 0) {
+        throw new Error("Email is already in use by another customer.");
+      }
+    }
+    if (phoneToUse) {
+      const existingPhone = await db
+        .select({ id: customers.id })
+        .from(customers)
+        .where(and(eq(customers.tenantId, tenantId), eq(customers.phone, phoneToUse), ne(customers.id, data.id)))
+        .limit(1);
+      if (existingPhone.length > 0) {
+        throw new Error("Phone number is already in use by another customer.");
+      }
+    }
+    
+    const [updated] = await db.update(customers).set({
+      name: data.name,
+      phone: phoneToUse,
+      email: emailToUse,
+      isActive: data.isActive !== undefined ? data.isActive : true,
+    }).where(and(eq(customers.id, data.id), eq(customers.tenantId, tenantId))).returning();
+    
+    if (!updated) throw new Error("Customer not found");
+    
+    await logAuditAction({ action: "Customer Profile Updated", entityType: "Customer", entityId: updated.id, afterValue: { isActive: updated.isActive } });
+    return { success: true, customer: updated };
+  });
+
+export const getCustomerDetailsFn = createServerFn({ method: "POST" })
+  .validator((d: { id: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    
+    const [customer] = await db.select().from(customers).where(and(eq(customers.id, data.id), eq(customers.tenantId, tenantId)));
+    if (!customer) throw new Error("Customer not found");
+    
+    return { success: true, customer };
+  });
+
+export const searchCustomersFn = createServerFn({ method: "POST" })
+  .validator((d: { search: string; page?: number; limit?: number }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    
+    const page = data.page || 1;
+    const limit = Math.min(data.limit || 50, 100);
+    const offset = (page - 1) * limit;
+    
+    const searchTerm = `%${data.search.trim().toLowerCase()}%`;
+    
+    const results = await db.select()
+      .from(customers)
+      .where(
+        and(
+          eq(customers.tenantId, tenantId),
+          or(
+            ilike(customers.name, searchTerm),
+            ilike(customers.email, searchTerm),
+            ilike(customers.phone, searchTerm)
+          )
+        )
+      )
+      .limit(limit)
+      .offset(offset);
+      
+    return { success: true, customers: results };
+  });
+
+export const getCustomerPurchaseHistoryFn = createServerFn({ method: "POST" })
+  .validator((d: { customerId: string; page?: number; limit?: number }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    
+    const page = data.page || 1;
+    const limit = Math.min(data.limit || 50, 100);
+    const offset = (page - 1) * limit;
+    
+    const customerOrders = await db.select()
+      .from(orders)
+      .where(and(eq(orders.tenantId, tenantId), eq(orders.customerId, data.customerId)))
+      .orderBy(desc(orders.createdAt))
+      .limit(limit)
+      .offset(offset);
+      
+    const [totalAgg] = await db.select({
+      totalSpend: sql<number>`COALESCE(SUM(${orders.total}), 0)`,
+      count: sql<number>`COUNT(*)`
+    })
+    .from(orders)
+    .where(and(eq(orders.tenantId, tenantId), eq(orders.customerId, data.customerId)));
+    
+    return { 
+      success: true, 
+      orders: customerOrders,
+      totalSpend: Number(totalAgg?.totalSpend || 0),
+      orderCount: Number(totalAgg?.count || 0)
+    };
+  });
+
+export const accrueLoyaltyPointsFn = createServerFn({ method: "POST" })
+  .validator((d: { orderId: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    
+    return await db.transaction(async (tx) => {
+      const [order] = await tx.select().from(orders).where(and(eq(orders.id, data.orderId), eq(orders.tenantId, tenantId)));
+      if (!order) throw new Error("Order not found");
+      if (order.status !== "completed") throw new Error("Order is not completed");
+      if (!order.customerId) throw new Error("Order has no assigned customer");
+      
+      const [settings] = await tx.select().from(tenantSettings).where(eq(tenantSettings.tenantId, tenantId));
+      if (!settings) throw new Error("Tenant settings not found");
+      
+      // Idempotency check
+      const [existingEarn] = await tx.select().from(customerTransactions).where(and(
+        eq(customerTransactions.orderId, order.id),
+        eq(customerTransactions.type, "earn_points")
+      ));
+      
+      if (existingEarn) return { success: true, message: "Points already accrued for this order" };
+      
+      const pointsRate = Number(settings.loyaltyPointsPerAed || 0);
+      const pointsToEarn = Math.floor(Number(order.total) * pointsRate);
+      
+      if (pointsToEarn <= 0) return { success: true, pointsEarned: 0 };
+      
+      await tx.insert(customerTransactions).values({
+        tenantId,
+        customerId: order.customerId,
+        orderId: order.id,
+        type: "earn_points",
+        points: pointsToEarn,
+        amount: order.total,
+      });
+      
+      await tx.execute(sql`UPDATE customers SET points = points + ${pointsToEarn} WHERE id = ${order.customerId} AND tenant_id = ${tenantId}`);
+      
+      return { success: true, pointsEarned: pointsToEarn };
+    });
+  });
+
+export const redeemLoyaltyPointsFn = createServerFn({ method: "POST" })
+  .validator((d: { customerId: string; pointsToRedeem: number; orderId?: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    if (data.pointsToRedeem <= 0) throw new Error("Must redeem a positive number of points");
+    
+    return await db.transaction(async (tx) => {
+      const [customer] = await tx.select().from(customers).where(and(eq(customers.id, data.customerId), eq(customers.tenantId, tenantId)));
+      if (!customer) throw new Error("Customer not found");
+      
+      if (customer.points < data.pointsToRedeem) throw new Error("Insufficient points balance");
+      
+      await tx.execute(sql`UPDATE customers SET points = points - ${data.pointsToRedeem} WHERE id = ${data.customerId} AND tenant_id = ${tenantId}`);
+      
+      await tx.insert(customerTransactions).values({
+        tenantId,
+        customerId: data.customerId,
+        orderId: data.orderId || null,
+        type: "redeem_points",
+        points: -data.pointsToRedeem,
+      });
+      
+      await logAuditAction({ action: "Points Redeemed", entityType: "Customer", entityId: data.customerId, afterValue: { pointsRedeemed: data.pointsToRedeem } });
+      return { success: true };
+    });
+  });
+
+export const adjustCustomerPointsFn = createServerFn({ method: "POST" })
+  .validator((d: { customerId: string; pointsDelta: number; reason: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    if (data.pointsDelta === 0) throw new Error("Adjustment must be non-zero");
+    if (!data.reason?.trim()) throw new Error("Reason is required");
+    
+    return await db.transaction(async (tx) => {
+      const [customer] = await tx.select().from(customers).where(and(eq(customers.id, data.customerId), eq(customers.tenantId, tenantId)));
+      if (!customer) throw new Error("Customer not found");
+      
+      const newBalance = customer.points + data.pointsDelta;
+      if (newBalance < 0) throw new Error("Adjustment would result in negative point balance");
+      
+      await tx.execute(sql`UPDATE customers SET points = ${newBalance} WHERE id = ${data.customerId} AND tenant_id = ${tenantId}`);
+      
+      await tx.insert(customerTransactions).values({
+        tenantId,
+        customerId: data.customerId,
+        type: "adjust_points",
+        points: data.pointsDelta,
+      });
+      
+      await logAuditAction({ action: "Points Adjusted", entityType: "Customer", entityId: data.customerId, afterValue: { delta: data.pointsDelta, reason: data.reason } });
+      return { success: true, newBalance };
+    });
+  });
+
+export const adjustCustomerBalanceFn = createServerFn({ method: "POST" })
+  .validator((d: { customerId: string; amountDelta: number; reason: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    if (data.amountDelta === 0) throw new Error("Adjustment must be non-zero");
+    if (!data.reason?.trim()) throw new Error("Reason is required");
+    
+    return await db.transaction(async (tx) => {
+      const [customer] = await tx.select().from(customers).where(and(eq(customers.id, data.customerId), eq(customers.tenantId, tenantId)));
+      if (!customer) throw new Error("Customer not found");
+      
+      const currentBalance = Number(customer.storeCredit || 0);
+      const newBalance = currentBalance + data.amountDelta;
+      
+      if (newBalance < 0) throw new Error("Adjustment would result in negative store credit balance");
+      
+      await tx.execute(sql`UPDATE customers SET store_credit = ${newBalance.toFixed(2)} WHERE id = ${data.customerId} AND tenant_id = ${tenantId}`);
+      
+      await tx.insert(customerTransactions).values({
+        tenantId,
+        customerId: data.customerId,
+        type: data.amountDelta > 0 ? "add_credit" : "use_credit",
+        points: 0,
+        amount: String(data.amountDelta),
+      });
+      
+      await logAuditAction({ action: "Store Credit Adjusted", entityType: "Customer", entityId: data.customerId, afterValue: { delta: data.amountDelta, reason: data.reason } });
+      return { success: true, newBalance };
+    });
+  });
+
+// --- PROMOTIONS ENGINE ---
+
+export const createPromotionFn = createServerFn({ method: "POST" })
+  .validator((d: { 
+    name: string; 
+    discountType: string; 
+    discountValue: string; 
+    startDate: string; 
+    endDate: string; 
+    target: string;
+    targetCategory?: string;
+    targetProductIds?: string;
+    minQty?: number;
+    maxQty?: number;
+  }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    
+    if (!data.name.trim()) throw new Error("Promotion name is required");
+    if (!["Percentage", "Fixed"].includes(data.discountType)) throw new Error("Invalid discount type");
+    
+    const value = parseFloat(data.discountValue);
+    if (isNaN(value) || value <= 0) throw new Error("Discount value must be positive");
+    if (data.discountType === "Percentage" && value > 100) throw new Error("Percentage discount cannot exceed 100%");
+    
+    const sDate = new Date(data.startDate);
+    const eDate = new Date(data.endDate);
+    if (sDate >= eDate) throw new Error("Start date must be before end date");
+    
+    if (data.minQty && data.minQty < 1) throw new Error("minQty must be positive");
+    if (data.maxQty && data.maxQty < 1) throw new Error("maxQty must be positive");
+    if (data.minQty && data.maxQty && data.maxQty < data.minQty) throw new Error("maxQty cannot be lower than minQty");
+
+    const existingName = await db.select({ id: promotions.id })
+      .from(promotions)
+      .where(and(
+        eq(promotions.tenantId, tenantId),
+        ilike(promotions.name, data.name.trim()),
+        ne(promotions.status, "Archived")
+      ))
+      .limit(1);
+      
+    if (existingName.length > 0) {
+      throw new Error("A promotion with this exact name already exists. Please choose a unique name.");
+    }
+
+    const [newPromo] = await db.insert(promotions).values({
+      tenantId,
+      name: data.name.trim(),
+      discountType: data.discountType,
+      discountValue: String(value),
+      startDate: sDate,
+      endDate: eDate,
+      status: "Active",
+      target: data.target,
+      targetCategory: data.targetCategory?.trim() || null,
+      targetProductIds: data.targetProductIds?.trim() || null,
+      minQty: data.minQty,
+      maxQty: data.maxQty,
+    }).returning();
+    
+    await logAuditAction({ action: "Promotion Created", entityType: "Promotion", entityId: newPromo.id });
+    return { success: true, promotion: newPromo };
+  });
+
+export const updatePromotionFn = createServerFn({ method: "POST" })
+  .validator((d: { 
+    id: string;
+    name: string; 
+    discountType: string; 
+    discountValue: string; 
+    startDate: string; 
+    endDate: string; 
+    target: string;
+    targetCategory?: string;
+    targetProductIds?: string;
+    minQty?: number;
+    maxQty?: number;
+  }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    
+    if (!data.name.trim()) throw new Error("Promotion name is required");
+    if (!["Percentage", "Fixed"].includes(data.discountType)) throw new Error("Invalid discount type");
+    
+    const value = parseFloat(data.discountValue);
+    if (isNaN(value) || value <= 0) throw new Error("Discount value must be positive");
+    if (data.discountType === "Percentage" && value > 100) throw new Error("Percentage discount cannot exceed 100%");
+    
+    const sDate = new Date(data.startDate);
+    const eDate = new Date(data.endDate);
+    if (sDate >= eDate) throw new Error("Start date must be before end date");
+
+    if (data.minQty && data.minQty < 1) throw new Error("minQty must be positive");
+    if (data.maxQty && data.maxQty < 1) throw new Error("maxQty must be positive");
+    if (data.minQty && data.maxQty && data.maxQty < data.minQty) throw new Error("maxQty cannot be lower than minQty");
+
+    const existingName = await db.select({ id: promotions.id })
+      .from(promotions)
+      .where(and(
+        eq(promotions.tenantId, tenantId),
+        ilike(promotions.name, data.name.trim()),
+        ne(promotions.status, "Archived"),
+        ne(promotions.id, data.id)
+      ))
+      .limit(1);
+      
+    if (existingName.length > 0) {
+      throw new Error("Another promotion with this exact name already exists. Please choose a unique name.");
+    }
+
+    // verify existence & tenant
+    const existingList = await db.select({ id: promotions.id, status: promotions.status }).from(promotions).where(and(eq(promotions.id, data.id), eq(promotions.tenantId, tenantId))).limit(1);
+    if (existingList.length === 0) throw new Error("Promotion not found");
+    
+    const existing = existingList[0];
+    if (existing.status === "Archived") throw new Error("Cannot update an archived promotion");
+
+    const [updated] = await db.update(promotions).set({
+      name: data.name.trim(),
+      discountType: data.discountType,
+      discountValue: String(value),
+      startDate: sDate,
+      endDate: eDate,
+      target: data.target,
+      targetCategory: data.targetCategory?.trim() || null,
+      targetProductIds: data.targetProductIds?.trim() || null,
+      minQty: data.minQty,
+      maxQty: data.maxQty,
+    }).where(and(eq(promotions.id, data.id), eq(promotions.tenantId, tenantId))).returning();
+    
+    await logAuditAction({ action: "Promotion Updated", entityType: "Promotion", entityId: updated.id });
+    return { success: true, promotion: updated };
+  });
+
+export const getPromotionFn = createServerFn({ method: "GET" })
+  .validator((d: { id: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    const list = await db.select().from(promotions).where(and(eq(promotions.id, data.id), eq(promotions.tenantId, tenantId))).limit(1);
+    if (list.length === 0) throw new Error("Promotion not found");
+    return { success: true, promotion: list[0] };
+  });
+
+export const listPromotionsFn = createServerFn({ method: "GET" })
+  .handler(async () => {
+    const tenantId = await getHeadOfficeTenant();
+    const list = await db.select().from(promotions).where(and(eq(promotions.tenantId, tenantId), ne(promotions.status, "Archived"))).orderBy(desc(promotions.createdAt));
+    return { success: true, promotions: list };
+  });
+
+export const activatePromotionFn = createServerFn({ method: "POST" })
+  .validator((d: { id: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    
+    const list = await db.select({ id: promotions.id, status: promotions.status }).from(promotions).where(and(eq(promotions.id, data.id), eq(promotions.tenantId, tenantId))).limit(1);
+    if (list.length === 0) throw new Error("Promotion not found");
+    if (list[0].status === "Archived") throw new Error("Cannot activate an archived promotion");
+    
+    await db.update(promotions).set({ status: "Active" }).where(and(eq(promotions.id, data.id), eq(promotions.tenantId, tenantId)));
+    await logAuditAction({ action: "Promotion Activated", entityType: "Promotion", entityId: data.id });
+    return { success: true };
+  });
+
+export const deactivatePromotionFn = createServerFn({ method: "POST" })
+  .validator((d: { id: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    const list = await db.select({ id: promotions.id, status: promotions.status }).from(promotions).where(and(eq(promotions.id, data.id), eq(promotions.tenantId, tenantId))).limit(1);
+    if (list.length === 0) throw new Error("Promotion not found");
+    if (list[0].status === "Archived") throw new Error("Cannot deactivate an archived promotion");
+    
+    await db.update(promotions).set({ status: "Inactive" }).where(and(eq(promotions.id, data.id), eq(promotions.tenantId, tenantId)));
+    await logAuditAction({ action: "Promotion Deactivated", entityType: "Promotion", entityId: data.id });
+    return { success: true };
+  });
+
+export const archivePromotionFn = createServerFn({ method: "POST" })
+  .validator((d: { id: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    const list = await db.select({ id: promotions.id, status: promotions.status }).from(promotions).where(and(eq(promotions.id, data.id), eq(promotions.tenantId, tenantId))).limit(1);
+    if (list.length === 0) throw new Error("Promotion not found");
+    // Indempotent if already archived, but let's just run it anyway.
+    
+    await db.update(promotions).set({ status: "Archived" }).where(and(eq(promotions.id, data.id), eq(promotions.tenantId, tenantId)));
+    await logAuditAction({ action: "Promotion Archived", entityType: "Promotion", entityId: data.id });
+    return { success: true };
+  });
+
+export const calculateApplicablePromotionsFn = createServerFn({ method: "POST" })
+  .validator((d: { 
+    items: Array<{
+      productId: string;
+      categoryId?: string;
+      originalPrice: string;
+      quantity: number;
+    }>
+  }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    const now = new Date();
+    
+    const activePromos = await db.select().from(promotions)
+      .where(and(
+        eq(promotions.tenantId, tenantId),
+        eq(promotions.status, "Active"),
+        lte(promotions.startDate, now),
+        gte(promotions.endDate, now)
+      ));
+      
+    const results = data.items.map(item => {
+      let bestDiscount = 0;
+      let bestPromo: typeof activePromos[0] | null = null;
+      
+      const price = parseFloat(item.originalPrice);
+      if (isNaN(price) || price < 0) return { ...item, discountAmount: "0.00", finalPrice: item.originalPrice, promotionId: null, promotionName: null, reason: "Invalid original price" };
+
+      for (const promo of activePromos) {
+        if (promo.minQty && item.quantity < promo.minQty) continue;
+        if (promo.maxQty && item.quantity > promo.maxQty) continue;
+        
+        let matches = false;
+        if (promo.target === "All") {
+          matches = true;
+        } else if (promo.target === "Product" && promo.targetProductIds) {
+          const ids = promo.targetProductIds.split(",").map(i => i.trim());
+          if (ids.includes(item.productId)) matches = true;
+        } else if (promo.target === "Category" && promo.targetCategory) {
+          if (item.categoryId === promo.targetCategory) matches = true;
+        }
+        
+        if (!matches) continue;
+        
+        const pValue = parseFloat(promo.discountValue as string);
+        let potentialDiscount = 0;
+        if (promo.discountType === "Percentage") {
+          potentialDiscount = price * (pValue / 100);
+        } else if (promo.discountType === "Fixed") {
+          potentialDiscount = pValue;
+        }
+        
+        if (potentialDiscount > price) potentialDiscount = price;
+        
+        if (potentialDiscount > bestDiscount) {
+          bestDiscount = potentialDiscount;
+          bestPromo = promo;
+        } else if (potentialDiscount === bestDiscount && potentialDiscount > 0) {
+          if (bestPromo && promo.createdAt < bestPromo.createdAt) {
+             bestPromo = promo;
+          }
+        }
+      }
+      
+      const finalPrice = price - bestDiscount;
+      
+      if (bestPromo) {
+        return {
+          productId: item.productId,
+          originalPrice: item.originalPrice,
+          promotionId: bestPromo.id,
+          promotionName: bestPromo.name,
+          discountType: bestPromo.discountType,
+          discountAmount: bestDiscount.toFixed(2),
+          finalPrice: finalPrice.toFixed(2),
+          reason: "Best discount applied"
+        };
+      }
+      
+      return {
+        productId: item.productId,
+        originalPrice: item.originalPrice,
+        promotionId: null,
+        promotionName: null,
+        discountType: null,
+        discountAmount: "0.00",
+        finalPrice: price.toFixed(2),
+        reason: "No matching active promotion"
+      };
+    });
+    
+    return { success: true, results };
   });

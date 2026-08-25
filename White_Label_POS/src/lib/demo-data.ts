@@ -195,7 +195,12 @@ export const promotions: Promotion[] = [
     { id: "PRM-104", name: "Clearance: Dates", type: "Discount", target: "SKU-10733", value: "25% off", status: "Active", startDate: "2026-08-12", endDate: "2026-08-19" },
 ];
 
-export const aed = (n: number) =>
-    `AED ${n.toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const aed = (n: number | undefined | null) => {
+    if (n == null) return "AED 0.00";
+    return `AED ${n.toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
 
-export const aedShort = (n: number) => `AED ${n.toLocaleString("en-AE")}`;
+export const aedShort = (n: number | undefined | null) => {
+  if (n == null) return "AED 0";
+  return `AED ${n.toLocaleString("en-AE")}`;
+};

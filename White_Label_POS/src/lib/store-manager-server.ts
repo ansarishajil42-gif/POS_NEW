@@ -1,3 +1,4 @@
+
 import { createServerFn } from "@tanstack/react-start";
 import { getSessionServerFn } from "./auth-server";
 import * as argon2 from "argon2";
@@ -13,6 +14,7 @@ import {
   priceOverrideRequests,
   staffUsers,
   tills,
+  tenants,
 } from "../server/db/schema";
 
 // Middleware
@@ -124,7 +126,7 @@ export const getStoreManagerDataFn = createServerFn({ method: "GET" }).handler(a
         const matchedTill = dbTills.find((t) => t.id === s.tillId);
         return {
           ...s,
-          till: matchedTill ? { name: matchedTill.name } : (s.tillId ? { name: s.tillId } : null),
+          till: matchedTill ? { name: matchedTill.name } : s.tillId ? { name: s.tillId } : null,
         };
       }),
       orders: recentOrders,
@@ -396,28 +398,49 @@ export const createTillFn = createServerFn({ method: "POST" })
       throw new Error("Opening float must be a non-negative number.");
     }
 
-    // Insert new till
-    await db.insert(tills).values({
-      tenantId,
-      branchId,
-      name,
-      description: data.description || "",
-      status: "Closed",
-      openingFloat: floatVal.toString(),
-      createdBy: userId,
-    });
+    // Check till limit inside transaction to prevent race conditions
+    await db.transaction(async (tx) => {
+      const [tenantRec] = await tx
+        .select({ tillLimit: tenants.tillLimit })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .for('update');
+      if (!tenantRec) throw new Error("Tenant not found.");
 
-    // Also update tillCount in branches table to keep it aligned!
-    const [branch] = await db
-      .select({ tillCount: branches.tillCount })
-      .from(branches)
-      .where(eq(branches.id, branchId));
-    if (branch) {
-      await db
-        .update(branches)
-        .set({ tillCount: (branch.tillCount || 0) + 1 })
+      const activeTills = await tx
+        .select({
+          count: sql<number>`count(*)::int`,
+        })
+        .from(tills)
+        .where(eq(tills.tenantId, tenantId));
+
+      if (activeTills[0].count >= tenantRec.tillLimit) {
+        throw new Error("Till limit reached for this tenant.");
+      }
+
+      // Insert new till
+      await tx.insert(tills).values({
+        tenantId,
+        branchId,
+        name,
+        description: data.description || "",
+        status: "Closed",
+        openingFloat: floatVal.toString(),
+        createdBy: userId,
+      });
+
+      // Also update tillCount in branches table to keep it aligned!
+      const [branch] = await tx
+        .select({ tillCount: branches.tillCount })
+        .from(branches)
         .where(eq(branches.id, branchId));
-    }
+      if (branch) {
+        await tx
+          .update(branches)
+          .set({ tillCount: (branch.tillCount || 0) + 1 })
+          .where(eq(branches.id, branchId));
+      }
+    });
 
     return { success: true };
   });

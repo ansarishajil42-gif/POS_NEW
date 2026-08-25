@@ -13,6 +13,9 @@ import {
   Wallet,
   WifiOff,
   Wifi,
+  User,
+  UserMinus,
+  Search
 } from "lucide-react";
 import { DemoShell } from "@/components/demo/DemoShell";
 import { Button } from "@/components/ui/button";
@@ -39,6 +42,7 @@ import {
   checkoutServerFn,
   getBranchTillsServerFn,
   generateShiftReportFn,
+  searchPosCustomersFn
 } from "@/lib/pos-server";
 import { toast } from "sonner";
 
@@ -89,6 +93,13 @@ function PosTill() {
   const router = useRouter();
 
   const [selectedTillId, setSelectedTillId] = useState(session?.tillId || "");
+
+  // Customer state
+  const [customer, setCustomer] = useState<any>(null);
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [customerSearchTerm, setCustomerSearchTerm] = useState("");
+  const [customerResults, setCustomerResults] = useState<any[]>([]);
+  const [isSearchingCustomer, setIsSearchingCustomer] = useState(false);
 
   const [cart, setCart] = useState<Line[]>([]);
   const [search, setSearch] = useState("");
@@ -241,6 +252,14 @@ function PosTill() {
     );
 
   const settle = async () => {
+    if (split.points > 0 && !customer) {
+      toast.error("You must attach a customer to use loyalty points.");
+      return;
+    }
+    if (split.credit > 0 && !customer) {
+      toast.error("You must attach a customer to use store credit.");
+      return;
+    }
     const payments = [];
     if (selectedTenders["cash"] && split.cash > 0) payments.push({ method: "Cash", amount: split.cash });
     if (selectedTenders["card"] && split.card > 0) payments.push({ method: "Card", amount: split.card });
@@ -250,6 +269,23 @@ function PosTill() {
     if (!hasSelectedTender || payments.length === 0) {
       toast.error("Select a payment method.");
       return;
+    }
+
+  const handleSearchCustomer = async (term: string) => {
+    setCustomerSearchTerm(term);
+    if (term.length < 2) {
+      setCustomerResults([]);
+      return;
+    }
+    setIsSearchingCustomer(true);
+    try {
+      const res = await searchPosCustomersFn({ data: { term } });
+      if (res.success) setCustomerResults(res.customers);
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+    setIsSearchingCustomer(false);
+  };
     }
 
     if (Math.abs(allocatedTotal - total) > 0.01) {
@@ -273,6 +309,7 @@ function PosTill() {
       try {
         const res = await checkoutServerFn({
           data: {
+            customerId: customer?.id || undefined,
             subtotal: net,
             vat: vat,
             total: total,
@@ -328,6 +365,7 @@ function PosTill() {
     setSplit({ cash: 0, card: 0, points: 0, credit: 0 });
     setCashReceivedInput("");
     setSelectedTenders({});
+    setCustomer(null);
   };
 
   const handleOpenShift = async () => {
@@ -575,22 +613,181 @@ function PosTill() {
                 )}
               </div>
 
-              <div className="mt-4 space-y-2">
-                {cart.length === 0 && (
-                  <div className="rounded-xl border border-dashed border-border py-10 text-center">
-                    <ScanBarcode className="mx-auto h-6 w-6 text-muted-foreground" />
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Scan or tap an item to begin
-                    </p>
-                  </div>
-                )}
-                {cart.map((l) => (
-                  <div key={l.id} className="flex items-center gap-2 rounded-xl bg-surface-2 p-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-ink">{l.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {aed(getPrice(l, l.qty))} · VAT 5%
-                      </p>
+                        <div className="panel flex h-fit flex-col p-5 lg:sticky lg:top-6 gap-6">
+                            {/* Customer Section */}
+                            <div className="rounded-xl border border-border p-4 bg-surface-2/50">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h2 className="text-sm font-bold text-ink flex items-center gap-2">
+                                        <User className="h-4 w-4" /> Customer
+                                    </h2>
+                                    {!customer ? (
+                                        <Dialog open={customerModalOpen} onOpenChange={setCustomerModalOpen}>
+                                            <DialogTrigger asChild>
+                                                <Button variant="outline" size="sm" className="h-7 text-xs rounded-lg">
+                                                    Attach
+                                                </Button>
+                                            </DialogTrigger>
+                                            <DialogContent className="sm:max-w-[425px]">
+                                                <DialogHeader>
+                                                    <DialogTitle>Attach Customer</DialogTitle>
+                                                    <DialogDescription>Search by name, email, or phone number.</DialogDescription>
+                                                </DialogHeader>
+                                                <div className="py-4 space-y-4">
+                                                    <div className="relative">
+                                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                                        <Input
+                                                            placeholder="Search customers..."
+                                                            className="pl-9"
+                                                            value={customerSearchTerm}
+                                                            onChange={(e) => handleSearchCustomer(e.target.value)}
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                                                        {isSearchingCustomer ? (
+                                                            <p className="text-center text-sm text-muted-foreground py-4">Searching...</p>
+                                                        ) : customerResults.length > 0 ? (
+                                                            customerResults.map((c) => (
+                                                                <div
+                                                                    key={c.id}
+                                                                    className="flex items-center justify-between p-3 rounded-lg border border-border hover:border-primary/30 hover:bg-primary/5 cursor-pointer transition-colors"
+                                                                    onClick={() => {
+                                                                        setCustomer(c);
+                                                                        setCustomerModalOpen(false);
+                                                                    }}
+                                                                >
+                                                                    <div>
+                                                                        <p className="text-sm font-semibold text-ink">{c.name}</p>
+                                                                        <p className="text-xs text-muted-foreground">{c.phone || c.email}</p>
+                                                                    </div>
+                                                                    <div className="text-right">
+                                                                        <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                                                                            {c.tier}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                            ))
+                                                        ) : customerSearchTerm.length >= 2 ? (
+                                                            <p className="text-center text-sm text-muted-foreground py-4">No customers found.</p>
+                                                        ) : null}
+                                                    </div>
+                                                </div>
+                                            </DialogContent>
+                                        </Dialog>
+                                    ) : (
+                                        <button
+                                            onClick={() => setCustomer(null)}
+                                            className="text-muted-foreground hover:text-destructive"
+                                        >
+                                            <UserMinus className="h-4 w-4" />
+                                        </button>
+                                    )}
+                                </div>
+                                {customer ? (
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-sm font-semibold">{customer.name}</span>
+                                            <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                                                {customer.tier}
+                                            </span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 mt-2">
+                                            <div className="bg-surface rounded-lg p-2 border border-border">
+                                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Points</p>
+                                                <p className="text-xs font-bold text-ink">{customer.points}</p>
+                                            </div>
+                                            <div className="bg-surface rounded-lg p-2 border border-border">
+                                                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Credit</p>
+                                                <p className="text-xs font-bold text-ink">{aed(customer.storeCredit)}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <p className="text-xs text-muted-foreground italic">No customer attached to order.</p>
+                                )}
+                            </div>
+
+                            <div className="flex flex-col flex-1">
+                                <div className="flex items-center justify-between">
+                                    <h2 className="text-sm font-bold text-ink">Cart · {cart.length} lines</h2>
+                                {cart.length > 0 && (
+                                    <button
+                                        onClick={() => setCart([])}
+                                        className="inline-flex items-center gap-1 text-xs font-semibold text-destructive"
+                                    >
+                                        <Trash2 className="h-3.5 w-3.5" /> Clear
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="mt-4 space-y-2">
+                                {cart.length === 0 && (
+                                    <div className="rounded-xl border border-dashed border-border py-10 text-center">
+                                        <ScanBarcode className="mx-auto h-6 w-6 text-muted-foreground" />
+                                        <p className="mt-2 text-xs text-muted-foreground">Scan or tap an item to begin</p>
+                                    </div>
+                                )}
+                                {cart.map((l) => (
+                                    <div key={l.id} className="flex items-center gap-2 rounded-xl bg-surface-2 p-3">
+                                        <div className="min-w-0 flex-1">
+                                            <p className="truncate text-sm font-semibold text-ink">{l.name}</p>
+                                            <p className="text-xs text-muted-foreground">
+                                                {aed(getPrice(l))} · VAT 5%
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                            <button
+                                                onClick={() => step(l.id, -1)}
+                                                className="grid h-7 w-7 place-items-center rounded-lg border border-border bg-surface"
+                                                aria-label="Decrease"
+                                            >
+                                                <Minus className="h-3.5 w-3.5" />
+                                            </button>
+                                            <span className="w-6 text-center text-sm font-bold tabular-nums text-ink">{l.qty}</span>
+                                            <button
+                                                onClick={() => step(l.id, 1)}
+                                                className="grid h-7 w-7 place-items-center rounded-lg border border-border bg-surface"
+                                                aria-label="Increase"
+                                            >
+                                                <Plus className="h-3.5 w-3.5" />
+                                            </button>
+                                        </div>
+                                        <span className="w-16 text-right text-sm font-bold tabular-nums text-ink">
+                                            {(getPrice(l) * l.qty).toFixed(2)}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="mt-5 space-y-1.5 border-t border-border pt-4 text-sm">
+                                <div className="flex justify-between text-muted-foreground">
+                                    <span>Net</span>
+                                    <span className="tabular-nums">{aed(net)}</span>
+                                </div>
+                                <div className="flex justify-between text-muted-foreground">
+                                    <span>VAT 5%</span>
+                                    <span className="tabular-nums">{vat.toFixed(2)}</span>
+                                </div>
+                                <div className="flex justify-between pt-2 text-xl font-extrabold text-ink">
+                                    <span>Total</span>
+                                    <span className="tabular-nums">{aed(total)}</span>
+                                </div>
+                            </div>
+
+                            </div>
+
+                            <Button
+                                size="lg"
+                                className="mt-5 rounded-xl text-base font-bold"
+                                disabled={cart.length === 0}
+                                onClick={() => {
+                                    setSplit({ cash: Number(total.toFixed(2)), card: 0, points: 0, credit: 0 });
+                                    setPayOpen(true);
+                                }}
+                            >
+                                Pay {cart.length > 0 ? aed(total) : ""}
+                            </Button>
+                        </div>
+
                     </div>
                     <div className="flex items-center gap-1">
                       <button

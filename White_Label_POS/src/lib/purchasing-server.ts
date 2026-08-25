@@ -636,6 +636,8 @@ export const recordGRNServerFn = createServerFn({ method: "POST" })
         if (item.orderedQty !== poItem.qty) throw new Error("Ordered quantity mismatch in payload");
       }
 
+      const hasVariance = data.items.some(item => item.orderedQty !== item.receivedQty);
+
       const [newGRN] = await tx
         .insert(grn)
         .values({
@@ -644,7 +646,7 @@ export const recordGRNServerFn = createServerFn({ method: "POST" })
           branchId: po.branchId,
           purchaseOrderId: po.id,
           grnNumber: data.grnNumber,
-          status: "received",
+          status: hasVariance ? "variance" : "received",
         })
         .returning({ id: grn.id });
 

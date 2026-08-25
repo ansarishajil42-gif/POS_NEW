@@ -69,7 +69,8 @@ import {
     getTenantAdminServerFn,
     createExistingTenantAdminServerFn,
     updateTenantAdminServerFn,
-    deleteTenantAdminServerFn
+    deleteTenantAdminServerFn,
+    archiveTenantServerFn
 } from "@/lib/super-admin-server";
 
 export const Route = createFileRoute("/super-admin")({
@@ -160,6 +161,12 @@ function SuperAdmin() {
     const [isEditingAdmin, setIsEditingAdmin] = useState(false);
     const [updateAdminForm, setUpdateAdminForm] = useState({ name: "", email: "", phone: "", address: "", password: "" });
 
+    // Archive Tenant State
+    const [archiveTenantOpen, setArchiveTenantOpen] = useState(false);
+    const [tenantToArchive, setTenantToArchive] = useState<any | null>(null);
+    const [archiveConfirmation, setArchiveConfirmation] = useState("");
+    const [isArchiving, setIsArchiving] = useState(false);
+
     const totals = useMemo(
         () => ({
             tenants: tenants.length,
@@ -180,6 +187,32 @@ function SuperAdmin() {
             toast.success("Tenant status updated");
         } else {
             toast.error("Failed to update status");
+        }
+    };
+
+    const handleArchive = async () => {
+        if (!tenantToArchive || !archiveConfirmation) return;
+        setIsArchiving(true);
+        try {
+            const res = await archiveTenantServerFn({
+                data: {
+                    tenantId: tenantToArchive.id,
+                    confirmationValue: archiveConfirmation
+                }
+            });
+            if (res.success) {
+                toast.success(res.message || "Tenant archived successfully");
+                setArchiveTenantOpen(false);
+                setTenantToArchive(null);
+                setArchiveConfirmation("");
+                router.invalidate();
+            } else {
+                toast.error(res.error || "Failed to archive tenant");
+            }
+        } catch (err: any) {
+            toast.error(err.message || "An unexpected error occurred");
+        } finally {
+            setIsArchiving(false);
         }
     };
 
@@ -246,7 +279,7 @@ function SuperAdmin() {
             setNewBranchForm({ name: "", address: "" });
             toast.success("Branch added successfully");
         } else {
-            toast.error("Failed to add branch");
+            toast.error(res.error || "Failed to add branch");
         }
     };
 
@@ -436,7 +469,7 @@ function SuperAdmin() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {tenants.map((t) => (
+                            {tenants.filter(t => t.status !== "Archived").map((t) => (
                                 <TableRow key={t.id} className="group transition-all duration-300 hover:bg-primary/[0.03] hover:shadow-sm">
                                 <TableCell className="p-5">
                                     <div className="text-[15px] font-extrabold text-ink transition-colors group-hover:text-primary">{t.name}</div>
@@ -540,6 +573,26 @@ function SuperAdmin() {
                                                 </TooltipTrigger>
                                                 <TooltipContent>{t.status === "Suspended" ? "Reactivate" : "Suspend"}</TooltipContent>
                                             </UITooltip>
+
+                                            {t.status !== "Archived" && (
+                                                <UITooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <Button
+                                                            size="icon"
+                                                            variant="outline"
+                                                            className="h-8 w-8 rounded-xl hover:bg-destructive/10 hover:text-destructive border-destructive/20 transition-colors"
+                                                            onClick={() => {
+                                                                setTenantToArchive(t);
+                                                                setArchiveTenantOpen(true);
+                                                                setArchiveConfirmation("");
+                                                            }}
+                                                        >
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>Archive Tenant</TooltipContent>
+                                                </UITooltip>
+                                            )}
                                         </TooltipProvider>
                                     </div>
                                 </TableCell>
@@ -882,7 +935,7 @@ function SuperAdmin() {
                                     setGlobalAddBranchOpen(false);
                                     setGlobalNewBranchForm({ tenantId: "", name: "", address: "", status: "Active" });
                                 } else {
-                                    toast.error("Failed to add branch");
+                                    toast.error(res.error || "Failed to add branch");
                                 }
                             }
                         }}>Save Branch</Button>
@@ -1082,6 +1135,56 @@ function SuperAdmin() {
                             </div>
                         )}
                     </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Archive Tenant Dialog */}
+            <Dialog open={archiveTenantOpen} onOpenChange={setArchiveTenantOpen}>
+                <DialogContent className="sm:max-w-md w-[95vw] sm:w-full p-6">
+                    <DialogHeader>
+                        <DialogTitle className="text-destructive flex items-center gap-2">
+                            <Trash2 className="h-5 w-5" /> Archive Tenant
+                        </DialogTitle>
+                        <DialogDescription className="text-sm mt-2 font-medium">
+                            This will archive the tenant, block its users from logging in, and preserve its historical data. It will not permanently delete the tenant.
+                        </DialogDescription>
+                    </DialogHeader>
+                    
+                    <div className="py-4 space-y-4">
+                        <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive font-semibold">
+                            To confirm archiving <span className="font-extrabold">{tenantToArchive?.name}</span>, please type its exact name or subdomain below.
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="confirmationValue">Confirmation Value</Label>
+                            <Input 
+                                id="confirmationValue"
+                                value={archiveConfirmation}
+                                onChange={(e) => setArchiveConfirmation(e.target.value)}
+                                placeholder={`e.g. ${tenantToArchive?.subdomain || tenantToArchive?.name}`}
+                                className="font-mono text-sm"
+                            />
+                        </div>
+                    </div>
+
+                    <DialogFooter className="gap-2 sm:gap-0 mt-2">
+                        <Button 
+                            type="button" 
+                            variant="outline" 
+                            onClick={() => setArchiveTenantOpen(false)}
+                            className="rounded-xl"
+                        >
+                            Cancel
+                        </Button>
+                        <Button 
+                            type="button" 
+                            variant="destructive"
+                            onClick={handleArchive}
+                            disabled={!archiveConfirmation || isArchiving}
+                            className="rounded-xl"
+                        >
+                            {isArchiving ? "Archiving..." : "Archive Tenant"}
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </DemoShell>

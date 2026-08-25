@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getSessionServerFn } from "./auth-server";
 import { db } from "../server/db";
-import { eq, and, desc, gte, gt, asc, sql } from "drizzle-orm";
+import { eq, and, desc, gte, gt, asc, sql, ne } from "drizzle-orm";
 import {
   products,
   stockLevels,
@@ -12,6 +12,10 @@ import {
   promotions,
   tills,
   batches,
+  tenants,
+  customers,
+  customerTransactions,
+  tenantSettings
 } from "../server/db/schema";
 
 // Middleware
@@ -98,16 +102,17 @@ export const openShiftServerFn = createServerFn({ method: "POST" })
         eq(shifts.status, "Scheduled"),
       ),
     });
-    if (scheduledShift && scheduledShift.tillId !== activeTillId && scheduledShift.tillId !== till.name) {
+    if (
+      scheduledShift &&
+      scheduledShift.tillId !== activeTillId &&
+      scheduledShift.tillId !== till.name
+    ) {
       throw new Error("The selected till terminal does not match your scheduled shift assignment.");
     }
 
     // Check if the till is in use by another cashier's active shift
     const activeTillShift = await db.query.shifts.findFirst({
-      where: and(
-        eq(shifts.tillId, activeTillId),
-        eq(shifts.status, "Open"),
-      ),
+      where: and(eq(shifts.tillId, activeTillId), eq(shifts.status, "Open")),
     });
     if (activeTillShift && activeTillShift.cashierId !== cashierId) {
       throw new Error("This till terminal is currently in use by another cashier.");
@@ -269,6 +274,37 @@ export const closeShiftServerFn = createServerFn({ method: "POST" })
     return { success: true, variance: data.actualCash - expectedCash };
   });
 
+export const searchPosCustomersFn = createServerFn({ method: "POST" })
+  .validator((d: { term: string }) => d)
+  .handler(async ({ data }) => {
+    const { tenantId } = await getPosContext();
+    if (!data.term || data.term.length < 2) return { success: true, customers: [] };
+
+    const searchStr = `%${data.term.toLowerCase()}%`;
+
+    const results = await db
+      .select({
+        id: customers.id,
+        name: customers.name,
+        phone: customers.phone,
+        email: customers.email,
+        points: customers.points,
+        storeCredit: customers.storeCredit,
+        tier: customers.tier
+      })
+      .from(customers)
+      .where(
+        and(
+          eq(customers.tenantId, tenantId),
+          eq(customers.isActive, true),
+          sql`LOWER(${customers.name}) LIKE ${searchStr} OR LOWER(${customers.phone}) LIKE ${searchStr} OR LOWER(${customers.email}) LIKE ${searchStr}`
+        )
+      )
+      .limit(10);
+
+    return { success: true, customers: results };
+  });
+
 export const checkoutServerFn = createServerFn({ method: "POST" })
   .validator(
     (d: {
@@ -280,6 +316,7 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
       cashReceived?: number;
       changeGiven?: number;
       idempotencyKey?: string;
+      customerId?: string;
     }) => d,
   )
   .handler(async ({ data }) => {
@@ -319,7 +356,10 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
     // Idempotency check to prevent duplicate postings from double click / page reload
     if (data.idempotencyKey) {
       const existingOrder = await db.query.orders.findFirst({
-        where: eq(orders.idempotencyKey, data.idempotencyKey),
+        where: and(
+          eq(orders.idempotencyKey, data.idempotencyKey),
+          eq(orders.tenantId, tenantId)
+        ),
       });
       if (existingOrder) {
         return { success: true, orderId: existingOrder.id };
@@ -349,6 +389,91 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
 
     let orderId: string | undefined;
     await db.transaction(async (tx) => {
+      // Enforce Monthly Order Limit with row lock to prevent race conditions
+      const [tenantRec] = await tx
+        .select({ monthlyOrderLimit: tenants.monthlyOrderLimit })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .for('update');
+      if (!tenantRec) throw new Error("Tenant not found.");
+
+      let activeCustomer = null;
+      let pointsToRedeem = 0;
+      let creditToRedeem = 0;
+      let pointsAmount = 0;
+
+      const settings = await tx.select().from(tenantSettings).where(eq(tenantSettings.tenantId, tenantId)).limit(1);
+      const tenantSetting = settings[0];
+      if (!tenantSetting) throw new Error("Tenant settings not found.");
+
+      if (data.customerId) {
+        const [customerRec] = await tx
+          .select()
+          .from(customers)
+          .where(and(eq(customers.id, data.customerId), eq(customers.tenantId, tenantId)))
+          .for('update');
+        
+        if (!customerRec) throw new Error("Customer not found.");
+        if (!customerRec.isActive) throw new Error("Customer is not active.");
+        activeCustomer = customerRec;
+      }
+
+      for (const p of data.payments) {
+        if (p.method === "Store Credit") {
+          if (!activeCustomer) throw new Error("Store Credit requires an active customer.");
+          if (Number(activeCustomer.storeCredit) < p.amount) throw new Error("Insufficient store credit.");
+          creditToRedeem += p.amount;
+        }
+        if (p.method === "Loyalty Points") {
+          if (!activeCustomer) throw new Error("Loyalty Points requires an active customer.");
+          const pointsRequired = Math.ceil(p.amount / Number(tenantSetting.loyaltyRedemptionRate));
+          if (pointsRequired > activeCustomer.points) throw new Error("Insufficient loyalty points.");
+          pointsToRedeem += pointsRequired;
+          pointsAmount += p.amount;
+        }
+      }
+
+      if (creditToRedeem > 0) {
+        await tx.execute(sql`UPDATE customers SET store_credit = store_credit - ${creditToRedeem} WHERE id = ${data.customerId} AND tenant_id = ${tenantId}`);
+      }
+      if (pointsToRedeem > 0) {
+        await tx.execute(sql`UPDATE customers SET points = points - ${pointsToRedeem} WHERE id = ${data.customerId} AND tenant_id = ${tenantId}`);
+      }
+
+      const uaeDateStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Dubai" });
+      const uaeDate = new Date(uaeDateStr);
+      const startOfMonthUae = new Date(uaeDate.getFullYear(), uaeDate.getMonth(), 1);
+      const startOfMonthUtc = new Date(startOfMonthUae.getTime() - 4 * 60 * 60 * 1000);
+
+      const currentOrders = await tx
+        .select({
+          count: sql<number>`count(*)::int`,
+        })
+        .from(orders)
+        .where(
+          and(
+            eq(orders.tenantId, tenantId),
+            sql`${orders.createdAt} >= ${startOfMonthUtc.toISOString()}`,
+            ne(orders.status, "voided"),
+          ),
+        );
+
+      if (currentOrders[0].count >= tenantRec.monthlyOrderLimit) {
+        throw new Error("Monthly order limit reached for this tenant.");
+      }
+
+      // Generate invoice number
+      const seqResult = await tx
+        .insert(schema.invoiceSequences)
+        .values({ tenantId, currentValue: 1 })
+        .onConflictDoUpdate({
+          target: schema.invoiceSequences.tenantId,
+          set: { currentValue: sql`${schema.invoiceSequences.currentValue} + 1` },
+        })
+        .returning({ val: schema.invoiceSequences.currentValue });
+        
+      const invNumber = `INV-${uaeDate.getFullYear()}-${seqResult[0].val.toString().padStart(5, '0')}`;
+
       const [newOrder] = await tx
         .insert(orders)
         .values({
@@ -356,12 +481,14 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
           branchId,
           cashierId,
           tillId: activeTillId,
+          customerId: data.customerId || null,
           subtotal: data.subtotal.toString(),
           vat: data.vat.toString(),
           total: data.total.toString(),
           cashReceived: data.cashReceived ? data.cashReceived.toString() : null,
           changeGiven: data.changeGiven ? data.changeGiven.toString() : null,
           idempotencyKey: data.idempotencyKey || null,
+          invoiceNumber: invNumber,
           status: "completed",
         })
         .returning({ id: orders.id });
@@ -388,6 +515,43 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
 
       await tx.insert(orderItems).values(itemRecords);
 
+      if (creditToRedeem > 0) {
+        await tx.insert(customerTransactions).values({
+          tenantId,
+          customerId: data.customerId!,
+          orderId: newOrder.id,
+          type: "use_credit",
+          points: 0,
+          amount: creditToRedeem.toString()
+        });
+      }
+      if (pointsToRedeem > 0) {
+          await tx.insert(customerTransactions).values({
+          tenantId,
+          customerId: data.customerId!,
+          orderId: newOrder.id,
+          type: "redeem_points",
+          points: -pointsToRedeem,
+          amount: pointsAmount.toString()
+        });
+      }
+
+      if (activeCustomer) {
+        const pointsRate = Number(tenantSetting.loyaltyPointsPerAed || 0);
+        const pointsToEarn = Math.floor(Number(data.total) * pointsRate);
+        if (pointsToEarn > 0) {
+          await tx.insert(customerTransactions).values({
+            tenantId,
+            customerId: data.customerId!,
+            orderId: newOrder.id,
+            type: "earn_points",
+            points: pointsToEarn,
+            amount: data.total.toString(),
+          });
+          await tx.execute(sql`UPDATE customers SET points = points + ${pointsToEarn} WHERE id = ${data.customerId} AND tenant_id = ${tenantId}`);
+        }
+      }
+
       // Decrement stock levels and handle FEFO for batches
       for (const item of data.items) {
         // Fetch product to check if it's batch tracked
@@ -408,17 +572,18 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
               and(
                 eq(batches.productId, item.productId),
                 eq(batches.branchId, branchId),
-                gt(batches.stock, 0)
-              )
+                gt(batches.stock, 0),
+              ),
             )
-            .orderBy(asc(batches.expiryDate));
+            .orderBy(sql`${batches.expiryDate} ASC NULLS LAST`)
+            .for("update");
 
           let remainingQtyToDeduct = item.qty;
           const now = new Date();
 
           for (const batch of availableBatches) {
             if (remainingQtyToDeduct <= 0) break;
-            
+
             if (new Date(batch.expiryDate) <= now) {
               // Skip expired batches
               continue;
@@ -429,22 +594,45 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
               .update(batches)
               .set({ stock: sql`${batches.stock} - ${deduct}` })
               .where(eq(batches.id, batch.id));
-              
+
+            await tx.insert(schema.inventoryLedger).values({
+              tenantId,
+              branchId,
+              productId: item.productId,
+              batchId: batch.id,
+              transactionType: "Sale",
+              previousQuantity: batch.stock,
+              changedQuantity: -deduct,
+              newQuantity: batch.stock - deduct,
+              referenceId: orderId,
+              createdBy: cashierId,
+            });
+
             remainingQtyToDeduct -= deduct;
           }
 
           if (remainingQtyToDeduct > 0) {
-            throw new Error(`Cannot fulfill ${item.qty} of ${product.name} because remaining stock is either expired or insufficient.`);
+            throw new Error(
+              `Cannot fulfill ${item.qty} of ${product.name} because remaining stock is either expired or insufficient.`,
+            );
           }
         }
 
-        // Always decrement branch stock levels
-        await tx
+        // Always decrement branch stock levels safely
+        const stockUpdateResult = await tx
           .update(stockLevels)
           .set({ stock: sql`${stockLevels.stock} - ${item.qty}` })
           .where(
-            and(eq(stockLevels.productId, item.productId), eq(stockLevels.branchId, branchId)),
-          );
+            and(
+              eq(stockLevels.productId, item.productId), 
+              eq(stockLevels.branchId, branchId),
+              gte(stockLevels.stock, item.qty) // Prevent negative stock
+            ),
+          ).returning({ id: stockLevels.id });
+          
+        if (stockUpdateResult.length === 0) {
+          throw new Error(`Insufficient non-batch stock for ${product.name}`);
+        }
       }
     });
 
@@ -457,14 +645,11 @@ export const generateShiftReportFn = createServerFn({ method: "POST" })
     const { tenantId, branchId, cashierId } = await getPosContext();
 
     const activeShift = await db.query.shifts.findFirst({
-      where: and(
-        eq(shifts.id, data.shiftId),
-        eq(shifts.cashierId, cashierId),
-      ),
+      where: and(eq(shifts.id, data.shiftId), eq(shifts.cashierId, cashierId)),
       with: {
         branch: true,
         cashier: true,
-      }
+      },
     });
 
     if (!activeShift) {
@@ -476,8 +661,8 @@ export const generateShiftReportFn = createServerFn({ method: "POST" })
       where: and(
         eq(tills.id, activeShift.tillId || ""),
         eq(tills.tenantId, tenantId),
-        eq(tills.branchId, branchId)
-      )
+        eq(tills.branchId, branchId),
+      ),
     });
 
     const shiftOrders = await db.query.orders.findMany({
@@ -488,12 +673,15 @@ export const generateShiftReportFn = createServerFn({ method: "POST" })
       ),
       with: {
         items: true,
-        payments: true
+        payments: true,
       },
     });
 
     const transactionCount = shiftOrders.length;
-    const itemsSold = shiftOrders.reduce((acc, o) => acc + o.items.reduce((s, i) => s + i.qty, 0), 0);
+    const itemsSold = shiftOrders.reduce(
+      (acc, o) => acc + o.items.reduce((s, i) => s + i.qty, 0),
+      0,
+    );
     const salesTotal = shiftOrders.reduce((acc, o) => acc + Number(o.total), 0);
     const avgBasket = transactionCount > 0 ? salesTotal / transactionCount : 0;
     const vatCollected = shiftOrders.reduce((acc, o) => acc + Number(o.vat), 0);
@@ -541,18 +729,15 @@ export const generateShiftReportFn = createServerFn({ method: "POST" })
         expectedCash: Number(activeShift.openingFloat) + cashTotal - totalDrops,
         voids: 0,
         refunds: 0,
-      }
+      },
     };
   });
 
 export const getBranchTillsServerFn = createServerFn({ method: "GET" }).handler(async () => {
   const { tenantId, branchId } = await getPosContext();
   const dbTills = await db.query.tills.findMany({
-    where: and(
-      eq(tills.tenantId, tenantId),
-      eq(tills.branchId, branchId)
-    ),
-    orderBy: [desc(tills.createdAt)]
+    where: and(eq(tills.tenantId, tenantId), eq(tills.branchId, branchId)),
+    orderBy: [desc(tills.createdAt)],
   });
   return { success: true, tills: dbTills };
 });
