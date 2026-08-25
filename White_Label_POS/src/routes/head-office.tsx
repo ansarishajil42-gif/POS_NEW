@@ -20,6 +20,9 @@ import {
   X,
   ArrowRight,
   Briefcase,
+  CheckCircle2,
+  Ban,
+  Clock,
 } from "lucide-react";
 import {
   Bar,
@@ -74,6 +77,7 @@ import {
   updateVatSettingsFn,
   createPoFn,
   updateLoyaltySettingsFn,
+  createCampaignFn,
   createProductFn,
   updateProductFn,
   deleteProductFn,
@@ -85,6 +89,7 @@ import {
   updateVendorFn,
   deleteVendorFn,
   toggleRolePermissionFn,
+  handleOverrideRequestFn,
 } from "@/lib/head-office-server";
 import { stockTransferServerFn } from "@/lib/inventory-manager-server";
 import {
@@ -149,6 +154,37 @@ function HeadOffice() {
   const [inclusive, setInclusive] = useState(data?.settings?.vatInclusive ?? true);
   const [vatRate, setVatRate] = useState(data?.settings?.vatRate ?? "5.00");
   const [loyaltyRate, setLoyaltyRate] = useState(data?.settings?.loyaltyRedemptionRate ?? "0.01");
+  const [loyaltyPointsPerAed, setLoyaltyPointsPerAed] = useState(
+    String(data?.settings?.loyaltyPointsPerAed ?? 10),
+  );
+  const [loyaltyMinPointsToRedeem, setLoyaltyMinPointsToRedeem] = useState(
+    String(data?.settings?.loyaltyMinPointsToRedeem ?? 5000),
+  );
+  const [isSavingLoyalty, setIsSavingLoyalty] = useState(false);
+
+  // Campaign States
+  const [isCreateCampaignOpen, setIsCreateCampaignOpen] = useState(false);
+  const [isSavingCampaign, setIsSavingCampaign] = useState(false);
+  const [campaignForm, setCampaignForm] = useState({
+    name: "",
+    type: "Percentage discount",
+    target: "All products",
+    value: "",
+    startDate: new Date().toISOString().split("T")[0] || "",
+    endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0] || "",
+    status: "Draft",
+  });
+  const [selectedCategory, setSelectedCategory] = useState("");
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [bundleItems, setBundleItems] = useState<{ productId: string; qty: number }[]>([
+    { productId: "", qty: 1 },
+    { productId: "", qty: 1 },
+  ]);
+  const [pricingBasis, setPricingBasis] = useState("Percentage adjustment");
+  const [minQty, setMinQty] = useState("");
+  const [maxQty, setMaxQty] = useState("");
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
 
   // Mapped Data from DB
   const mappedOutlets = (data?.branches || []).map((b: any) => ({
@@ -750,6 +786,10 @@ function HeadOffice() {
     }
   };
 
+  const categoriesList = Array.from(
+    new Set((data?.products || []).map((p: any) => p.category).filter(Boolean)),
+  ) as string[];
+
   return (
     <DemoShell
       title="Head Office Dashboard"
@@ -819,6 +859,12 @@ function HeadOffice() {
               className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
             >
               Promotions
+            </TabsTrigger>
+            <TabsTrigger
+              value="price_requests"
+              className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+            >
+              Price Requests
             </TabsTrigger>
             <TabsTrigger
               value="vendors"
@@ -2153,11 +2199,19 @@ function HeadOffice() {
               <div className="grid gap-6 sm:grid-cols-3">
                 <div className="space-y-1.5">
                   <Label>Points per 1 AED spent</Label>
-                  <Input type="number" defaultValue="10" />
+                  <Input
+                    type="number"
+                    value={loyaltyPointsPerAed}
+                    onChange={(e) => setLoyaltyPointsPerAed(e.target.value)}
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label>Minimum points to redeem</Label>
-                  <Input type="number" defaultValue="5000" />
+                  <Input
+                    type="number"
+                    value={loyaltyMinPointsToRedeem}
+                    onChange={(e) => setLoyaltyMinPointsToRedeem(e.target.value)}
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label>Redemption Rate (e.g. 0.01 AED per point)</Label>
@@ -2171,17 +2225,34 @@ function HeadOffice() {
               </div>
               <div className="mt-5 flex justify-end">
                 <Button
+                  disabled={isSavingLoyalty}
                   onClick={async () => {
-                    const res = await updateLoyaltySettingsFn({
-                      data: { loyaltyRedemptionRate: String(loyaltyRate) },
-                    });
-                    if (res.success) {
-                      router.invalidate();
-                      toast.success("Loyalty policies updated in database!");
+                    setIsSavingLoyalty(true);
+                    const loadToast = toast.loading("Saving loyalty settings...");
+                    try {
+                      const res = await updateLoyaltySettingsFn({
+                        data: {
+                          pointsPerAed: loyaltyPointsPerAed,
+                          minPointsToRedeem: loyaltyMinPointsToRedeem,
+                          redemptionRate: loyaltyRate,
+                        },
+                      });
+                      toast.dismiss(loadToast);
+                      if (res.success) {
+                        router.invalidate();
+                        toast.success("Policies saved");
+                      } else {
+                        toast.error("Failed to save settings");
+                      }
+                    } catch (err: any) {
+                      toast.dismiss(loadToast);
+                      toast.error(err.message || "An error occurred");
+                    } finally {
+                      setIsSavingLoyalty(false);
                     }
                   }}
                 >
-                  Save Policies
+                  {isSavingLoyalty ? "Saving..." : "Save Policies"}
                 </Button>
               </div>
             </div>
@@ -2275,6 +2346,140 @@ function HeadOffice() {
             </div>
           </TabsContent>
 
+          <TabsContent value="price_requests" className="mt-0">
+            <div className="panel p-6">
+              <h3 className="text-lg font-bold text-ink mb-2">Price Override Requests</h3>
+              <p className="text-sm text-muted-foreground mb-6">
+                Review and approve/reject branch-specific pricing override requests. Approved
+                overrides update POS catalog prices immediately.
+              </p>
+
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Product</TableHead>
+                      <TableHead>Branch</TableHead>
+                      <TableHead className="text-right">Standard Price</TableHead>
+                      <TableHead className="text-right">Requested Price</TableHead>
+                      <TableHead>Reason</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(!data || !data.priceRequests || data.priceRequests.length === 0) && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={8}
+                          className="h-24 text-center text-muted-foreground font-semibold"
+                        >
+                          No price override requests found.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {(data?.priceRequests || []).map((req: any) => (
+                      <TableRow
+                        key={req.id}
+                        className="hover:bg-surface-2/40 transition-colors duration-200"
+                      >
+                        <TableCell className="font-semibold text-ink">
+                          {req.product?.name || "Unknown Product"}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground font-medium">
+                          {req.branch?.name || "Unknown Branch"}
+                        </TableCell>
+                        <TableCell className="text-right font-medium text-muted-foreground">
+                          {aed(Number(req.standardPrice))}
+                        </TableCell>
+                        <TableCell className="text-right font-bold text-ink">
+                          {aed(Number(req.requestedPrice))}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground font-medium max-w-xs truncate">
+                          {req.reason}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {new Date(req.createdAt).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })}
+                        </TableCell>
+                        <TableCell>
+                          {req.status === "Approved" ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-xs font-bold text-success animate-in fade-in">
+                              <CheckCircle2 className="h-3 w-3" /> Approved
+                            </span>
+                          ) : req.status === "Rejected" ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700 animate-in fade-in">
+                              <Ban className="h-3 w-3" /> Rejected
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-bold text-yellow-700 animate-in fade-in">
+                              <Clock className="h-3 w-3" /> Pending
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {req.status === "Pending" && (
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 rounded-lg text-xs font-bold border-red-200 text-red-600 hover:bg-red-50"
+                                onClick={async () => {
+                                  try {
+                                    const res = await handleOverrideRequestFn({
+                                      data: {
+                                        requestId: req.id,
+                                        action: "Reject",
+                                      },
+                                    });
+                                    if (res.success) {
+                                      toast.success("Request rejected successfully");
+                                      router.invalidate();
+                                    }
+                                  } catch (err: any) {
+                                    toast.error(err.message || "Failed to reject request");
+                                  }
+                                }}
+                              >
+                                Reject
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="h-8 rounded-lg text-xs font-bold bg-success hover:bg-success/90"
+                                onClick={async () => {
+                                  try {
+                                    const res = await handleOverrideRequestFn({
+                                      data: {
+                                        requestId: req.id,
+                                        action: "Approve",
+                                      },
+                                    });
+                                    if (res.success) {
+                                      toast.success("Request approved successfully");
+                                      router.invalidate();
+                                    }
+                                  } catch (err: any) {
+                                    toast.error(err.message || "Failed to approve request");
+                                  }
+                                }}
+                              >
+                                Approve
+                              </Button>
+                            </div>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </TabsContent>
+
           <TabsContent value="promotions" className="mt-0">
             <div className="flex items-center gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4 mb-5">
               <Tag className="h-5 w-5 text-primary" />
@@ -2282,13 +2487,571 @@ function HeadOffice() {
                 Dynamic pricing engine active. Bundle discounts are automatically evaluated at
                 checkout.
               </p>
-              <Button
-                size="sm"
-                className="ml-auto rounded-lg"
-                onClick={() => toast.success("New promotion campaign drafted")}
-              >
-                Create Campaign
-              </Button>
+              <Dialog open={isCreateCampaignOpen} onOpenChange={setIsCreateCampaignOpen}>
+                <DialogTrigger asChild>
+                  <Button
+                    size="sm"
+                    className="ml-auto rounded-lg"
+                    onClick={() => {
+                      setCampaignForm({
+                        name: "",
+                        type: "Percentage discount",
+                        target: "All products",
+                        value: "",
+                        startDate: new Date().toISOString().split("T")[0] || "",
+                        endDate:
+                          new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+                            .toISOString()
+                            .split("T")[0] || "",
+                        status: "Draft",
+                      });
+                      setSelectedCategory("");
+                      setSelectedProductIds([]);
+                      setBundleItems([
+                        { productId: "", qty: 1 },
+                        { productId: "", qty: 1 },
+                      ]);
+                      setPricingBasis("Percentage adjustment");
+                      setMinQty("");
+                      setMaxQty("");
+                      setStartTime("");
+                      setEndTime("");
+                      setIsCreateCampaignOpen(true);
+                    }}
+                  >
+                    Create Campaign
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[500px] max-h-[85vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Create Promotion Campaign</DialogTitle>
+                    <DialogDescription>
+                      Design a new discount structure for items, bundles, or categories.
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  <div className="grid gap-4 py-4 text-sm">
+                    <div className="grid gap-2">
+                      <Label htmlFor="camp-name">Campaign Name</Label>
+                      <Input
+                        id="camp-name"
+                        value={campaignForm.name}
+                        onChange={(e) => setCampaignForm({ ...campaignForm, name: e.target.value })}
+                        placeholder="e.g. Summer Special Offer"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="camp-type">Campaign Type</Label>
+                        <Select
+                          value={campaignForm.type}
+                          onValueChange={(val) => setCampaignForm({ ...campaignForm, type: val })}
+                        >
+                          <SelectTrigger id="camp-type">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Percentage discount">Percentage discount</SelectItem>
+                            <SelectItem value="Fixed amount discount">
+                              Fixed amount discount
+                            </SelectItem>
+                            <SelectItem value="Bundle discount">Bundle discount</SelectItem>
+                            <SelectItem value="Dynamic pricing">Dynamic pricing</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="camp-target">Target Scope</Label>
+                        <Select
+                          value={campaignForm.target}
+                          onValueChange={(val) => setCampaignForm({ ...campaignForm, target: val })}
+                        >
+                          <SelectTrigger id="camp-target">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="All products">All products</SelectItem>
+                            <SelectItem value="Category">Category</SelectItem>
+                            <SelectItem value="Selected products">Selected products</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    {/* Conditional Target Scopes */}
+                    {campaignForm.target === "Category" && (
+                      <div className="grid gap-2 border border-border bg-surface-2/40 rounded-xl p-3">
+                        <Label htmlFor="camp-category" className="font-semibold">
+                          Select Category
+                        </Label>
+                        <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                          <SelectTrigger id="camp-category">
+                            <SelectValue placeholder="Choose Category" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {categoriesList.map((cat) => (
+                              <SelectItem key={cat} value={cat}>
+                                {cat}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+
+                    {campaignForm.target === "Selected products" && (
+                      <div className="grid gap-2 border border-border bg-surface-2/40 rounded-xl p-3">
+                        <Label className="font-semibold">Select Products (At least one)</Label>
+                        <div className="border border-border rounded-lg bg-surface-1 p-2 max-h-40 overflow-y-auto space-y-1.5">
+                          {(data?.products || []).map((p: any) => {
+                            const isChecked = selectedProductIds.includes(p.id);
+                            return (
+                              <label
+                                key={p.id}
+                                className="flex items-center gap-2 text-ink text-xs cursor-pointer hover:bg-surface-2 p-1 rounded"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedProductIds([...selectedProductIds, p.id]);
+                                    } else {
+                                      setSelectedProductIds(
+                                        selectedProductIds.filter((id) => id !== p.id),
+                                      );
+                                    }
+                                  }}
+                                  className="rounded border-border text-primary focus:ring-primary h-3.5 w-3.5"
+                                />
+                                <span>
+                                  {p.name} ({p.category})
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Conditional Bundle Configurations */}
+                    {campaignForm.type === "Bundle discount" && (
+                      <div className="grid gap-3 border border-dashed border-primary/20 bg-primary/5 rounded-xl p-3">
+                        <Label className="font-semibold text-primary">
+                          Bundle Configuration (Min 2 products)
+                        </Label>
+                        <div className="space-y-3">
+                          {bundleItems.map((item, idx) => (
+                            <div key={idx} className="flex items-end gap-2">
+                              <div className="flex-1 space-y-1">
+                                <Label className="text-xs">Product {idx + 1}</Label>
+                                <Select
+                                  value={item.productId}
+                                  onValueChange={(val) => {
+                                    const updated = [...bundleItems];
+                                    const targetItem = updated[idx];
+                                    if (targetItem) {
+                                      targetItem.productId = val;
+                                      setBundleItems(updated);
+                                    }
+                                  }}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select Product" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {(data?.products || []).map((p: any) => (
+                                      <SelectItem key={p.id} value={p.id}>
+                                        {p.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="w-20 space-y-1">
+                                <Label className="text-xs">Qty</Label>
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  value={item.qty}
+                                  onChange={(e) => {
+                                    const updated = [...bundleItems];
+                                    const targetItem = updated[idx];
+                                    if (targetItem) {
+                                      targetItem.qty = parseInt(e.target.value) || 1;
+                                      setBundleItems(updated);
+                                    }
+                                  }}
+                                />
+                              </div>
+                              {bundleItems.length > 2 && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-destructive font-bold h-9 hover:bg-destructive/10"
+                                  onClick={() => {
+                                    setBundleItems(bundleItems.filter((_, i) => i !== idx));
+                                  }}
+                                >
+                                  Remove
+                                </Button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="w-full text-xs"
+                          onClick={() => {
+                            setBundleItems([...bundleItems, { productId: "", qty: 1 }]);
+                          }}
+                        >
+                          + Add Product to Bundle
+                        </Button>
+                      </div>
+                    )}
+
+                    {campaignForm.type === "Dynamic pricing" && (
+                      <div className="grid gap-3 border border-dashed border-accent/20 bg-accent/5 rounded-xl p-3">
+                        <Label className="font-semibold text-accent">
+                          Dynamic Pricing Conditions
+                        </Label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="grid gap-1">
+                            <Label className="text-xs">Pricing Basis</Label>
+                            <Select value={pricingBasis} onValueChange={setPricingBasis}>
+                              <SelectTrigger className="h-8 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Percentage adjustment">
+                                  Percentage adjustment
+                                </SelectItem>
+                                <SelectItem value="Fixed amount adjustment">
+                                  Fixed amount adjustment
+                                </SelectItem>
+                                <SelectItem value="Fixed final price">Fixed final price</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="grid gap-1">
+                            <Label className="text-xs">Min Quantity</Label>
+                            <Input
+                              type="number"
+                              min="0"
+                              className="h-8 text-xs"
+                              value={minQty}
+                              onChange={(e) => setMinQty(e.target.value)}
+                              placeholder="Optional"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="grid gap-1">
+                            <Label className="text-xs">Max Quantity</Label>
+                            <Input
+                              type="number"
+                              min="0"
+                              className="h-8 text-xs"
+                              value={maxQty}
+                              onChange={(e) => setMaxQty(e.target.value)}
+                              placeholder="Optional"
+                            />
+                          </div>
+                          <div className="grid gap-1">
+                            <Label className="text-xs">Start Time (HH:mm)</Label>
+                            <Input
+                              type="text"
+                              className="h-8 text-xs"
+                              value={startTime}
+                              onChange={(e) => setStartTime(e.target.value)}
+                              placeholder="e.g. 09:00"
+                            />
+                          </div>
+                          <div className="grid gap-1">
+                            <Label className="text-xs">End Time (HH:mm)</Label>
+                            <Input
+                              type="text"
+                              className="h-8 text-xs"
+                              value={endTime}
+                              onChange={(e) => setEndTime(e.target.value)}
+                              placeholder="e.g. 17:00"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="camp-value">
+                          {campaignForm.type === "Percentage discount"
+                            ? "Discount Value (%)"
+                            : campaignForm.type === "Fixed amount discount"
+                              ? "Discount Value (AED)"
+                              : campaignForm.type === "Bundle discount"
+                                ? "Bundle Price (AED)"
+                                : campaignForm.type === "Dynamic pricing"
+                                  ? pricingBasis === "Percentage adjustment"
+                                    ? "Adjustment Value (%)"
+                                    : pricingBasis === "Fixed amount adjustment"
+                                      ? "Adjustment Value (AED)"
+                                      : "Fixed Final Price (AED)"
+                                  : "Value"}
+                        </Label>
+                        <div className="relative">
+                          <Input
+                            id="camp-value"
+                            type="number"
+                            value={campaignForm.value}
+                            onChange={(e) =>
+                              setCampaignForm({ ...campaignForm, value: e.target.value })
+                            }
+                            className="pr-12"
+                            placeholder="e.g. 10"
+                          />
+                          <span className="absolute right-3 top-2 text-xs font-semibold text-muted-foreground">
+                            {campaignForm.type === "Percentage discount" ||
+                            (campaignForm.type === "Dynamic pricing" &&
+                              pricingBasis === "Percentage adjustment")
+                              ? "%"
+                              : "AED"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="camp-status">Status</Label>
+                        <Select
+                          value={campaignForm.status}
+                          onValueChange={(val) => setCampaignForm({ ...campaignForm, status: val })}
+                        >
+                          <SelectTrigger id="camp-status">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Draft">Draft</SelectItem>
+                            <SelectItem value="Active">Active</SelectItem>
+                            <SelectItem value="Inactive">Inactive</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="camp-start">Start Date</Label>
+                        <Input
+                          id="camp-start"
+                          type="date"
+                          value={campaignForm.startDate}
+                          onChange={(e) =>
+                            setCampaignForm({ ...campaignForm, startDate: e.target.value })
+                          }
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="camp-end">End Date</Label>
+                        <Input
+                          id="camp-end"
+                          type="date"
+                          value={campaignForm.endDate}
+                          onChange={(e) =>
+                            setCampaignForm({ ...campaignForm, endDate: e.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <DialogFooter className="mt-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => setIsCreateCampaignOpen(false)}
+                      disabled={isSavingCampaign}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      disabled={isSavingCampaign}
+                      onClick={async () => {
+                        if (!campaignForm.name.trim()) {
+                          toast.error("Campaign name cannot be empty.");
+                          return;
+                        }
+                        const numValue = Number(campaignForm.value);
+                        if (isNaN(numValue) || campaignForm.value.trim() === "") {
+                          toast.error("Value must be a valid number.");
+                          return;
+                        }
+                        if (campaignForm.type === "Percentage discount") {
+                          if (numValue < 0 || numValue > 100) {
+                            toast.error("Percentage discount must be between 0 and 100.");
+                            return;
+                          }
+                        } else if (campaignForm.type === "Fixed amount discount") {
+                          if (numValue < 0) {
+                            toast.error("Discount value cannot be negative.");
+                            return;
+                          }
+                        }
+
+                        // Validate dynamic pricing fields
+                        if (campaignForm.type === "Dynamic pricing") {
+                          if (!pricingBasis) {
+                            toast.error("Pricing basis is required for dynamic pricing.");
+                            return;
+                          }
+                          if (pricingBasis === "Percentage adjustment") {
+                            if (numValue < 0 || numValue > 100) {
+                              toast.error("Percentage adjustment must be between 0 and 100.");
+                              return;
+                            }
+                          } else {
+                            if (numValue < 0) {
+                              toast.error("Adjustment value / price cannot be negative.");
+                              return;
+                            }
+                          }
+
+                          if (
+                            minQty &&
+                            (isNaN(Number(minQty)) ||
+                              Number(minQty) < 0 ||
+                              !Number.isInteger(Number(minQty)))
+                          ) {
+                            toast.error("Minimum quantity must be a non-negative integer.");
+                            return;
+                          }
+                          if (
+                            maxQty &&
+                            (isNaN(Number(maxQty)) ||
+                              Number(maxQty) < 0 ||
+                              !Number.isInteger(Number(maxQty)))
+                          ) {
+                            toast.error("Maximum quantity must be a non-negative integer.");
+                            return;
+                          }
+                          if (minQty && maxQty && Number(maxQty) < Number(minQty)) {
+                            toast.error("Maximum quantity cannot be less than minimum quantity.");
+                            return;
+                          }
+
+                          const timeRegex = /^\d{2}:\d{2}$/;
+                          if (startTime && !timeRegex.test(startTime)) {
+                            toast.error("Start time must be in HH:mm format.");
+                            return;
+                          }
+                          if (endTime && !timeRegex.test(endTime)) {
+                            toast.error("End time must be in HH:mm format.");
+                            return;
+                          }
+                          if (startTime && endTime && endTime < startTime) {
+                            toast.error("End time cannot be earlier than start time.");
+                            return;
+                          }
+                        }
+
+                        // Validate target dependent scopes
+                        if (campaignForm.target === "Category") {
+                          if (!selectedCategory) {
+                            toast.error("Please select a target category.");
+                            return;
+                          }
+                        } else if (campaignForm.target === "Selected products") {
+                          if (selectedProductIds.length === 0) {
+                            toast.error("Please select at least one product.");
+                            return;
+                          }
+                        }
+
+                        // Validate bundle dependent configurations
+                        if (campaignForm.type === "Bundle discount") {
+                          if (bundleItems.length < 2) {
+                            toast.error("Bundle must contain at least 2 products.");
+                            return;
+                          }
+                          const invalidItem = bundleItems.find((item) => !item.productId);
+                          if (invalidItem) {
+                            toast.error("Please select products for all bundle entries.");
+                            return;
+                          }
+                        }
+
+                        if (!campaignForm.startDate || !campaignForm.endDate) {
+                          toast.error("Start and end dates are required.");
+                          return;
+                        }
+                        const start = new Date(campaignForm.startDate);
+                        const end = new Date(campaignForm.endDate);
+                        if (end < start) {
+                          toast.error("End date cannot be earlier than start date.");
+                          return;
+                        }
+
+                        setIsSavingCampaign(true);
+                        const loadToast = toast.loading("Saving promotion campaign...");
+                        try {
+                          const res = await createCampaignFn({
+                            data: {
+                              name: campaignForm.name,
+                              type: campaignForm.type,
+                              target: campaignForm.target,
+                              value: numValue,
+                              startDate: campaignForm.startDate,
+                              endDate: campaignForm.endDate,
+                              status: campaignForm.status,
+                              targetCategory:
+                                campaignForm.target === "Category" ? selectedCategory : null,
+                              targetProductIds:
+                                campaignForm.target === "Selected products"
+                                  ? selectedProductIds.join(",")
+                                  : null,
+                              bundleProducts:
+                                campaignForm.type === "Bundle discount"
+                                  ? JSON.stringify(bundleItems)
+                                  : null,
+                              pricingBasis:
+                                campaignForm.type === "Dynamic pricing" ? pricingBasis : null,
+                              minQty:
+                                campaignForm.type === "Dynamic pricing" && minQty ? minQty : null,
+                              maxQty:
+                                campaignForm.type === "Dynamic pricing" && maxQty ? maxQty : null,
+                              startTime:
+                                campaignForm.type === "Dynamic pricing" && startTime
+                                  ? startTime
+                                  : null,
+                              endTime:
+                                campaignForm.type === "Dynamic pricing" && endTime ? endTime : null,
+                            },
+                          });
+                          toast.dismiss(loadToast);
+                          if (res.success) {
+                            setIsCreateCampaignOpen(false);
+                            router.invalidate();
+                            toast.success("Campaign created successfully!");
+                          } else {
+                            toast.error("Failed to save campaign.");
+                          }
+                        } catch (err: any) {
+                          toast.dismiss(loadToast);
+                          toast.error(err.message || "An error occurred.");
+                        } finally {
+                          setIsSavingCampaign(false);
+                        }
+                      }}
+                    >
+                      {isSavingCampaign ? "Creating..." : "Create Campaign"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </div>
             <div className="panel overflow-x-auto">
               <Table className="min-w-[800px]">
@@ -2315,10 +3078,10 @@ function HeadOffice() {
                       <TableCell className="text-sm">{p.target}</TableCell>
                       <TableCell className="font-medium text-ink">{p.value}</TableCell>
                       <TableCell className="tabular-nums text-muted-foreground">
-                        {p.startDate}
+                        {p.startDate ? new Date(p.startDate).toISOString().split("T")[0] : "-"}
                       </TableCell>
                       <TableCell className="tabular-nums text-muted-foreground">
-                        {p.endDate}
+                        {p.endDate ? new Date(p.endDate).toISOString().split("T")[0] : "-"}
                       </TableCell>
                       <TableCell className="text-right">
                         <span

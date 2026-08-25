@@ -19,7 +19,7 @@ import {
   Building2,
   X
 } from "lucide-react";
-import { getInventoryDataServerFn, stockTransferServerFn } from "@/lib/inventory-manager-server";
+import { getInventoryDataServerFn, stockTransferServerFn, draftPurchaseOrderServerFn } from "@/lib/inventory-manager-server";
 
 export const Route = createFileRoute("/inventory-manager")({
   beforeLoad: async () => {
@@ -34,6 +34,30 @@ export const Route = createFileRoute("/inventory-manager")({
     return await getInventoryDataServerFn();
   },
   component: InventoryManager,
+  errorComponent: ({ error }) => {
+    if (error.message.includes("No branch is assigned to this user.")) {
+      return (
+        <div className="flex h-[80vh] items-center justify-center p-4">
+          <div className="panel max-w-md w-full p-8 text-center space-y-4">
+            <h1 className="text-xl font-bold text-ink">No Branch Assigned</h1>
+            <p className="text-sm text-muted-foreground">
+              No branch is assigned to this user.
+            </p>
+          </div>
+        </div>
+      );
+    }
+    return (
+        <div className="flex h-[80vh] items-center justify-center p-4">
+          <div className="panel max-w-md w-full p-8 text-center space-y-4">
+            <h1 className="text-xl font-bold text-destructive">Access Denied</h1>
+            <p className="text-sm text-muted-foreground">
+              {error.message || "You do not have permission to access this page."}
+            </p>
+          </div>
+        </div>
+    );
+  }
 });
 
 function InventoryManager() {
@@ -49,21 +73,89 @@ function InventoryManager() {
     quantity: 1
   });
   
-  if ((data as any).error) {
-    return (
-      <div className="p-8">
-        <h1 className="text-red-500 font-bold text-xl">Backend API Error</h1>
-        <pre className="mt-4 p-4 bg-red-50 text-red-900 rounded whitespace-pre-wrap">{(data as any).error}</pre>
-      </div>
-    );
-  }
+  const [draftPoOpen, setDraftPoOpen] = useState(false);
+  const [isDraftingPo, setIsDraftingPo] = useState(false);
+  const [draftPoForm, setDraftPoForm] = useState({
+    productId: "",
+    branchId: "",
+    vendorId: "",
+    qty: 10
+  });
 
-  const { branches, stockLevels, batches, transfers, stats } = data;
+  const [searchQuery, setSearchQuery] = useState("");
+  
+  const { tenant, role, branchScope, branches, allTenantBranches, stockLevels, batches, transfers, stats, vendors, allowPoDraft } = data;
+
+  const subtitle = role === "Inventory Manager"
+      ? (branchScope?.length === 1 
+          ? `${tenant?.name || "Company"} · ${branches.find((b: any) => b.id === branchScope[0])?.name || "Assigned Branch"}`
+          : `${tenant?.name || "Company"} · Assigned Branches`)
+      : `${tenant?.name || "Company"} · Global View`;
+
+  const filteredStockLevels = stockLevels.filter((s: any) => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    const productName = (s.productName || "").toLowerCase();
+    const sku = (s.sku || s.barcode || "").toLowerCase();
+    return productName.includes(query) || sku.includes(query);
+  });
+
+  const handleExport = () => {
+    if (filteredStockLevels.length === 0) {
+      toast.error("No data to export");
+      return;
+    }
+    
+    try {
+      const headers = ["SKU", "Item", "Branch", "In Stock", "Reorder Level", "Status"];
+      const csvRows = [headers.join(",")];
+      
+      for (const s of filteredStockLevels) {
+        const sku = s.sku || s.barcode || "";
+        const isLow = s.stock <= s.reorderLevel;
+        const status = isLow ? "Low Stock" : "Healthy";
+        
+        const row = [
+          `"${sku}"`,
+          `"${s.productName?.replace(/"/g, '""') || ""}"`,
+          `"${s.branchName?.replace(/"/g, '""') || ""}"`,
+          `"${s.stock} ${s.unit}"`,
+          `"${s.reorderLevel} ${s.unit}"`,
+          `"${status}"`
+        ];
+        csvRows.push(row.join(","));
+      }
+      
+      const csvData = csvRows.join("\n");
+      const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `stock_levels_${new Date().toISOString().split("T")[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      toast.success("Export successful");
+    } catch (err) {
+      toast.error("Export failed: " + (err instanceof Error ? err.message : "Unknown error"));
+    }
+  };
+
+  const openTransferModal = () => {
+    let sourceBranch = transferForm.sourceBranchId;
+    if (role === "Inventory Manager" && branches.length === 1) {
+      sourceBranch = branches[0].id;
+    }
+    setTransferForm(prev => ({ ...prev, sourceBranchId: sourceBranch }));
+    setTransferModalOpen(true);
+  };
 
   return (
     <DemoShell
       title="Inventory Control Dashboard"
-      subtitle={`${data.tenant?.name || "Company"} · Global View`}
+      subtitle={subtitle}
       actions={
         <Button className="rounded-xl font-semibold" onClick={() => toast.success("Stock count initiated")}>
           <Boxes className="mr-1.5 h-4 w-4" /> Start Stock Count
@@ -93,11 +185,18 @@ function InventoryManager() {
               <div className="flex items-center justify-between border-b border-border p-4">
                 <div className="relative w-72">
                   <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input placeholder="Search SKU or Product Name..." className="pl-9 h-9 text-sm" />
+                  <Input 
+                    placeholder="Search SKU or Product Name..." 
+                    className="pl-9 h-9 text-sm"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" className="h-9">Filter by Branch</Button>
-                  <Button variant="outline" size="sm" className="h-9">Export</Button>
+                  {role !== "Inventory Manager" || (branchScope && branchScope.length > 1) ? (
+                    <Button variant="outline" size="sm" className="h-9">Filter by Branch</Button>
+                  ) : null}
+                  <Button variant="outline" size="sm" className="h-9" onClick={handleExport}>Export</Button>
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -112,12 +211,14 @@ function InventoryManager() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {stockLevels.length === 0 && (
+                    {filteredStockLevels.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">No stock data available.</td>
+                        <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                          {searchQuery ? "No products found." : "No stock data available."}
+                        </td>
                       </tr>
                     )}
-                    {stockLevels.map((s: any) => {
+                    {filteredStockLevels.map((s: any) => {
                       const isLow = s.stock <= s.reorderLevel;
                       return (
                         <tr key={s.id} className="hover:bg-surface-2/50 transition-colors">
@@ -158,9 +259,20 @@ function InventoryManager() {
                 <h3 className="text-lg font-bold text-ink">Stock Transfers</h3>
                 <p className="text-sm text-muted-foreground">Move inventory between branches or central warehouse.</p>
               </div>
-              <Button onClick={() => setTransferModalOpen(true)}>
-                <Plus className="mr-1.5 h-4 w-4" /> New Transfer
-              </Button>
+              <div className="flex flex-col items-end gap-1">
+                <Button 
+                  className="font-semibold" 
+                  onClick={openTransferModal}
+                  disabled={allTenantBranches.length < 2}
+                >
+                  <ArrowRightLeft className="mr-2 h-4 w-4" /> New Transfer
+                </Button>
+                {allTenantBranches.length < 2 && (
+                  <span className="text-[10px] text-muted-foreground text-right max-w-[250px]">
+                    No eligible destination branch or warehouse is available for transfer.
+                  </span>
+                )}
+              </div>
             </div>
             
             <div className="panel overflow-hidden">
@@ -230,7 +342,8 @@ function InventoryManager() {
                     const expiry = new Date(b.expiryDate);
                     const now = new Date();
                     const daysLeft = Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-                    const isUrgent = daysLeft <= 14;
+                    const isExpired = daysLeft <= 0;
+                    const isNearExpiry = !isExpired && daysLeft <= 30;
                     return (
                       <tr key={b.id} className="hover:bg-surface-2/50 transition-colors">
                         <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{b.batchNumber}</td>
@@ -241,13 +354,17 @@ function InventoryManager() {
                         <td className="px-4 py-3">{b.stock}</td>
                         <td className="px-4 py-3 text-muted-foreground">{expiry.toLocaleDateString()}</td>
                         <td className="px-4 py-3 text-right">
-                          {isUrgent ? (
+                          {isExpired ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-bold text-destructive">
+                              <AlertTriangle className="h-3 w-3" /> Expired
+                            </span>
+                          ) : isNearExpiry ? (
                             <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1 text-xs font-bold text-accent">
-                              <AlertTriangle className="h-3 w-3" /> {daysLeft} Days Left
+                              <AlertTriangle className="h-3 w-3" /> Near Expiry ({daysLeft} days)
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-xs font-bold text-success">
-                              <CheckCircle2 className="h-3 w-3" /> {daysLeft} Days Left
+                              <CheckCircle2 className="h-3 w-3" /> Healthy
                             </span>
                           )}
                         </td>
@@ -279,9 +396,32 @@ function InventoryManager() {
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">Branch: {alert.branchName}</p>
                   </div>
-                  <Button className="mt-4 w-full" variant="secondary" onClick={() => toast.info(`Drafting PO for ${alert.productName} will be available in Phase 5 (Purchasing)`)}>
-                    <ShoppingCart className="mr-1.5 h-4 w-4" /> Raise PO Draft
-                  </Button>
+                  {allowPoDraft ? (
+                    <Button 
+                      className="mt-4 w-full" 
+                      variant="secondary" 
+                      onClick={() => {
+                        setDraftPoForm({
+                          productId: alert.productId,
+                          branchId: alert.branchId,
+                          vendorId: vendors.length > 0 ? vendors[0].id : "",
+                          qty: Math.max(10, alert.reorderLevel - alert.stock)
+                        });
+                        setDraftPoOpen(true);
+                      }}
+                    >
+                      <ShoppingCart className="mr-1.5 h-4 w-4" /> Raise PO Draft
+                    </Button>
+                  ) : (
+                    <div className="relative group mt-4 w-full">
+                      <Button className="w-full" variant="secondary" disabled>
+                        <ShoppingCart className="mr-1.5 h-4 w-4" /> Raise PO Draft
+                      </Button>
+                      <div className="absolute right-0 bottom-full mb-1 hidden w-48 z-10 p-2 text-xs text-white bg-black rounded group-hover:block text-center">
+                        Only Purchasing Officer can create purchase orders.
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -319,9 +459,10 @@ function InventoryManager() {
                 <div>
                   <label className="text-sm font-semibold text-ink">From Branch</label>
                   <select 
-                    className="mt-1 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    className="mt-1 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-50"
                     value={transferForm.sourceBranchId}
                     onChange={(e) => setTransferForm({...transferForm, sourceBranchId: e.target.value})}
+                    disabled={role === "Inventory Manager" && branches.length === 1}
                   >
                     <option value="">Select origin...</option>
                     {branches.map((b: any) => (
@@ -332,12 +473,12 @@ function InventoryManager() {
                 <div>
                   <label className="text-sm font-semibold text-ink">To Branch</label>
                   <select 
-                    className="mt-1 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    className="mt-1 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-50"
                     value={transferForm.targetBranchId}
                     onChange={(e) => setTransferForm({...transferForm, targetBranchId: e.target.value})}
                   >
                     <option value="">Select destination...</option>
-                    {branches.map((b: any) => (
+                    {allTenantBranches.filter((b: any) => b.id !== transferForm.sourceBranchId).map((b: any) => (
                       <option key={b.id} value={b.id}>{b.name}</option>
                     ))}
                   </select>
@@ -374,6 +515,81 @@ function InventoryManager() {
                   }}
                 >
                   {isTransferring ? "Processing..." : "Transfer Stock"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {draftPoOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-ink">Raise PO Draft</h2>
+              <button onClick={() => setDraftPoOpen(false)} className="text-muted-foreground hover:text-ink">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-semibold text-ink">Product</label>
+                <div className="mt-1 p-2 bg-surface-2 rounded-md text-sm border border-border text-muted-foreground">
+                  {stockLevels.find((s: any) => s.productId === draftPoForm.productId)?.productName || "Unknown Product"}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-semibold text-ink">Branch</label>
+                <div className="mt-1 p-2 bg-surface-2 rounded-md text-sm border border-border text-muted-foreground">
+                  {branches.find((b: any) => b.id === draftPoForm.branchId)?.name || "Unknown Branch"}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-semibold text-ink">Vendor</label>
+                <select 
+                  className="mt-1 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={draftPoForm.vendorId}
+                  onChange={(e) => setDraftPoForm({...draftPoForm, vendorId: e.target.value})}
+                >
+                  {vendors?.map((v: any) => (
+                    <option key={v.id} value={v.id}>{v.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm font-semibold text-ink">Order Quantity</label>
+                <Input 
+                  type="number" 
+                  min="1" 
+                  className="mt-1" 
+                  value={draftPoForm.qty}
+                  onChange={(e) => setDraftPoForm({...draftPoForm, qty: parseInt(e.target.value) || 1})}
+                />
+              </div>
+
+              <div className="mt-6 flex justify-end gap-3">
+                <Button variant="outline" onClick={() => setDraftPoOpen(false)}>Cancel</Button>
+                <Button 
+                  disabled={isDraftingPo || !draftPoForm.vendorId || draftPoForm.qty <= 0}
+                  onClick={async () => {
+                    setIsDraftingPo(true);
+                    try {
+                      await draftPurchaseOrderServerFn({ data: draftPoForm });
+                      toast.success("Draft PO created successfully!");
+                      setDraftPoOpen(false);
+                      router.invalidate();
+                    } catch (err: any) {
+                      toast.error(err.message || "Failed to create Draft PO");
+                    } finally {
+                      setIsDraftingPo(false);
+                    }
+                  }}
+                >
+                  {isDraftingPo ? "Processing..." : "Create Draft"}
                 </Button>
               </div>
             </div>

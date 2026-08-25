@@ -12,9 +12,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Logo } from "@/components/site/Logo";
-import { useAuth, getTenantsAndBranchesFn } from "@/lib/auth";
+import { useAuth, getTenantsAndBranchesFn, getBranchCashiersAndTillsFn, resetCashierPinSelfFn } from "@/lib/auth";
 import { toast } from "sonner";
-
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 export const Route = createFileRoute("/login")({
   component: Login,
 });
@@ -43,8 +50,21 @@ function Login() {
   // PIN state
   const [selectedTenant, setSelectedTenant] = useState("");
   const [selectedBranch, setSelectedBranch] = useState("");
+  const [selectedCashierId, setSelectedCashierId] = useState("");
+  const [selectedTillId, setSelectedTillId] = useState("");
   const [pin, setPin] = useState("");
-  
+
+  const [cashiersList, setCashiersList] = useState<{ id: string; name: string | null; email: string | null }[]>([]);
+  const [tillsList, setTillsList] = useState<{ id: string; name: string; status: string }[]>([]);
+
+  // Forgot PIN state
+  const [forgotModalOpen, setForgotModalOpen] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetPin, setResetPin] = useState("");
+  const [resetConfirmPin, setResetConfirmPin] = useState("");
+  const [isResetting, setIsResetting] = useState(false);
+
   // UI helpers
   const [tenantsList, setTenantsList] = useState<Tenant[]>([]);
   const [branchesList, setBranchesList] = useState<Branch[]>([]);
@@ -65,6 +85,32 @@ function Login() {
     loadBranches();
   }, []);
 
+  useEffect(() => {
+    async function loadBranchDetails() {
+      if (!selectedTenant || !selectedBranch) {
+        setCashiersList([]);
+        setTillsList([]);
+        setSelectedCashierId("");
+        setSelectedTillId("");
+        return;
+      }
+      try {
+        const res = await getBranchCashiersAndTillsFn({
+          data: { tenantId: selectedTenant, branchId: selectedBranch }
+        });
+        if (res.success && res.cashiers && res.tills) {
+          setCashiersList(res.cashiers);
+          setTillsList(res.tills);
+        } else {
+          toast.error(res.error || "Failed to load branch details");
+        }
+      } catch (err: any) {
+        toast.error(err.message || "Failed to load branch details");
+      }
+    }
+    loadBranchDetails();
+  }, [selectedTenant, selectedBranch]);
+
   const handleCredentialsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
@@ -83,17 +129,58 @@ function Login() {
 
   const handlePinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedTenant || !selectedBranch || !pin) {
-      toast.error("Please select tenant, branch and enter PIN");
+    if (!selectedTenant || !selectedBranch || !selectedCashierId || !selectedTillId || !pin) {
+      toast.error("Please select tenant, branch, cashier, till and enter PIN");
       return;
     }
     setIsLoading(true);
-    const res = await pinLogin(selectedTenant, selectedBranch, pin);
+    const res = await pinLogin(selectedTenant, selectedBranch, selectedCashierId, selectedTillId, pin);
     setIsLoading(false);
     if (res.success) {
       toast.success("Cashier signed in successfully!");
     } else {
-      toast.error(res.error || "Invalid PIN");
+      toast.error(res.error || "Authentication failed");
+    }
+  };
+
+  const handleResetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetEmail || !resetPassword || !resetPin || !resetConfirmPin) {
+      toast.error("Please fill in all reset fields");
+      return;
+    }
+    if (resetPin !== resetConfirmPin) {
+      toast.error("New PIN and confirm PIN do not match");
+      return;
+    }
+    if (!/^\d{4}$/.test(resetPin)) {
+      toast.error("PIN must be exactly 4 digits");
+      return;
+    }
+    setIsResetting(true);
+    try {
+      const res = await resetCashierPinSelfFn({
+        data: {
+          email: resetEmail,
+          currentPass: resetPassword,
+          newPin: resetPin,
+          confirmPin: resetConfirmPin,
+        }
+      });
+      if (res.success) {
+        toast.success("PIN reset successfully!");
+        setForgotModalOpen(false);
+        setResetEmail("");
+        setResetPassword("");
+        setResetPin("");
+        setResetConfirmPin("");
+      } else {
+        toast.error(res.error || "Failed to reset PIN");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to reset PIN");
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -185,7 +272,9 @@ function Login() {
                   value={selectedTenant}
                   onValueChange={(v) => {
                     setSelectedTenant(v);
-                    setSelectedBranch(""); // Reset branch on tenant change
+                    setSelectedBranch("");
+                    setSelectedCashierId("");
+                    setSelectedTillId("");
                   }}
                 >
                   <SelectTrigger className="rounded-xl py-6">
@@ -205,7 +294,11 @@ function Login() {
                 <Label htmlFor="branch">Branch / Outlet</Label>
                 <Select
                   value={selectedBranch}
-                  onValueChange={setSelectedBranch}
+                  onValueChange={(v) => {
+                    setSelectedBranch(v);
+                    setSelectedCashierId("");
+                    setSelectedTillId("");
+                  }}
                   disabled={!selectedTenant}
                 >
                   <SelectTrigger className="rounded-xl py-6">
@@ -220,6 +313,48 @@ function Login() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {selectedBranch && (
+                <>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="cashier-select">Cashier / Staff</Label>
+                    <Select
+                      value={selectedCashierId}
+                      onValueChange={setSelectedCashierId}
+                    >
+                      <SelectTrigger className="rounded-xl py-6">
+                        <SelectValue placeholder="Select Cashier" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {cashiersList.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name} ({c.email})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="till-select">Till Terminal</Label>
+                    <Select
+                      value={selectedTillId}
+                      onValueChange={setSelectedTillId}
+                    >
+                      <SelectTrigger className="rounded-xl py-6">
+                        <SelectValue placeholder="Select Till Terminal" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {tillsList.map((t) => (
+                          <SelectItem key={t.id} value={t.id}>
+                            {t.name} ({t.status})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              )}
 
               <div className="space-y-1.5">
                 <Label htmlFor="pin">Cashier PIN</Label>
@@ -237,6 +372,16 @@ function Login() {
                 </div>
               </div>
 
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setForgotModalOpen(true)}
+                  className="text-xs font-semibold text-primary hover:underline transition-all"
+                >
+                  Forgot / Reset PIN?
+                </button>
+              </div>
+
               <Button
                 type="submit"
                 disabled={isLoading}
@@ -246,6 +391,98 @@ function Login() {
               </Button>
             </form>
           )}
+
+          {/* Forgot PIN Modal Dialog */}
+          <Dialog open={forgotModalOpen} onOpenChange={(open) => {
+            if (!isResetting) {
+              setForgotModalOpen(open);
+              if (!open) {
+                setResetEmail("");
+                setResetPassword("");
+                setResetPin("");
+                setResetConfirmPin("");
+              }
+            }
+          }}>
+            <DialogContent className="sm:max-w-md w-[95vw] sm:w-full">
+              <DialogHeader>
+                <DialogTitle>Reset Cashier PIN</DialogTitle>
+                <DialogDescription>
+                  Re-authenticate with your email and password to securely change your 4-digit PIN.
+                </DialogDescription>
+              </DialogHeader>
+
+              <form onSubmit={handleResetSubmit} className="space-y-4 py-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="reset-email">Email Address</Label>
+                  <Input
+                    id="reset-email"
+                    type="email"
+                    placeholder="cashier@supermarket.com"
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="reset-pass">Current Password</Label>
+                  <Input
+                    id="reset-pass"
+                    type="password"
+                    placeholder="••••••••"
+                    value={resetPassword}
+                    onChange={(e) => setResetPassword(e.target.value)}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reset-pin">New 4-digit PIN</Label>
+                    <Input
+                      id="reset-pin"
+                      type="password"
+                      maxLength={4}
+                      placeholder="••••"
+                      value={resetPin}
+                      onChange={(e) => setResetPin(e.target.value.replace(/\D/g, ""))}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reset-cpin">Confirm PIN</Label>
+                    <Input
+                      id="reset-cpin"
+                      type="password"
+                      maxLength={4}
+                      placeholder="••••"
+                      value={resetConfirmPin}
+                      onChange={(e) => setResetConfirmPin(e.target.value.replace(/\D/g, ""))}
+                    />
+                  </div>
+                </div>
+
+                <DialogFooter className="flex justify-end gap-2 mt-6">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setForgotModalOpen(false);
+                      setResetEmail("");
+                      setResetPassword("");
+                      setResetPin("");
+                      setResetConfirmPin("");
+                    }}
+                    disabled={isResetting}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={isResetting}>
+                    {isResetting ? "Resetting..." : "Reset PIN"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
           
           <div className="mt-8 flex items-center justify-center gap-2 text-xs text-muted-foreground">
             <Building2 className="h-4 w-4" /> White-Label POS Platform Secure Login

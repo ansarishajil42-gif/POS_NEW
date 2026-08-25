@@ -36,8 +36,11 @@ export const tenantSettings = pgTable("tenant_settings", {
   vatRate: decimal("vat_rate", { precision: 5, scale: 2 }).notNull().default("5.00"),
   vatInclusive: boolean("vat_inclusive").notNull().default(true),
   loyaltyRedemptionRate: decimal("loyalty_redemption_rate", { precision: 5, scale: 2 }).notNull().default("0.01"), // e.g. 1 point = 0.01 currency
+  loyaltyPointsPerAed: integer("loyalty_points_per_aed").notNull().default(10),
+  loyaltyMinPointsToRedeem: integer("loyalty_min_points_to_redeem").notNull().default(5000),
   currency: text("currency").notNull().default("AED"),
   taxRegistrationNumber: text("trn"),
+  allowInventoryManagerPoDraft: boolean("allow_inventory_manager_po_draft").notNull().default(false),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
@@ -78,7 +81,8 @@ export const products = pgTable("products", {
   unit: text("unit").notNull(),
   costPrice: decimal("cost_price", { precision: 10, scale: 2 }).notNull(),
   salePrice: decimal("sale_price", { precision: 10, scale: 2 }).notNull(),
-  isBatchTracked: boolean("is_batch_tracked").default(false),
+  isBatchTracked: boolean("is_batch_tracked").default(true),
+  isExpiryTracked: boolean("is_expiry_tracked").default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -105,6 +109,21 @@ export const stockTransfers = pgTable("stock_transfers", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const priceOverrideRequests = pgTable("price_override_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  branchId: uuid("branch_id").notNull().references(() => branches.id, { onDelete: "cascade" }),
+  productId: uuid("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+  stockLevelId: uuid("stock_level_id").notNull().references(() => stockLevels.id, { onDelete: "cascade" }),
+  standardPrice: decimal("standard_price", { precision: 10, scale: 2 }).notNull(),
+  requestedPrice: decimal("requested_price", { precision: 10, scale: 2 }).notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("Pending"), // Pending, Approved, Rejected
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  approvedBy: uuid("approved_by").references(() => staffUsers.id),
+  approvedAt: timestamp("approved_at"),
+});
+
 // 5.1 promotions
 export const promotions = pgTable("promotions", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -116,16 +135,33 @@ export const promotions = pgTable("promotions", {
   endDate: timestamp("end_date").notNull(),
   status: text("status").notNull().default("Active"), // Active, Inactive
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  type: text("type"),
+  target: text("target"),
+  value: text("value"),
+  targetCategory: text("target_category"),
+  targetProductIds: text("target_product_ids"),
+  bundleProducts: text("bundle_products"),
+  pricingBasis: text("pricing_basis"),
+  minQty: integer("min_qty"),
+  maxQty: integer("max_qty"),
+  startTime: text("start_time"),
+  endTime: text("end_time"),
 });
 
 // 6. batches
 export const batches = pgTable("batches", {
   id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
   productId: uuid("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
   branchId: uuid("branch_id").references(() => branches.id, { onDelete: "cascade" }),
+  grnId: uuid("grn_id").references(() => grn.id, { onDelete: "cascade" }),
   batchNumber: text("batch_number").notNull(),
+  manufacturingDate: timestamp("manufacturing_date"),
   expiryDate: timestamp("expiry_date").notNull(),
   stock: integer("stock").notNull().default(0),
+  receivedQty: integer("received_qty").notNull().default(0),
+  unitCost: decimal("unit_cost", { precision: 10, scale: 2 }),
+  createdBy: uuid("created_by").references(() => staffUsers.id),
 });
 
 // 7. vendors
@@ -150,7 +186,10 @@ export const purchaseOrders = pgTable("purchase_orders", {
   tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
   branchId: uuid("branch_id").references(() => branches.id),
   vendorId: uuid("vendor_id").notNull().references(() => vendors.id),
-  status: text("status").notNull().default("Draft"), // Draft, Ordered, GRN, Invoiced
+  status: text("status").notNull().default("Draft"), // Draft, Ordered, GRN, Invoiced, Cancelled
+  subtotal: decimal("subtotal", { precision: 12, scale: 2 }),
+  vatRate: decimal("vat_rate", { precision: 5, scale: 2 }),
+  vatAmount: decimal("vat_amount", { precision: 12, scale: 2 }),
   total: decimal("total", { precision: 12, scale: 2 }).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -184,6 +223,9 @@ export const grnItems = pgTable("grn_items", {
   orderedQty: integer("ordered_qty").notNull(),
   receivedQty: integer("received_qty").notNull(),
   variance: integer("variance").notNull().default(0),
+  batchNumber: text("batch_number"),
+  manufacturingDate: timestamp("manufacturing_date"),
+  expiryDate: timestamp("expiry_date"),
 });
 
 // 12. vendor_invoices
@@ -193,9 +235,29 @@ export const vendorInvoices = pgTable("vendor_invoices", {
   vendorId: uuid("vendor_id").notNull().references(() => vendors.id),
   invoiceNumber: text("invoice_number").notNull(),
   purchaseOrderId: uuid("purchase_order_id").references(() => purchaseOrders.id),
+  grnId: uuid("grn_id").references(() => grn.id),
+  subtotal: decimal("subtotal", { precision: 12, scale: 2 }),
+  vatRate: decimal("vat_rate", { precision: 5, scale: 2 }),
+  vatAmount: decimal("vat_amount", { precision: 12, scale: 2 }),
   total: decimal("total", { precision: 12, scale: 2 }).notNull(),
-  status: text("status").notNull().default("pending"), // pending, paid, overdue
+  paidAmount: decimal("paid_amount", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  status: text("status").notNull().default("pending"), // pending, Partially Paid, Paid, overdue
   dueDate: timestamp("due_date").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// 12.5 vendor_payments
+export const vendorPayments = pgTable("vendor_payments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  vendorId: uuid("vendor_id").notNull().references(() => vendors.id),
+  invoiceId: uuid("invoice_id").notNull().references(() => vendorInvoices.id, { onDelete: "cascade" }),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  method: text("method").notNull(), // Cash, Bank Transfer, Cheque
+  referenceNo: text("reference_no"),
+  notes: text("notes"),
+  paymentDate: timestamp("payment_date").notNull(),
+  recordedBy: uuid("recorded_by").notNull().references(() => staffUsers.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -235,7 +297,12 @@ export const shifts = pgTable("shifts", {
   cashDrops: text("cash_drops").default("[]"), // JSON string array of drops
   expectedCash: decimal("expected_cash", { precision: 12, scale: 2 }),
   actualCash: decimal("actual_cash", { precision: 12, scale: 2 }),
-  status: text("status").notNull().default("Open"), // Open, Closed
+  status: text("status").notNull().default("Open"), // Open, Closed, Scheduled
+  tillId: text("till_id"),
+  startTime: text("start_time"),
+  endTime: text("end_time"),
+  shiftDate: text("shift_date"),
+  notes: text("notes"),
 });
 
 // 15. orders
@@ -250,6 +317,9 @@ export const orders = pgTable("orders", {
   vat: decimal("vat", { precision: 12, scale: 2 }).notNull(),
   total: decimal("total", { precision: 12, scale: 2 }).notNull(),
   paymentMethod: text("payment_method"), // Deprecated: Replaced by order_payments table. Kept temporarily.
+  cashReceived: decimal("cash_received", { precision: 12, scale: 2 }),
+  changeGiven: decimal("change_given", { precision: 12, scale: 2 }),
+  idempotencyKey: text("idempotency_key").unique(),
   status: text("status").notNull().default("completed"), // completed, voided, refunded, auto-synced
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -339,6 +409,19 @@ export const aggregatorSyncSettings = pgTable(
 
 
 // Relations
+// 21. audit_logs
+export const auditLogs = pgTable("audit_logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  branchId: uuid("branch_id").references(() => branches.id),
+  userId: uuid("user_id").references(() => staffUsers.id),
+  action: text("action").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  details: json("details"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const tenantsRelations = relations(tenants, ({ one, many }) => ({
   settings: one(tenantSettings),
   branches: many(branches),
@@ -385,14 +468,17 @@ export const stockLevelsRelations = relations(stockLevels, ({ one }) => ({
 }));
 
 export const batchesRelations = relations(batches, ({ one }) => ({
+  tenant: one(tenants, { fields: [batches.tenantId], references: [tenants.id] }),
   product: one(products, { fields: [batches.productId], references: [products.id] }),
   branch: one(branches, { fields: [batches.branchId], references: [branches.id] }),
+  grn: one(grn, { fields: [batches.grnId], references: [grn.id] }),
 }));
 
 export const ordersRelations = relations(orders, ({ one, many }) => ({
   tenant: one(tenants, { fields: [orders.tenantId], references: [tenants.id] }),
   branch: one(branches, { fields: [orders.branchId], references: [branches.id] }),
   cashier: one(staffUsers, { fields: [orders.cashierId], references: [staffUsers.id] }),
+  till: one(tills, { fields: [orders.tillId], references: [tills.id] }),
   payments: many(orderPayments),
   items: many(orderItems),
 }));
@@ -443,6 +529,7 @@ export const vendorInvoicesRelations = relations(vendorInvoices, ({ one }) => ({
   tenant: one(tenants, { fields: [vendorInvoices.tenantId], references: [tenants.id] }),
   vendor: one(vendors, { fields: [vendorInvoices.vendorId], references: [vendors.id] }),
   purchaseOrder: one(purchaseOrders, { fields: [vendorInvoices.purchaseOrderId], references: [purchaseOrders.id] }),
+  grn: one(grn, { fields: [vendorInvoices.grnId], references: [grn.id] }),
 }));
 
 export const tenantSettingsRelations = relations(tenantSettings, ({ one }) => ({
@@ -457,6 +544,7 @@ export const shiftsRelations = relations(shifts, ({ one }) => ({
   tenant: one(tenants, { fields: [shifts.tenantId], references: [tenants.id] }),
   branch: one(branches, { fields: [shifts.branchId], references: [branches.id] }),
   cashier: one(staffUsers, { fields: [shifts.cashierId], references: [staffUsers.id] }),
+  till: one(tills, { fields: [shifts.tillId], references: [tills.id] }),
 }));
 
 export const orderPaymentsRelations = relations(orderPayments, ({ one }) => ({
@@ -477,3 +565,38 @@ export const rolePermissions = pgTable("role_permissions", {
 export const rolePermissionsRelations = relations(rolePermissions, ({ one }) => ({
   tenant: one(tenants, { fields: [rolePermissions.tenantId], references: [tenants.id] }),
 }));
+
+export const priceOverrideRequestsRelations = relations(priceOverrideRequests, ({ one }) => ({
+  tenant: one(tenants, { fields: [priceOverrideRequests.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [priceOverrideRequests.branchId], references: [branches.id] }),
+  product: one(products, { fields: [priceOverrideRequests.productId], references: [products.id] }),
+  stockLevel: one(stockLevels, { fields: [priceOverrideRequests.stockLevelId], references: [stockLevels.id] }),
+}));
+
+export const tills = pgTable("tills", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  branchId: uuid("branch_id").notNull().references(() => branches.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("Closed"), // Open, Closed
+  openingFloat: decimal("opening_float", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdBy: uuid("created_by").references(() => staffUsers.id),
+}, (t) => [
+  unique("till_branch_unique").on(t.branchId, t.name)
+]);
+
+export const tillsRelations = relations(tills, ({ one }) => ({
+  tenant: one(tenants, { fields: [tills.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [tills.branchId], references: [branches.id] }),
+  creator: one(staffUsers, { fields: [tills.createdBy], references: [staffUsers.id] }),
+}));
+
+export const loginAttempts = pgTable("login_attempts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  identifier: text("identifier").notNull().unique(), // e.g. cashierId
+  attempts: integer("attempts").notNull().default(0),
+  lockedUntil: timestamp("locked_until"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdateFn(() => new Date()),
+});

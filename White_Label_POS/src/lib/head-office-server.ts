@@ -20,6 +20,7 @@ import {
   grnItems,
   orderItems,
   rolePermissions,
+  priceOverrideRequests,
 } from "@/server/db/schema";
 import { eq, and, sql, desc, inArray, ne } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
@@ -179,9 +180,19 @@ export const getHeadOfficeDataFn = createServerFn({ method: "GET" }).handler(asy
     branchTrend.push(dayData);
   }
 
+  const dbPriceOverrideRequests = await db.query.priceOverrideRequests.findMany({
+    where: eq(priceOverrideRequests.tenantId, tenantId),
+    orderBy: [desc(priceOverrideRequests.createdAt)],
+    with: {
+      product: true,
+      branch: true,
+    },
+  });
+
   return {
     success: true,
     settings,
+    priceRequests: dbPriceOverrideRequests,
     branches: dbBranches,
     products: dbProducts,
     stock: dbStock,
@@ -289,6 +300,59 @@ export const updatePriceOverrideFn = createServerFn({ method: "POST" })
     return { success: true };
   });
 
+export const handleOverrideRequestFn = createServerFn({ method: "POST" })
+  .validator((d: { requestId: string; action: "Approve" | "Reject" }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+
+    const request = await db.query.priceOverrideRequests.findFirst({
+      where: and(
+        eq(priceOverrideRequests.id, data.requestId),
+        eq(priceOverrideRequests.tenantId, tenantId),
+      ),
+    });
+
+    if (!request) {
+      throw new Error("Request not found or unauthorized.");
+    }
+
+    if (request.status !== "Pending") {
+      throw new Error("Request has already been processed.");
+    }
+
+    const sessionRes = await getSessionServerFn();
+    const userId = sessionRes.session?.id || null;
+
+    if (data.action === "Approve") {
+      await db
+        .update(priceOverrideRequests)
+        .set({
+          status: "Approved",
+          approvedBy: userId,
+          approvedAt: new Date(),
+        })
+        .where(eq(priceOverrideRequests.id, data.requestId));
+
+      await db
+        .update(stockLevels)
+        .set({
+          priceOverride: request.requestedPrice,
+        })
+        .where(eq(stockLevels.id, request.stockLevelId));
+    } else {
+      await db
+        .update(priceOverrideRequests)
+        .set({
+          status: "Rejected",
+          approvedBy: userId,
+          approvedAt: new Date(),
+        })
+        .where(eq(priceOverrideRequests.id, data.requestId));
+    }
+
+    return { success: true };
+  });
+
 export const applyClearanceFn = createServerFn({ method: "POST" })
   .validator((d: { productId: string; discountPct: number }) => d)
   .handler(async ({ data }) => {
@@ -332,13 +396,241 @@ export const createPoFn = createServerFn({ method: "POST" })
   });
 
 export const updateLoyaltySettingsFn = createServerFn({ method: "POST" })
-  .validator((d: { rate: string }) => d)
+  .validator(
+    (d: {
+      pointsPerAed: string | number;
+      minPointsToRedeem: string | number;
+      redemptionRate: string | number;
+    }) => d,
+  )
   .handler(async ({ data }) => {
     const tenantId = await getHeadOfficeTenant();
+
+    const pointsPerAed = Number(data.pointsPerAed);
+    const minPointsToRedeem = Number(data.minPointsToRedeem);
+    const redemptionRate = Number(data.redemptionRate);
+
+    if (isNaN(pointsPerAed) || pointsPerAed < 0 || !Number.isInteger(pointsPerAed)) {
+      throw new Error("Points per AED must be a non-negative integer.");
+    }
+    if (isNaN(minPointsToRedeem) || minPointsToRedeem < 0 || !Number.isInteger(minPointsToRedeem)) {
+      throw new Error("Minimum points to redeem must be a non-negative integer.");
+    }
+    if (isNaN(redemptionRate) || redemptionRate < 0) {
+      throw new Error("Redemption rate must be a non-negative number.");
+    }
+
     await db
       .update(tenantSettings)
-      .set({ loyaltyRedemptionRate: data.rate })
+      .set({
+        loyaltyPointsPerAed: pointsPerAed,
+        loyaltyMinPointsToRedeem: minPointsToRedeem,
+        loyaltyRedemptionRate: redemptionRate.toFixed(4),
+        updatedAt: new Date(),
+      })
       .where(eq(tenantSettings.tenantId, tenantId));
+    return { success: true };
+  });
+
+export const createCampaignFn = createServerFn({ method: "POST" })
+  .validator(
+    (d: {
+      name: string;
+      type: string;
+      target: string;
+      value: string | number;
+      startDate: string;
+      endDate: string;
+      status: string;
+      targetCategory?: string | null;
+      targetProductIds?: string | null;
+      bundleProducts?: string | null;
+      pricingBasis?: string | null;
+      minQty?: string | number | null;
+      maxQty?: string | number | null;
+      startTime?: string | null;
+      endTime?: string | null;
+    }) => d,
+  )
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+
+    if (!data.name || data.name.trim() === "") {
+      throw new Error("Campaign name is required.");
+    }
+    if (!data.type) {
+      throw new Error("Campaign type is required.");
+    }
+    if (!data.target) {
+      throw new Error("Campaign target is required.");
+    }
+
+    const numValue = Number(data.value);
+    if (isNaN(numValue) && data.type !== "Bundle discount") {
+      throw new Error("Value must be a valid number.");
+    }
+
+    if (data.type === "Percentage discount") {
+      if (numValue < 0 || numValue > 100) {
+        throw new Error("Percentage discount must be between 0 and 100.");
+      }
+    } else if (data.type === "Fixed amount discount") {
+      if (numValue < 0) {
+        throw new Error("Fixed amount discount cannot be negative.");
+      }
+    }
+
+    // Dynamic pricing validation
+    if (data.type === "Dynamic pricing") {
+      if (!data.pricingBasis) {
+        throw new Error("Pricing basis is required for dynamic pricing rules.");
+      }
+      if (data.pricingBasis === "Percentage adjustment") {
+        if (numValue < 0 || numValue > 100) {
+          throw new Error("Percentage adjustment must be between 0 and 100.");
+        }
+      } else {
+        if (numValue < 0) {
+          throw new Error("Adjustment value / price cannot be negative.");
+        }
+      }
+
+      if (data.minQty !== undefined && data.minQty !== null && data.minQty !== "") {
+        const minVal = Number(data.minQty);
+        if (isNaN(minVal) || minVal < 0 || !Number.isInteger(minVal)) {
+          throw new Error("Minimum quantity must be a non-negative integer.");
+        }
+      }
+      if (data.maxQty !== undefined && data.maxQty !== null && data.maxQty !== "") {
+        const maxVal = Number(data.maxQty);
+        if (isNaN(maxVal) || maxVal < 0 || !Number.isInteger(maxVal)) {
+          throw new Error("Maximum quantity must be a non-negative integer.");
+        }
+        if (data.minQty !== undefined && data.minQty !== null && data.minQty !== "") {
+          if (maxVal < Number(data.minQty)) {
+            throw new Error("Maximum quantity cannot be less than minimum quantity.");
+          }
+        }
+      }
+
+      const timeRegex = /^\d{2}:\d{2}$/;
+      if (data.startTime && data.startTime.trim() !== "") {
+        if (!timeRegex.test(data.startTime)) {
+          throw new Error("Start time must be in HH:mm format.");
+        }
+      }
+      if (data.endTime && data.endTime.trim() !== "") {
+        if (!timeRegex.test(data.endTime)) {
+          throw new Error("End time must be in HH:mm format.");
+        }
+        if (data.startTime && data.startTime.trim() !== "" && data.endTime < data.startTime) {
+          throw new Error("End time cannot be earlier than start time.");
+        }
+      }
+    }
+
+    // Validate Target Scope
+    if (data.target === "Category") {
+      if (!data.targetCategory || data.targetCategory.trim() === "") {
+        throw new Error("Category selection is required.");
+      }
+    } else if (data.target === "Selected products") {
+      if (!data.targetProductIds || data.targetProductIds.trim() === "") {
+        throw new Error("At least one product must be selected.");
+      }
+    }
+
+    // Validate Bundle Discount
+    if (data.type === "Bundle discount") {
+      if (!data.bundleProducts || data.bundleProducts.trim() === "") {
+        throw new Error("Bundle configuration is required.");
+      }
+      try {
+        const bundle = JSON.parse(data.bundleProducts);
+        if (!Array.isArray(bundle) || bundle.length < 2) {
+          throw new Error("Bundle must contain at least 2 products.");
+        }
+        for (const item of bundle) {
+          if (!item.productId || !item.qty || isNaN(Number(item.qty)) || Number(item.qty) <= 0) {
+            throw new Error(
+              "Each bundle item must have a valid product and quantity greater than 0.",
+            );
+          }
+        }
+      } catch (e: any) {
+        throw new Error(e.message || "Invalid bundle configuration.");
+      }
+    }
+
+    const start = new Date(data.startDate);
+    const end = new Date(data.endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      throw new Error("Invalid start or end date.");
+    }
+    if (end < start) {
+      throw new Error("End date cannot be earlier than start date.");
+    }
+
+    let discountType = "percentage";
+    if (data.type === "Fixed amount discount") {
+      discountType = "fixed";
+    } else if (data.type === "Bundle discount") {
+      discountType = "bundle";
+    } else if (data.type === "Dynamic pricing") {
+      if (data.pricingBasis === "Percentage adjustment") {
+        discountType = "percentage";
+      } else {
+        discountType = "fixed";
+      }
+    }
+
+    let displayValue = "";
+    if (data.type === "Percentage discount") {
+      displayValue = `${numValue}% off`;
+    } else if (data.type === "Fixed amount discount") {
+      displayValue = `AED ${numValue} flat`;
+    } else if (data.type === "Bundle discount") {
+      displayValue = `Bundle price: AED ${numValue}`;
+    } else if (data.type === "Dynamic pricing") {
+      if (data.pricingBasis === "Percentage adjustment") {
+        displayValue = `${numValue}% adjust`;
+      } else if (data.pricingBasis === "Fixed amount adjustment") {
+        displayValue = `AED ${numValue} adjust`;
+      } else if (data.pricingBasis === "Fixed final price") {
+        displayValue = `AED ${numValue} final`;
+      }
+    }
+
+    // Format target display text
+    let displayTarget = data.target;
+    if (data.target === "Category") {
+      displayTarget = `Category: ${data.targetCategory}`;
+    } else if (data.target === "Selected products") {
+      const productIds = (data.targetProductIds || "").split(",").filter(Boolean);
+      displayTarget = `${productIds.length} selected products`;
+    }
+
+    await db.insert(promotions).values({
+      tenantId,
+      name: data.name,
+      discountType,
+      discountValue: numValue.toString(),
+      startDate: start,
+      endDate: end,
+      status: data.status,
+      type: data.type,
+      target: displayTarget,
+      value: displayValue,
+      targetCategory: data.targetCategory,
+      targetProductIds: data.targetProductIds,
+      bundleProducts: data.bundleProducts,
+      pricingBasis: data.pricingBasis,
+      minQty: data.minQty ? Number(data.minQty) : null,
+      maxQty: data.maxQty ? Number(data.maxQty) : null,
+      startTime: data.startTime,
+      endTime: data.endTime,
+    });
+
     return { success: true };
   });
 

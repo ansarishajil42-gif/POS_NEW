@@ -1,30 +1,52 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getSessionServerFn } from "./auth-server";
 import { db } from "../server/db";
-import { eq, and, desc, sql, inArray } from "drizzle-orm";
+import { eq, and, or, desc, sql, inArray } from "drizzle-orm";
 import { 
     branches, 
     stockLevels, 
     products, 
     batches,
     stockTransfers,
-    tenants
+    tenants,
+    tenantSettings,
+    purchaseOrders,
+    purchaseOrderItems,
+    vendors
 } from "../server/db/schema";
+import * as schema from "../server/db/schema";
 
 // Middleware
 async function getInventoryManagerContext() {
     const res = await getSessionServerFn();
-    if (!res.success || !res.session || (res.session.role !== "Inventory Manager" && res.session.role !== "Head Office Admin")) {
+    if (!res.success || !res.session) {
         throw new Error("Unauthorized");
     }
+    const role = res.session.role;
+    if (role !== "Inventory Manager" && role !== "Head Office Admin" && role !== "Super Admin") {
+        throw new Error("Unauthorized");
+    }
+
+    const tenantId = res.session.tenantId;
+    let branchScope: string[] | null = null; // null means global
+
+    if (role === "Inventory Manager") {
+        if (!res.session.branchId) {
+            throw new Error("No branch is assigned to this user.");
+        }
+        branchScope = [res.session.branchId];
+    }
+
     return {
-        tenantId: res.session.tenantId,
+        tenantId,
+        role,
+        branchScope,
     };
 }
 
 export const getInventoryDataServerFn = createServerFn({ method: "GET" })
     .handler(async () => {
-        const { tenantId } = await getInventoryManagerContext();
+        const { tenantId, branchScope, role } = await getInventoryManagerContext();
 
         // 1. Get tenant info
         const tenant = await db.query.tenants.findFirst({
@@ -32,9 +54,29 @@ export const getInventoryDataServerFn = createServerFn({ method: "GET" })
         });
 
         // 2. Get branches
+        let branchWhere = eq(branches.tenantId, tenantId);
+        if (branchScope) {
+            branchWhere = and(eq(branches.tenantId, tenantId), inArray(branches.id, branchScope))!;
+        }
+
         const allBranches = await db.query.branches.findMany({
+            where: branchWhere
+        });
+
+        // Also fetch all tenant branches unscoped for the transfer destination list
+        const allTenantBranches = await db.query.branches.findMany({
             where: eq(branches.tenantId, tenantId)
         });
+
+        // 2.5 Get vendors
+        let allVendors: any[] = [];
+        try {
+            allVendors = await db.select().from(vendors).where(
+                and(eq(vendors.tenantId, tenantId), eq(vendors.status, "Active"))
+            );
+        } catch (e) {
+            console.warn("Table vendors might not exist yet:", e);
+        }
 
         // 2. Get stock levels across all branches with product info
         let allStockLevels: any[] = [];
@@ -56,7 +98,11 @@ export const getInventoryDataServerFn = createServerFn({ method: "GET" })
                 .from(stockLevels)
                 .innerJoin(products, eq(stockLevels.productId, products.id))
                 .innerJoin(branches, eq(stockLevels.branchId, branches.id))
-                .where(eq(products.tenantId, tenantId));
+                .where(
+                    branchScope
+                        ? and(eq(products.tenantId, tenantId), inArray(stockLevels.branchId, branchScope))
+                        : eq(products.tenantId, tenantId)
+                );
         } catch (e) {
             console.warn("Table stockLevels might not exist yet:", e);
         }
@@ -79,7 +125,11 @@ export const getInventoryDataServerFn = createServerFn({ method: "GET" })
                 .from(batches)
                 .innerJoin(products, eq(batches.productId, products.id))
                 .leftJoin(branches, eq(batches.branchId, branches.id))
-                .where(eq(products.tenantId, tenantId))
+                .where(
+                    branchScope
+                        ? and(eq(products.tenantId, tenantId), inArray(batches.branchId, branchScope))
+                        : eq(products.tenantId, tenantId)
+                )
                 .orderBy(batches.expiryDate);
         } catch (e) {
             console.warn("Table batches might not exist yet:", e);
@@ -92,8 +142,16 @@ export const getInventoryDataServerFn = createServerFn({ method: "GET" })
         // 4. Get recent stock transfers
         let rawTransfers: any[] = [];
         try {
+            let transfersWhere = eq(stockTransfers.tenantId, tenantId);
+            if (branchScope) {
+                transfersWhere = and(
+                    eq(stockTransfers.tenantId, tenantId),
+                    or(inArray(stockTransfers.sourceBranchId, branchScope), inArray(stockTransfers.destinationBranchId, branchScope))
+                )!;
+            }
+
             rawTransfers = await db.select().from(stockTransfers)
-                .where(eq(stockTransfers.tenantId, tenantId))
+                .where(transfersWhere)
                 .orderBy(desc(stockTransfers.createdAt))
                 .limit(50);
         } catch (e) {
@@ -103,8 +161,8 @@ export const getInventoryDataServerFn = createServerFn({ method: "GET" })
         // Map names manually to avoid needing drizzle relations definition
         const allTransfers = rawTransfers.map(t => {
             const product = allStockLevels.find(s => s.productId === t.productId) || { productName: "Unknown", sku: "" };
-            const source = allBranches.find(b => b.id === t.sourceBranchId);
-            const target = allBranches.find(b => b.id === t.destinationBranchId);
+            const source = allTenantBranches.find(b => b.id === t.sourceBranchId);
+            const target = allTenantBranches.find(b => b.id === t.destinationBranchId);
             return {
                 ...t,
                 productName: product.productName,
@@ -116,15 +174,31 @@ export const getInventoryDataServerFn = createServerFn({ method: "GET" })
 
         const result = {
             tenant,
+            role,
+            branchScope,
             branches: allBranches,
+            allTenantBranches,
+            vendors: allVendors,
             stockLevels: allStockLevels,
             batches: allBatches,
             transfers: allTransfers,
+            allowPoDraft: false, // Default to false for now until db is migrated
             stats: {
                 totalSkus: Array.from(new Set(allStockLevels.map(s => s.productId))).length,
                 lowStockCount: lowStockItems.length,
             }
         };
+
+        try {
+            const settings = await db.query.tenantSettings.findFirst({
+                where: eq(tenantSettings.tenantId, tenantId)
+            });
+            if (settings && 'allowInventoryManagerPoDraft' in settings) {
+                result.allowPoDraft = !!settings.allowInventoryManagerPoDraft;
+            }
+        } catch (e) {
+            console.warn("Could not fetch tenant settings for PO draft permission:", e);
+        }
 
         return JSON.parse(JSON.stringify(result));
     });
@@ -132,10 +206,21 @@ export const getInventoryDataServerFn = createServerFn({ method: "GET" })
 export const stockTransferServerFn = createServerFn({ method: "POST" })
     .validator((d: { productId: string; sourceBranchId: string; targetBranchId: string; quantity: number }) => d)
     .handler(async ({ data }) => {
-        const { tenantId } = await getInventoryManagerContext();
+        const { tenantId, branchScope } = await getInventoryManagerContext();
 
+        if (!data.sourceBranchId) throw new Error("Source branch is required");
+        if (!data.targetBranchId) throw new Error("Destination branch is required");
         if (data.sourceBranchId === data.targetBranchId) throw new Error("Source and destination must be different");
-        if (data.quantity <= 0) throw new Error("Quantity must be positive");
+        if (!data.quantity || data.quantity <= 0) throw new Error("Quantity must be a positive number greater than 0");
+
+        // Scope verification
+        if (branchScope) {
+            const hasSourceAccess = branchScope.includes(data.sourceBranchId);
+            const hasTargetAccess = branchScope.includes(data.targetBranchId);
+            if (!hasSourceAccess && !hasTargetAccess) {
+                throw new Error("Forbidden: You do not have permission to transfer between these branches");
+            }
+        }
 
         // Perform transactional update using db.transaction
         await db.transaction(async (tx) => {
@@ -188,4 +273,63 @@ export const stockTransferServerFn = createServerFn({ method: "POST" })
         });
 
         return { success: true };
+    });
+
+export const draftPurchaseOrderServerFn = createServerFn({ method: "POST" })
+    .validator((d: { vendorId: string; branchId: string; productId: string; qty: number }) => d)
+    .handler(async ({ data }) => {
+        const { tenantId, branchScope } = await getInventoryManagerContext();
+
+        if (branchScope && !branchScope.includes(data.branchId)) {
+            throw new Error("Forbidden: You do not have permission to draft PO for this branch.");
+        }
+
+        const settings = await db.query.tenantSettings.findFirst({
+            where: eq(tenantSettings.tenantId, tenantId)
+        });
+
+        if (!settings || !('allowInventoryManagerPoDraft' in settings) || !settings.allowInventoryManagerPoDraft) {
+            throw new Error("Unauthorized: PO Draft creation is disabled for Inventory Managers.");
+        }
+
+        if (!data.vendorId || !data.branchId || !data.productId || !data.qty || data.qty <= 0) {
+            throw new Error("Invalid PO Draft data");
+        }
+
+        const product = await db.query.products.findFirst({
+            where: and(eq(products.id, data.productId), eq(products.tenantId, tenantId))
+        });
+
+        if (!product) throw new Error("Product not found");
+
+        const unitPrice = Number(product.costPrice) || 0;
+        const subtotal = data.qty * unitPrice;
+        const vatRate = 5; // Fixed 5% as per purchasing logic
+        const vatAmount = subtotal * (vatRate / 100);
+        const total = subtotal + vatAmount;
+
+        let poId = "";
+        await db.transaction(async (tx) => {
+            const [po] = await tx.insert(purchaseOrders).values({
+                tenantId,
+                branchId: data.branchId,
+                vendorId: data.vendorId,
+                status: "Draft",
+                subtotal: subtotal.toString(),
+                vatRate: vatRate.toString(),
+                vatAmount: vatAmount.toString(),
+                total: total.toString(),
+            }).returning({ id: purchaseOrders.id });
+
+            poId = po.id;
+
+            await tx.insert(purchaseOrderItems).values({
+                purchaseOrderId: po.id,
+                productId: data.productId,
+                qty: data.qty,
+                unitPrice: unitPrice.toString(),
+            });
+        });
+
+        return { success: true, poId };
     });

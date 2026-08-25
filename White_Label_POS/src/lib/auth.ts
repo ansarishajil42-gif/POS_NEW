@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { getSessionServerFn, loginServerFn, logoutServerFn, pinLoginServerFn, getTenantsAndBranchesFn } from "./auth-server.js";
+import { getSessionServerFn, loginServerFn, logoutServerFn, pinLoginServerFn, getTenantsAndBranchesFn, getBranchCashiersAndTillsFn, resetCashierPinSelfFn } from "./auth-server.js";
 
 export type Role =
   | "Super Admin"
@@ -70,9 +70,9 @@ export function useAuth() {
     }
   };
 
-  const pinLogin = async (tenantId: string, branchId: string, pin: string) => {
+  const pinLogin = async (tenantId: string, branchId: string, cashierId: string, tillId: string, pin: string) => {
     try {
-      const res = await pinLoginServerFn({ data: { tenantId, branchId, pin } });
+      const res = await pinLoginServerFn({ data: { tenantId, branchId, cashierId, tillId, pin } });
       if (res.success && res.user) {
         const userRole = res.user.role as Role;
         setRole(userRole);
@@ -100,4 +100,4 @@ export function useAuth() {
 
   return { role, isLoaded, login, pinLogin, logout };
 }
-export { getSessionServerFn, getTenantsAndBranchesFn };
+export { getSessionServerFn, getTenantsAndBranchesFn, getBranchCashiersAndTillsFn, resetCashierPinSelfFn };
