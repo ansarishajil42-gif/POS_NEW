@@ -24,11 +24,11 @@ CREATE INDEX "inventory_ledger_branch_idx" ON "inventory_ledger" USING btree ("b
 CREATE INDEX "inventory_ledger_product_idx" ON "inventory_ledger" USING btree ("product_id");--> statement-breakpoint
 CREATE INDEX "inventory_ledger_created_at_idx" ON "inventory_ledger" USING btree ("created_at");--> statement-breakpoint
 CREATE OR REPLACE FUNCTION prevent_ledger_modification()
-RETURNS TRIGGER AS \$$
+RETURNS TRIGGER AS $$
 BEGIN
   RAISE EXCEPTION 'Inventory ledger records are immutable and cannot be updated or deleted.';
 END;
-\$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 --> statement-breakpoint
 CREATE TRIGGER trg_prevent_ledger_update_delete
 BEFORE UPDATE OR DELETE ON inventory_ledger
