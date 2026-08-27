@@ -1,0 +1,12 @@
+{
+  "name": "traced-node-modules",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@phc/format": "1.0.0",
+    "argon2": "0.45.1",
+    "node-gyp-build": "4.8.4",
+    "tslib": "2.8.1"
+  }
+}
