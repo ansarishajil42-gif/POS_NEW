@@ -1,4 +1,5 @@
 import { drizzle } from "drizzle-orm/postgres-js";
+import { sql } from "drizzle-orm";
 import postgres from "postgres";
 import * as schema from "./schema.js";
 import "dotenv/config";
@@ -16,7 +17,7 @@ export const db = drizzle(queryClient, { schema });
 // Helper to set RLS context for a query session (if RLS is implemented on DB level)
 export async function withTenant<T>(tenantId: string, callback: (tx: any) => Promise<T>): Promise<T> {
   return await db.transaction(async (tx) => {
-    await tx.execute(postgres.Sql`SET LOCAL app.current_tenant_id = ${tenantId}`);
+    await tx.execute(sql`SET LOCAL app.current_tenant_id = ${tenantId}`);
     return await callback(tx);
   });
 }

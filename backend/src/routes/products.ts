@@ -68,8 +68,6 @@ router.post("/", async (req, res) => {
       unit,
       costPrice: costPrice.toString(),
       salePrice: salePrice.toString(),
-      stock: stock || 0,
-      reorderLevel: reorderLevel || 10,
       isBatchTracked: isBatchTracked || false,
     }).returning();
 
@@ -136,13 +134,9 @@ router.post("/:productId/batches", async (req, res) => {
       stock,
     }).returning();
 
-    // Optionally update overall product stock
-    if (product.isBatchTracked) {
-      await db.update(products)
-        .set({ stock: product.stock + Number(stock) })
-        .where(eq(products.id, productId));
-    }
-
+    // To update overall product stock, it should be done in stockLevels per branch.
+    // Since this is a global batch creation without a branch context, we omit product-level stock update.
+    
     res.status(201).json(newBatch[0]);
   } catch (error) {
     console.error("Create batch error:", error);

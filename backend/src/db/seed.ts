@@ -111,16 +111,16 @@ async function main() {
 
   // 5. Products for Al Madina
   const madinaProducts = await db.insert(schema.products).values([
-    { tenantId: tenantMadina.id, name: "Coca Cola 330ml Can", barcode: "1234567890123", category: "Beverages", unit: "pcs", costPrice: "1.50", salePrice: "2.50", stock: 0 },
-    { tenantId: tenantMadina.id, name: "Almarai Fresh Milk 1L", barcode: "1234567890124", category: "Dairy", unit: "pcs", costPrice: "4.00", salePrice: "6.00", stock: 0, isBatchTracked: true },
-    { tenantId: tenantMadina.id, name: "Brown Bread 400g", barcode: "1234567890125", category: "Bakery", unit: "pcs", costPrice: "3.00", salePrice: "5.00", stock: 0, isBatchTracked: true },
-    { tenantId: tenantMadina.id, name: "Lays Chips 50g", barcode: "1234567890126", category: "Snacks", unit: "pcs", costPrice: "1.00", salePrice: "2.00", stock: 0 },
-    { tenantId: tenantMadina.id, name: "Tide Detergent 3kg", barcode: "1234567890127", category: "Household", unit: "pcs", costPrice: "20.00", salePrice: "32.00", stock: 0 },
-    { tenantId: tenantMadina.id, name: "Eggs Large 30pcs", barcode: "1234567890128", category: "Dairy", unit: "tray", costPrice: "12.00", salePrice: "18.50", stock: 0, isBatchTracked: true },
-    { tenantId: tenantMadina.id, name: "Chicken Breast 1kg", barcode: "1234567890129", category: "Meat", unit: "kg", costPrice: "15.00", salePrice: "22.00", stock: 0, isBatchTracked: true },
-    { tenantId: tenantMadina.id, name: "Tomatoes", barcode: "1234567890130", category: "Produce", unit: "kg", costPrice: "2.50", salePrice: "4.50", stock: 0 },
-    { tenantId: tenantMadina.id, name: "Onions", barcode: "1234567890131", category: "Produce", unit: "kg", costPrice: "1.50", salePrice: "3.00", stock: 0 },
-    { tenantId: tenantMadina.id, name: "Basmati Rice 5kg", barcode: "1234567890132", category: "Pantry", unit: "bag", costPrice: "25.00", salePrice: "38.50", stock: 0 },
+    { tenantId: tenantMadina.id, name: "Coca Cola 330ml Can", barcode: "1234567890123", category: "Beverages", unit: "pcs", costPrice: "1.50", salePrice: "2.50" },
+    { tenantId: tenantMadina.id, name: "Almarai Fresh Milk 1L", barcode: "1234567890124", category: "Dairy", unit: "pcs", costPrice: "4.00", salePrice: "6.00", isBatchTracked: true },
+    { tenantId: tenantMadina.id, name: "Brown Bread 400g", barcode: "1234567890125", category: "Bakery", unit: "pcs", costPrice: "3.00", salePrice: "5.00", isBatchTracked: true },
+    { tenantId: tenantMadina.id, name: "Lays Chips 50g", barcode: "1234567890126", category: "Snacks", unit: "pcs", costPrice: "1.00", salePrice: "2.00" },
+    { tenantId: tenantMadina.id, name: "Tide Detergent 3kg", barcode: "1234567890127", category: "Household", unit: "pcs", costPrice: "20.00", salePrice: "32.00" },
+    { tenantId: tenantMadina.id, name: "Eggs Large 30pcs", barcode: "1234567890128", category: "Dairy", unit: "tray", costPrice: "12.00", salePrice: "18.50", isBatchTracked: true },
+    { tenantId: tenantMadina.id, name: "Chicken Breast 1kg", barcode: "1234567890129", category: "Meat", unit: "kg", costPrice: "15.00", salePrice: "22.00", isBatchTracked: true },
+    { tenantId: tenantMadina.id, name: "Tomatoes", barcode: "1234567890130", category: "Produce", unit: "kg", costPrice: "2.50", salePrice: "4.50" },
+    { tenantId: tenantMadina.id, name: "Onions", barcode: "1234567890131", category: "Produce", unit: "kg", costPrice: "1.50", salePrice: "3.00" },
+    { tenantId: tenantMadina.id, name: "Basmati Rice 5kg", barcode: "1234567890132", category: "Pantry", unit: "bag", costPrice: "25.00", salePrice: "38.50" },
   ]).returning();
 
   // Populate stock levels per branch

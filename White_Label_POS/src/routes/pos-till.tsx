@@ -153,32 +153,34 @@ function PosTill() {
     [search, catalog],
   );
 
-  // If a product has a priceOverride in the branch, use it. Else use basePrice.
-  const getPrice = (p: any, qty = 1) => {
-    const basePriceRaw = Number(p.priceOverride || p.basePrice || 0);
-    const variantAdjustment = p.selectedVariant ? Number(p.selectedVariant.priceAdjustment) : 0;
-    const factor = p.conversionFactor ? Number(p.conversionFactor) : 1;
-    const basePrice = (basePriceRaw + variantAdjustment) * factor;
-    if (!promotions || promotions.length === 0) return basePrice;
-
+  const timeActivePromotions = useMemo(() => {
+    if (!promotions || promotions.length === 0) return [];
     const now = new Date();
-    const formatTime = (d: Date) => (d.toTimeString().split(" ")[0] || "00:00").slice(0, 5);
-    const currentTime = formatTime(now);
+    const currentTime = (now.toTimeString().split(" ")[0] || "00:00").slice(0, 5);
 
-    const activePromotions = promotions.filter((promo: any) => {
+    return promotions.filter((promo: any) => {
       if (promo.status !== "Active") return false;
-
-      // Date range check
       const start = new Date(promo.startDate);
       start.setHours(0, 0, 0, 0);
       const end = new Date(promo.endDate);
       end.setHours(23, 59, 59, 999);
       if (now < start || now > end) return false;
-
-      // Time condition check
       if (promo.startTime && currentTime < promo.startTime) return false;
       if (promo.endTime && currentTime > promo.endTime) return false;
+      return true;
+    });
+  }, [promotions]);
 
+  // If a product has a priceOverride in the branch, use it. Else use basePrice.
+  const getPrice = useCallback((p: any, qty = 1) => {
+    const basePriceRaw = Number(p.priceOverride || p.basePrice || 0);
+    const variantAdjustment = p.selectedVariant ? Number(p.selectedVariant.priceAdjustment) : 0;
+    const factor = p.conversionFactor ? Number(p.conversionFactor) : 1;
+    const basePrice = (basePriceRaw + variantAdjustment) * factor;
+
+    if (timeActivePromotions.length === 0) return basePrice;
+
+    const activePromotions = timeActivePromotions.filter((promo: any) => {
       // Qty conditions
       if (promo.minQty && qty < promo.minQty) return false;
       if (promo.maxQty && qty > promo.maxQty) return false;
@@ -225,11 +227,13 @@ function PosTill() {
     });
 
     return bestPrice;
-  };
+  }, [timeActivePromotions]);
 
-  const net = cart.reduce((s, l) => s + getPrice(l, l.qty) * l.qty, 0);
-  const vat = net * 0.05; // 5% VAT assumption
-  const total = net + vat;
+  const { net, vat, total } = useMemo(() => {
+    const n = cart.reduce((s, l) => s + getPrice(l, l.qty) * l.qty, 0);
+    const v = n * 0.05; // 5% VAT assumption
+    return { net: n, vat: v, total: n + v };
+  }, [cart, getPrice]);
   const allocated = split.cash + split.card + split.points + split.credit;
   
   const allocatedTenders = (

@@ -196,121 +196,131 @@ function HeadOffice() {
   const [endTime, setEndTime] = useState("");
 
   // Mapped Data from DB
-  const mappedOutlets = (data?.branches || []).map((b: any) => ({
-    id: b.id,
-    name: b.name,
-    emirate: b.address || "Dubai",
-    tills: b.tillCount || 1,
-    sales: 0, // Need historical orders for this
-    growth: 0,
-    stockHealth: 100,
-  }));
-
-  const mappedProducts = (data?.products || []).map((p: any) => {
-    // calculate total stock across all branches from data.stock
-    const totalStock = (data?.stock || [])
-      .filter((s: any) => s.productId === p.id)
-      .reduce((acc: number, s: any) => acc + s.stock, 0);
-
-    return {
-      id: p.id,
-      sku: p.sku || p.id.slice(0, 8),
-      name: p.name,
-      barcode: p.barcode,
-      unit: p.unit ?? "pcs",
-      category: p.category || "General",
-      cost: Number(p.costPrice) || 0,
-      price: Number(p.salePrice) || 0,
-      vat: p.vatIncluded ? "Inc" : "Exc",
-      stock: totalStock,
-      isBatchTracked: p.isBatchTracked === false ? false : true,
-      costPriceRaw: p.costPrice,
-      salePriceRaw: p.salePrice,
-    };
-  });
-
-  const mappedBatches = (data?.batches || []).map((b: any) => {
-    const product = (data?.products || []).find((p: any) => p.id === b.productId);
-    const branch = (data?.branches || []).find((br: any) => br.id === b.branchId);
-    const expiry = new Date(b.expiryDate);
-    const daysLeft = Math.ceil((expiry.getTime() - Date.now()) / (1000 * 3600 * 24));
-
-    return {
+  const mappedOutlets = useMemo(() => {
+    return (data?.branches || []).map((b: any) => ({
       id: b.id,
-      product: product ? product.name : "Unknown",
-      productId: b.productId,
-      batch: b.batchNumber,
-      outlet: branch ? branch.name : "HQ",
-      rule: "FEFO",
-      qty: b.stockQuantity,
-      expiry: expiry.toISOString().split("T")[0],
-      daysLeft,
-    };
-  });
+      name: b.name,
+      emirate: b.address || "Dubai",
+      tills: b.tillCount || 1,
+      sales: 0, // Need historical orders for this
+      growth: 0,
+      stockHealth: 100,
+    }));
+  }, [data?.branches]);
 
-  const mappedPurchases = (data?.purchases || []).map((p: any) => {
-    let stage = "PO";
-    if (p.status === "GRN" || p.status === "Received") stage = "GRN";
-    if (p.status === "Invoiced" || p.status === "Paid") stage = "Invoice";
+  const mappedProducts = useMemo(() => {
+    return (data?.products || []).map((p: any) => {
+      // calculate total stock across all branches from data.stock
+      const totalStock = (data?.stock || [])
+        .filter((s: any) => s.productId === p.id)
+        .reduce((acc: number, s: any) => acc + s.stock, 0);
 
-    return {
-      rawId: p.id,
-      id: p.id.split("-")[0].toUpperCase(), // Just show a short ID for demo
-      stage: stage,
-      vendor: p.vendor?.name || "Unknown Vendor",
-      vendorId: p.vendorId,
-      branchId: p.branchId,
-      value: Number(p.total) || 0,
-      items: p.items || [],
-    };
-  });
+      return {
+        id: p.id,
+        sku: p.sku || p.id.slice(0, 8),
+        name: p.name,
+        barcode: p.barcode,
+        unit: p.unit ?? "pcs",
+        category: p.category || "General",
+        cost: Number(p.costPrice) || 0,
+        price: Number(p.salePrice) || 0,
+        vat: p.vatIncluded ? "Inc" : "Exc",
+        stock: totalStock,
+        isBatchTracked: p.isBatchTracked === false ? false : true,
+        costPriceRaw: p.costPrice,
+        salePriceRaw: p.salePrice,
+      };
+    });
+  }, [data?.products, data?.stock]);
 
-  const mappedVendors = (data?.vendors || []).map((v: any) => ({ id: v.id, name: v.name }));
+  const mappedBatches = useMemo(() => {
+    return (data?.batches || []).map((b: any) => {
+      const product = (data?.products || []).find((p: any) => p.id === b.productId);
+      const branch = (data?.branches || []).find((br: any) => br.id === b.branchId);
+      const expiry = new Date(b.expiryDate);
+      const daysLeft = Math.ceil((expiry.getTime() - Date.now()) / (1000 * 3600 * 24));
 
-  const mappedRoles = [
-    {
-      role: "Super Admin",
-      users: (data?.staff || []).filter((u: any) => u.role === "super_admin").length,
-      perms: ["Full platform access"],
-    },
-    {
-      role: "Head Office Admin",
-      users: (data?.staff || []).filter((u: any) => u.role === "head_office_admin").length,
-      perms: ["View all branches", "Global settings", "Purchasing", "Roles"],
-    },
-    {
-      role: "Branch Manager",
-      users: (data?.staff || []).filter((u: any) => u.role === "branch_manager").length,
-      perms: [
-        "Branch override",
-        "Local stock",
-        "Pricing adjustments",
-        "Till management",
-        "Shift & staff",
-      ],
-    },
-    {
-      role: "Inventory Manager",
-      users: (data?.staff || []).filter((u: any) => u.role === "inventory_manager").length,
-      perms: ["Stock adjust", "Receive goods"],
-    },
-    {
-      role: "Purchasing Officer",
-      users: (data?.staff || []).filter((u: any) => u.role === "purchasing_officer").length,
-      perms: ["Create PO", "Receive invoices"],
-    },
-    {
-      role: "Cashier",
-      users: (data?.staff || []).filter((u: any) => u.role === "cashier").length,
-      perms: ["Process sales", "Refunds", "End of shift"],
-    },
-  ].filter((r) => r.users > 0 || r.role === "Head Office Admin"); // show roles with users
+      return {
+        id: b.id,
+        product: product ? product.name : "Unknown",
+        productId: b.productId,
+        batch: b.batchNumber,
+        outlet: branch ? branch.name : "HQ",
+        rule: "FEFO",
+        qty: b.stockQuantity || b.stock,
+        expiry: expiry.toISOString().split("T")[0],
+        daysLeft,
+      };
+    });
+  }, [data?.batches, data?.products, data?.branches]);
+
+  const mappedPurchases = useMemo(() => {
+    return (data?.purchases || []).map((p: any) => {
+      let stage = "PO";
+      if (p.status === "GRN" || p.status === "Received") stage = "GRN";
+      if (p.status === "Invoiced" || p.status === "Paid") stage = "Invoice";
+
+      return {
+        rawId: p.id,
+        id: p.id.split("-")[0].toUpperCase(), // Just show a short ID for demo
+        stage: stage,
+        vendor: p.vendor?.name || "Unknown Vendor",
+        vendorId: p.vendorId,
+        branchId: p.branchId,
+        value: Number(p.total) || 0,
+        items: p.items || [],
+      };
+    });
+  }, [data?.purchases]);
+
+  const mappedVendors = useMemo(() => (data?.vendors || []).map((v: any) => ({ id: v.id, name: v.name })), [data?.vendors]);
+
+  const mappedRoles = useMemo(() => {
+    return [
+      {
+        role: "Super Admin",
+        users: (data?.staff || []).filter((u: any) => u.role === "super_admin").length,
+        perms: ["Full platform access"],
+      },
+      {
+        role: "Head Office Admin",
+        users: (data?.staff || []).filter((u: any) => u.role === "head_office_admin").length,
+        perms: ["View all branches", "Global settings", "Purchasing", "Roles"],
+      },
+      {
+        role: "Branch Manager",
+        users: (data?.staff || []).filter((u: any) => u.role === "branch_manager").length,
+        perms: [
+          "Branch override",
+          "Local stock",
+          "Pricing adjustments",
+          "Till management",
+          "Shift & staff",
+        ],
+      },
+      {
+        role: "Inventory Manager",
+        users: (data?.staff || []).filter((u: any) => u.role === "inventory_manager").length,
+        perms: ["Stock adjust", "Receive goods"],
+      },
+      {
+        role: "Purchasing Officer",
+        users: (data?.staff || []).filter((u: any) => u.role === "purchasing_officer").length,
+        perms: ["Create PO", "Receive invoices"],
+      },
+      {
+        role: "Cashier",
+        users: (data?.staff || []).filter((u: any) => u.role === "cashier").length,
+        perms: ["Process sales", "Refunds", "End of shift"],
+      },
+    ].filter((r) => r.users > 0 || r.role === "Head Office Admin");
+  }, [data?.staff]);
 
   const totalSales = useMemo(
     () => mappedOutlets.reduce((s: any, o: any) => s + o.sales, 0),
     [mappedOutlets],
   );
-  const nearExpiry = mappedBatches.filter((b: any) => b.daysLeft <= 14).length;
+  const nearExpiry = useMemo(() => mappedBatches.filter((b: any) => b.daysLeft <= 14).length, [mappedBatches]);
 
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);

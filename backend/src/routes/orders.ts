@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
-import { orders, orderItems, products, batches, staffUsers } from "../db/schema.js";
+import { orders, orderItems, products, batches, staffUsers, stockLevels } from "../db/schema.js";
 import { eq, and, sql, desc } from "drizzle-orm";
 
 const router = Router();
@@ -82,11 +82,10 @@ router.post("/", async (req, res) => {
           throw new Error(`Product not found: ${productId}`);
         }
 
-        // Reduce stock in products table
-        const newStock = Math.max(0, prod.stock - qty);
-        await tx.update(products)
-          .set({ stock: newStock })
-          .where(eq(products.id, productId));
+        // Reduce stock in stockLevels table
+        await tx.update(stockLevels)
+          .set({ stock: sql`${stockLevels.stock} - ${qty}` })
+          .where(and(eq(stockLevels.productId, productId), eq(stockLevels.branchId, branchId)));
 
         // If batch tracked, attempt to subtract from oldest active batch
         if (prod.isBatchTracked) {
