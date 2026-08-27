@@ -3,7 +3,10 @@ import postgres from "postgres";
 import * as schema from "./schema";
 import "dotenv/config";
 
-const queryClient = postgres(process.env["DATABASE_URL"]!);
+const queryClient = postgres(process.env["DATABASE_URL"]!, {
+  prepare: false, // Required for PgBouncer / Connection Pooler in Serverless
+  ssl: 'require', // Ensure SSL is forced for external DB connections from Vercel
+});
 export const db = drizzle(queryClient, { schema });
 
 // Helper to set RLS context for a query session
