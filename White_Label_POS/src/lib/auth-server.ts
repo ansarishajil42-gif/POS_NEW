@@ -3,7 +3,7 @@ import { getCookie, setCookie } from "@tanstack/react-start/server";
 import { db } from "../server/db/index.js";
 import { staffUsers, tenants, branches, vendors, tills, loginAttempts, shifts } from "../server/db/schema.js";
 import { eq, and, desc } from "drizzle-orm";
-import * as argon2 from "argon2";
+import bcrypt from "bcryptjs";
 import * as jose from "jose";
 
 const JWT_SECRET = new TextEncoder().encode(
@@ -68,7 +68,7 @@ export const loginServerFn = createServerFn()
         passwordHashStr = vendorUser.passwordHash;
       }
 
-      const validPassword = await argon2.verify(passwordHashStr, password);
+      const validPassword = await bcrypt.compare(password, passwordHashStr);
       if (!validPassword) {
         throw new Error("Invalid email or password");
       }
@@ -210,9 +210,9 @@ export const pinLoginServerFn = createServerFn({ method: "POST" })
         throw new Error("Invalid cashier, till, or PIN code.");
       }
 
-      // Verify PIN against Argon2id hash
-      const isValid = cashier.pinHash ? await argon2.verify(cashier.pinHash, pin) : false;
-      if (!isValid) {
+      // Verify PIN against bcrypt hash
+      const validPin = await bcrypt.compare(pin, cashier.pinHash || "");
+      if (!validPin) {
         await recordFailedAttempt(cashierId);
         throw new Error("Invalid cashier, till, or PIN code.");
       }
@@ -350,14 +350,14 @@ export const resetCashierPinSelfFn = createServerFn({ method: "POST" })
       }
 
       // Re-authenticate password
-      const validPass = await argon2.verify(cashier.passwordHash, currentPass);
+      const validPass = await bcrypt.compare(currentPass, cashier.passwordHash);
       if (!validPass) {
         await recordFailedAttempt(email);
         throw new Error("Invalid credentials.");
       }
 
       // Success: hash new PIN
-      const hashed = await argon2.hash(newPin);
+      const hashed = await bcrypt.hash(newPin, 10);
       await db.update(staffUsers).set({ pinHash: hashed }).where(eq(staffUsers.id, cashier.id));
 
       // Reset attempts
