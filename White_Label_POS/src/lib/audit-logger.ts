@@ -8,6 +8,7 @@ type AuditAction = {
   entityId: string;
   tenantId?: string;
   branchId?: string;
+  summary?: string;
   beforeValue?: any;
   afterValue?: any;
   requestId?: string;
@@ -31,6 +32,7 @@ export async function logAuditAction(params: AuditAction, txContext?: any) {
     const finalTenantId = params.tenantId || (res.success && res.session ? res.session.tenantId : "00000000-0000-0000-0000-000000000000");
 
     const details = {
+      summary: params.summary,
       actorRole,
       beforeValue: params.beforeValue,
       afterValue: params.afterValue,
@@ -46,7 +48,7 @@ export async function logAuditAction(params: AuditAction, txContext?: any) {
       action: params.action,
       entityType: params.entityType,
       entityId: params.entityId,
-      details,
+      details: params.summary ? params.summary : details,
     };
 
     if (txContext) {

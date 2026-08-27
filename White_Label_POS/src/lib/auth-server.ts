@@ -48,11 +48,12 @@ export const loginServerFn = createServerFn()
 
       if (user) {
         if (!user.isActive) throw new Error("User account is suspended");
+        if (!user.passwordHash) throw new Error("This account uses a PIN for login. Please switch to 'Cashier PIN Login' tab.");
         id = user.id;
         tenantId = user.tenantId;
         branchId = user.branchId;
         frontendRole = dbRoleToFrontendRole[user.role] || "Vendor";
-        passwordHashStr = user.passwordHash!;
+        passwordHashStr = user.passwordHash;
       } else {
         // Fallback to vendors
         const vendorUser = await db.query.vendors.findFirst({
@@ -447,8 +448,8 @@ export const logoutServerFn = createServerFn()
 export const getTenantsAndBranchesFn = createServerFn()
   .handler(async () => {
     try {
-      const allTenants = await db.select().from(tenants);
-      const allBranches = await db.select().from(branches);
+      const allTenants = await db.select().from(tenants).where(eq(tenants.status, "Active"));
+      const allBranches = await db.select().from(branches).where(eq(branches.status, "Active"));
       return {
         success: true,
         tenants: allTenants,

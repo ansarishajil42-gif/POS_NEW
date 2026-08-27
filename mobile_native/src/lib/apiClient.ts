@@ -6,12 +6,11 @@ const getBaseUrl = () => {
     return process.env.EXPO_PUBLIC_API_URL;
   }
   
-  if (Platform.OS === 'web') {
-    return 'http://localhost:3000/api';
+  if (Platform.OS === 'android') {
+    return 'http://10.0.2.2:3000/api';
   }
   
-  // Physical device (or emulator) targeting the host machine's LAN IP
-  return 'http://192.168.1.18:3000/api';
+  return 'http://localhost:3000/api';
 };
 
 export const API_BASE_URL = getBaseUrl();

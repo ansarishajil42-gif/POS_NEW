@@ -20,6 +20,7 @@ import {
   Building2,
   X,
   History,
+  Menu,
 } from "lucide-react";
 import {
   getInventoryDataServerFn,
@@ -88,6 +89,7 @@ function InventoryManager() {
   });
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const {
     tenant,
@@ -184,8 +186,14 @@ function InventoryManager() {
         </Button>
       }
     >
-      <Tabs defaultValue="stock" className="mt-6 flex flex-col md:flex-row gap-8">
-        <aside className="w-full md:w-56 shrink-0">
+      <Tabs defaultValue="stock" onValueChange={() => setIsMobileMenuOpen(false)} className="mt-6 flex flex-col md:flex-row gap-8">
+        <div className="md:hidden flex items-center justify-between bg-white p-3 rounded-xl border border-gray-200">
+          <span className="font-semibold text-sm">Navigation Menu</span>
+          <Button variant="outline" size="sm" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
+            <Menu className="h-4 w-4" />
+          </Button>
+        </div>
+        <aside className={`w-full md:w-56 shrink-0 ${isMobileMenuOpen ? "block" : "hidden md:block"}`}>
           <TabsList className="flex h-auto w-full flex-col items-stretch justify-start gap-1 rounded-xl bg-transparent p-0">
             <TabsTrigger
               value="stock"

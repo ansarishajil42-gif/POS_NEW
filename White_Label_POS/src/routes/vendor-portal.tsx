@@ -1,4 +1,5 @@
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import { useState } from "react";
 import { getSessionServerFn, roleRoutes, type Role } from "@/lib/auth";
 import { DemoShell, StatCard } from "@/components/demo/DemoShell";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -8,7 +9,8 @@ import {
   ShoppingCart, 
   CreditCard,
   Download,
-  AlertCircle
+  AlertCircle,
+  Menu
 } from "lucide-react";
 import { aed } from "@/lib/demo-data";
 import { getVendorPortalDataServerFn } from "@/lib/vendor-server";
@@ -35,6 +37,7 @@ export const Route = createFileRoute("/vendor-portal")({
 function VendorPortal() {
   const data = Route.useLoaderData();
   const { vendor, purchaseOrders, invoices } = data;
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Calculate totals
   const totalOrdered = purchaseOrders.reduce((sum: number, po: any) => sum + Number(po.total), 0);
@@ -55,8 +58,14 @@ function VendorPortal() {
         </Button>
       }
     >
-      <Tabs defaultValue="pos" className="mt-6 flex flex-col md:flex-row gap-8">
-        <aside className="w-full md:w-56 shrink-0">
+      <Tabs defaultValue="pos" onValueChange={() => setIsMobileMenuOpen(false)} className="mt-6 flex flex-col md:flex-row gap-8">
+        <div className="md:hidden flex items-center justify-between bg-white p-3 rounded-xl border border-gray-200">
+          <span className="font-semibold text-sm">Navigation Menu</span>
+          <Button variant="outline" size="sm" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
+            <Menu className="h-4 w-4" />
+          </Button>
+        </div>
+        <aside className={`w-full md:w-56 shrink-0 ${isMobileMenuOpen ? "block" : "hidden md:block"}`}>
           <TabsList className="flex h-auto w-full flex-col items-stretch justify-start gap-1 rounded-xl bg-transparent p-0">
             <TabsTrigger value="pos" className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Purchase Orders</TabsTrigger>
             <TabsTrigger value="invoices" className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Invoices & Payments</TabsTrigger>

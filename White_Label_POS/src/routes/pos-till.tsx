@@ -119,6 +119,10 @@ function PosTill() {
   const [zReportConfirmOpen, setZReportConfirmOpen] = useState(false);
   const [cashReceivedInput, setCashReceivedInput] = useState("");
 
+  const [selectionProduct, setSelectionProduct] = useState<any | null>(null);
+  const [selectedVariant, setSelectedVariant] = useState<any | null>(null);
+  const [selectedConversion, setSelectedConversion] = useState<any | null>(null);
+
   const idempotencyKey = useMemo(() => {
     return Math.random().toString(36).substring(7) + "-" + Date.now();
   }, [payOpen]);
@@ -142,14 +146,19 @@ function PosTill() {
     () =>
       catalog.filter(
         (p: any) =>
-          p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode?.includes(search),
+          p.name.toLowerCase().includes(search.toLowerCase()) ||
+          p.barcode?.includes(search) ||
+          (p.alternateBarcodes || []).some((b: string) => b.includes(search)),
       ),
     [search, catalog],
   );
 
   // If a product has a priceOverride in the branch, use it. Else use basePrice.
   const getPrice = (p: any, qty = 1) => {
-    const basePrice = Number(p.priceOverride || p.basePrice || 0);
+    const basePriceRaw = Number(p.priceOverride || p.basePrice || 0);
+    const variantAdjustment = p.selectedVariant ? Number(p.selectedVariant.priceAdjustment) : 0;
+    const factor = p.conversionFactor ? Number(p.conversionFactor) : 1;
+    const basePrice = (basePriceRaw + variantAdjustment) * factor;
     if (!promotions || promotions.length === 0) return basePrice;
 
     const now = new Date();
@@ -238,18 +247,81 @@ function PosTill() {
   const isAllocationExact = Math.abs(allocatedTotal - total) <= 0.01;
   const isSettleEnabled = hasSelectedTender && allSelectedTendersHavePositiveValue && isAllocationExact && !isSubmitting;
 
-  const add = (p: any) =>
+  const add = (p: any) => {
+    if (
+      (p.variants && p.variants.length > 0) ||
+      (p.conversions && p.conversions.length > 0)
+    ) {
+      setSelectionProduct(p);
+      setSelectedVariant(p.variants && p.variants[0] ? p.variants[0] : null);
+      setSelectedConversion(null); // base unit is default
+      return;
+    }
+
     setCart((prev) => {
-      const found = prev.find((l) => l.id === p.id);
+      const found = prev.find((l) => l.id === p.id && !l.selectedVariant && !l.selectedUnit);
       return found
-        ? prev.map((l) => (l.id === p.id ? { ...l, qty: l.qty + 1 } : l))
+        ? prev.map((l) => (l.id === p.id && !l.selectedVariant && !l.selectedUnit ? { ...l, qty: l.qty + 1 } : l))
         : [...prev, { ...p, qty: 1 }];
     });
+  };
 
-  const step = (id: string, d: number) =>
+  const addWithDetails = (p: any, variant: any, conversion: any) => {
+    const variantKey = variant ? `${variant.variantName}-${variant.variantValue}` : null;
+    const unitKey = conversion ? conversion.fromUnit : null;
+    const conversionFactor = conversion ? Number(conversion.conversionFactor) : 1;
+
+    setCart((prev) => {
+      const found = prev.find(
+        (l) =>
+          l.id === p.id &&
+          (l.selectedVariant ? `${l.selectedVariant.variantName}-${l.selectedVariant.variantValue}` : null) === variantKey &&
+          (l.selectedUnit || null) === unitKey
+      );
+
+      const cartItem = {
+        ...p,
+        selectedVariant: variant,
+        selectedUnit: unitKey,
+        conversionFactor,
+      };
+
+      return found
+        ? prev.map((l) =>
+            l.id === p.id &&
+            (l.selectedVariant ? `${l.selectedVariant.variantName}-${l.selectedVariant.variantValue}` : null) === variantKey &&
+            (l.selectedUnit || null) === unitKey
+              ? { ...l, qty: l.qty + 1 }
+              : l
+          )
+        : [...prev, { ...cartItem, qty: 1 }];
+    });
+
+    setSelectionProduct(null);
+    setSelectedVariant(null);
+    setSelectedConversion(null);
+  };
+
+  const step = (item: any, d: number) => {
+    const variantKey = item.selectedVariant ? `${item.selectedVariant.variantName}-${item.selectedVariant.variantValue}` : null;
+    const unitKey = item.selectedUnit || null;
+
     setCart((prev) =>
-      prev.flatMap((l) => (l.id === id ? (l.qty + d <= 0 ? [] : [{ ...l, qty: l.qty + d }]) : [l])),
+      prev.flatMap((l) => {
+        const lVariantKey = l.selectedVariant ? `${l.selectedVariant.variantName}-${l.selectedVariant.variantValue}` : null;
+        const lUnitKey = l.selectedUnit || null;
+
+        if (
+          l.id === item.id &&
+          lVariantKey === variantKey &&
+          lUnitKey === unitKey
+        ) {
+          return l.qty + d <= 0 ? [] : [{ ...l, qty: l.qty + d }];
+        }
+        return [l];
+      })
     );
+  };
 
   const settle = async () => {
     if (split.points > 0 && !customer) {
@@ -314,6 +386,7 @@ function PosTill() {
           branchName: shift.branch?.name || "Test Branch",
           tillName: shift.till?.name || shift.tillId || "Till Terminal",
           cashierEmail: shift.cashier?.email || "cashier",
+          trn: shift.trn || null,
           date: new Date().toLocaleString(),
           items: cart.map((l) => ({
             name: l.name,
@@ -557,6 +630,20 @@ function PosTill() {
                     placeholder="Scan barcode or search item…"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        const match = catalog.find(
+                          (p: any) =>
+                            p.barcode === search ||
+                            (p.alternateBarcodes || []).includes(search)
+                        );
+                        if (match) {
+                          add(match);
+                          setSearch("");
+                          toast.success(`${match.name} added to cart`);
+                        }
+                      }
+                    }}
                   />
                 </div>
                 <Button
@@ -712,17 +799,21 @@ function PosTill() {
                                         <p className="mt-2 text-xs text-muted-foreground">Scan or tap an item to begin</p>
                                     </div>
                                 )}
-                                {cart.map((l) => (
-                                    <div key={l.id} className="flex items-center gap-2 rounded-xl bg-surface-2 p-3">
+                                {cart.map((l, idx) => (
+                                    <div key={idx} className="flex items-center gap-2 rounded-xl bg-surface-2 p-3">
                                         <div className="min-w-0 flex-1">
-                                            <p className="truncate text-sm font-semibold text-ink">{l.name}</p>
+                                            <p className="truncate text-sm font-semibold text-ink">
+                                                {l.name}
+                                                {l.selectedVariant ? ` (${l.selectedVariant.variantValue})` : ""}
+                                                {l.selectedUnit ? ` (${l.selectedUnit})` : ""}
+                                            </p>
                                             <p className="text-xs text-muted-foreground">
                                                 {aed(getPrice(l))} · VAT 5%
                                             </p>
                                         </div>
                                         <div className="flex items-center gap-1">
                                             <button
-                                                onClick={() => step(l.id, -1)}
+                                                onClick={() => step(l, -1)}
                                                 className="grid h-7 w-7 place-items-center rounded-lg border border-border bg-surface"
                                                 aria-label="Decrease"
                                             >
@@ -730,7 +821,7 @@ function PosTill() {
                                             </button>
                                             <span className="w-6 text-center text-sm font-bold tabular-nums text-ink">{l.qty}</span>
                                             <button
-                                                onClick={() => step(l.id, 1)}
+                                                onClick={() => step(l, 1)}
                                                 className="grid h-7 w-7 place-items-center rounded-lg border border-border bg-surface"
                                                 aria-label="Increase"
                                             >
@@ -1068,6 +1159,7 @@ function PosTill() {
                 <h2 className="text-lg font-bold uppercase">{printData.branchName}</h2>
                 <p>Till: {printData.tillName}</p>
                 <p>Cashier: {printData.cashierEmail}</p>
+                {printData.trn && <p>TRN: {printData.trn}</p>}
                 <p>{printData.date}</p>
                 <p className="mt-2 font-bold">Transaction: #{printData.receiptNumber.slice(0, 8).toUpperCase()}</p>
               </div>
@@ -1230,6 +1322,110 @@ function PosTill() {
           )}
         </div>
       )}
+      {/* Product Variant & Unit Selection Dialog */}
+      <Dialog open={!!selectionProduct} onOpenChange={(open) => { if (!open) setSelectionProduct(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Configure: {selectionProduct?.name}</DialogTitle>
+            <DialogDescription>
+              Select product variant and unit size before adding to cart.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {/* Variants selection */}
+            {selectionProduct?.variants && selectionProduct.variants.length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-sm font-bold text-ink">Select Variant</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {selectionProduct.variants.map((v: any, idx: number) => {
+                    const isSelected = selectedVariant?.variantValue === v.variantValue && selectedVariant?.variantName === v.variantName;
+                    return (
+                      <Button
+                        key={idx}
+                        type="button"
+                        variant={isSelected ? "default" : "outline"}
+                        className="rounded-xl justify-between h-auto py-2.5 px-3 flex flex-col items-start gap-1 text-left"
+                        onClick={() => setSelectedVariant(v)}
+                      >
+                        <span className="text-[10px] font-semibold uppercase opacity-75">{v.variantName}</span>
+                        <span className="text-sm font-bold">{v.variantValue}</span>
+                        {Number(v.priceAdjustment) !== 0 && (
+                          <span className="text-[10px] font-medium mt-1">
+                            {Number(v.priceAdjustment) > 0 ? "+" : ""}{aed(v.priceAdjustment)}
+                          </span>
+                        )}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Units selection */}
+            {selectionProduct?.conversions && selectionProduct.conversions.length > 0 && (
+              <div className="space-y-2 border-t pt-3">
+                <Label className="text-sm font-bold text-ink">Select Unit</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {/* Base unit button */}
+                  <Button
+                    type="button"
+                    variant={selectedConversion === null ? "default" : "outline"}
+                    className="rounded-xl justify-between h-auto py-2.5 px-3 flex flex-col items-start gap-1 text-left"
+                    onClick={() => setSelectedConversion(null)}
+                  >
+                    <span className="text-[10px] font-semibold uppercase opacity-75">Base Unit</span>
+                    <span className="text-sm font-bold">{selectionProduct.unit}</span>
+                    <span className="text-[10px] font-medium mt-1">Base Price</span>
+                  </Button>
+                  {/* Alt units buttons */}
+                  {selectionProduct.conversions.map((c: any, idx: number) => {
+                    const isSelected = selectedConversion?.fromUnit === c.fromUnit;
+                    const factor = Number(c.conversionFactor || 1);
+                    return (
+                      <Button
+                        key={idx}
+                        type="button"
+                        variant={isSelected ? "default" : "outline"}
+                        className="rounded-xl justify-between h-auto py-2.5 px-3 flex flex-col items-start gap-1 text-left"
+                        onClick={() => setSelectedConversion(c)}
+                      >
+                        <span className="text-[10px] font-semibold uppercase opacity-75">Alt Unit (x{c.conversionFactor})</span>
+                        <span className="text-sm font-bold">{c.fromUnit}</span>
+                        <span className="text-[10px] font-medium mt-1">
+                          {aed(Number(selectionProduct.priceOverride || selectionProduct.basePrice || 0) * factor)}
+                        </span>
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="rounded-xl"
+              onClick={() => {
+                setSelectionProduct(null);
+                setSelectedVariant(null);
+                setSelectedConversion(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="rounded-xl"
+              onClick={() => {
+                if (selectionProduct) {
+                  addWithDetails(selectionProduct, selectedVariant, selectedConversion);
+                }
+              }}
+            >
+              Add to Cart
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DemoShell>
   );
 }

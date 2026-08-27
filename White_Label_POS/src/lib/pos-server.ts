@@ -16,7 +16,10 @@ import {
   tenants,
   customers,
   customerTransactions,
-  tenantSettings
+  tenantSettings,
+  productBarcodes,
+  productVariants,
+  unitConversions,
 } from "../server/db/schema";
 
 // Middleware
@@ -43,31 +46,64 @@ async function getPosContext() {
 export const getPosCatalogServerFn = createServerFn({ method: "GET" }).handler(async () => {
   const { tenantId, branchId } = await getPosContext();
 
-  const catalog = await db
-    .select({
-      id: products.id,
-      name: products.name,
-      category: products.category,
-      barcode: products.barcode,
-      sku: products.barcode,
-      unit: products.unit,
-      basePrice: products.salePrice,
-      stock: stockLevels.stock,
-      priceOverride: stockLevels.priceOverride,
-    })
-    .from(products)
-    .innerJoin(
-      stockLevels,
-      and(eq(stockLevels.productId, products.id), eq(stockLevels.branchId, branchId)),
-    )
-    .where(eq(products.tenantId, tenantId));
+  const [catalog, dbBarcodes, dbVariants, dbConversions] = await Promise.all([
+    db
+      .select({
+        id: products.id,
+        name: products.name,
+        category: products.category,
+        barcode: products.barcode,
+        sku: products.barcode,
+        unit: products.unit,
+        basePrice: products.salePrice,
+        stock: stockLevels.stock,
+        priceOverride: stockLevels.priceOverride,
+      })
+      .from(products)
+      .innerJoin(
+        stockLevels,
+        and(eq(stockLevels.productId, products.id), eq(stockLevels.branchId, branchId)),
+      )
+      .where(eq(products.tenantId, tenantId)),
+    db.select().from(productBarcodes),
+    db.select().from(productVariants),
+    db.select().from(unitConversions),
+  ]);
+
+  const catalogWithDetails = catalog.map((item) => {
+    const alternateBarcodes = dbBarcodes
+      .filter((b) => b.productId === item.id)
+      .map((b) => b.barcode);
+    const variants = dbVariants
+      .filter((v) => v.productId === item.id)
+      .map((v) => ({
+        variantName: v.variantName,
+        variantValue: v.variantValue,
+        sku: v.sku,
+        priceAdjustment: v.priceAdjustment,
+      }));
+    const conversions = dbConversions
+      .filter((c) => c.productId === item.id)
+      .map((c) => ({
+        fromUnit: c.fromUnit,
+        toUnit: c.toUnit,
+        conversionFactor: c.conversionFactor,
+      }));
+
+    return {
+      ...item,
+      alternateBarcodes,
+      variants,
+      conversions,
+    };
+  });
 
   const dbPromotions = await db.query.promotions.findMany({
     where: eq(promotions.tenantId, tenantId),
   });
 
   return {
-    catalog: JSON.parse(JSON.stringify(catalog)),
+    catalog: JSON.parse(JSON.stringify(catalogWithDetails)),
     promotions: JSON.parse(JSON.stringify(dbPromotions)),
   };
 });
@@ -187,8 +223,16 @@ export const getActiveShiftServerFn = createServerFn({ method: "GET" }).handler(
     shiftStats.vatCollected = shiftOrders.reduce((acc, order) => acc + Number(order.vat), 0);
   }
 
+  let trn = null;
+  if (activeShift) {
+    const setting = await db.query.tenantSettings.findFirst({
+      where: eq(tenantSettings.tenantId, activeShift.tenantId),
+    });
+    if (setting) trn = setting.trn;
+  }
+
   return JSON.parse(
-    JSON.stringify({ shift: activeShift ? { ...activeShift, stats: shiftStats } : null }),
+    JSON.stringify({ shift: activeShift ? { ...activeShift, stats: shiftStats, trn } : null }),
   );
 });
 
@@ -313,7 +357,7 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
       vat: number;
       total: number;
       payments: { method: string; amount: number }[];
-      items: { productId: string; qty: number; unitPrice: number }[];
+      items: { productId: string; qty: number; unitPrice: number; unit?: string; conversionFactor?: number }[];
       cashReceived?: number;
       changeGiven?: number;
       idempotencyKey?: string;
@@ -564,6 +608,9 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
 
         if (!product) throw new Error("Product not found");
 
+        const factor = item.conversionFactor ? Number(item.conversionFactor) : 1;
+        const baseQtyToDeduct = item.qty * factor;
+
         if (product.isBatchTracked) {
           // Handle FEFO deduction from batches
           const availableBatches = await tx
@@ -579,7 +626,7 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
             .orderBy(sql`${batches.expiryDate} ASC NULLS LAST`)
             .for("update");
 
-          let remainingQtyToDeduct = item.qty;
+          let remainingQtyToDeduct = baseQtyToDeduct;
           const now = new Date();
 
           for (const batch of availableBatches) {
@@ -614,7 +661,7 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
 
           if (remainingQtyToDeduct > 0) {
             throw new Error(
-              `Cannot fulfill ${item.qty} of ${product.name} because remaining stock is either expired or insufficient.`,
+              `Cannot fulfill ${item.qty} ${item.unit || ""} of ${product.name} because remaining stock is either expired or insufficient.`,
             );
           }
         }
@@ -622,12 +669,12 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
         // Always decrement branch stock levels safely
         const stockUpdateResult = await tx
           .update(stockLevels)
-          .set({ stock: sql`${stockLevels.stock} - ${item.qty}` })
+          .set({ stock: sql`${stockLevels.stock} - ${baseQtyToDeduct}` })
           .where(
             and(
               eq(stockLevels.productId, item.productId), 
               eq(stockLevels.branchId, branchId),
-              gte(stockLevels.stock, item.qty) // Prevent negative stock
+              gte(stockLevels.stock, baseQtyToDeduct) // Prevent negative stock
             ),
           ).returning({ id: stockLevels.id });
           

@@ -553,7 +553,20 @@ export const updatePlatformSettingsServerFn = createServerFn({ method: "POST" })
 export const getAuditLogsServerFn = createServerFn({ method: "GET" })
     .validator((d: { page?: number; limit?: number; tenantId?: string; actorId?: string; action?: string; entityType?: string; startDate?: string; endDate?: string }) => d)
     .handler(async ({ data }) => {
-        await ensureSuperAdmin();
+        const sessionRes = await getSessionServerFn();
+        if (!sessionRes.success || !sessionRes.session) {
+            throw new Error("Unauthorized");
+        }
+
+        let forcedTenantId = data.tenantId;
+
+        if (sessionRes.session.role !== "Super Admin") {
+            if (sessionRes.session.role !== "Head Office Admin") {
+                throw new Error("Unauthorized");
+            }
+            forcedTenantId = sessionRes.session.tenantId;
+        }
+
         const page = data.page || 1;
         const pageSize = data.limit ? Math.min(data.limit, 100) : 50;
         const offset = (page - 1) * pageSize;
@@ -561,7 +574,7 @@ export const getAuditLogsServerFn = createServerFn({ method: "GET" })
         let query = db.select().from(auditLogs);
         const conditions = [];
 
-        if (data.tenantId) conditions.push(eq(auditLogs.tenantId, data.tenantId));
+        if (forcedTenantId) conditions.push(eq(auditLogs.tenantId, forcedTenantId));
         if (data.actorId) conditions.push(eq(auditLogs.userId, data.actorId));
         if (data.action) conditions.push(eq(auditLogs.action, data.action));
         if (data.entityType) conditions.push(eq(auditLogs.entityType, data.entityType));

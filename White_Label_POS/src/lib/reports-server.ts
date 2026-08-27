@@ -75,7 +75,7 @@ export const getSalesSummaryReportFn = createServerFn({ method: "POST" })
     const totalSales = Number(stats?.totalSales || 0);
     const averageOrderValue = orderCount > 0 ? (totalSales / orderCount).toFixed(2) : "0.00";
 
-    await logAuditAction({ action: "Generated Sales Summary Report", entityType: "Report", entityId: "SalesSummary" });
+    await logAuditAction({ action: "Generated Sales Summary Report", entityType: "Report", entityId: "SalesSummary", summary: `Generated Sales Summary Report from ${data.startDate} to ${data.endDate}` });
 
     return {
       success: true,
@@ -109,7 +109,7 @@ export const getBranchSalesReportFn = createServerFn({ method: "POST" })
     .groupBy(orders.branchId, branches.name)
     .orderBy(desc(sql`sum(${orders.total})`));
 
-    await logAuditAction({ action: "Generated Branch Sales Report", entityType: "Report", entityId: "BranchSales" });
+    await logAuditAction({ action: "Generated Branch Sales Report", entityType: "Report", entityId: "BranchSales", summary: `Generated Branch Sales Report from ${data.startDate} to ${data.endDate}` });
     return { success: true, data: results };
   });
 
@@ -134,7 +134,7 @@ export const getProductSalesReportFn = createServerFn({ method: "POST" })
     .groupBy(orderItems.productId, products.name, products.barcode)
     .orderBy(desc(sql`sum(${orderItems.qty} * ${orderItems.unitPrice})`));
 
-    await logAuditAction({ action: "Generated Product Sales Report", entityType: "Report", entityId: "ProductSales" });
+    await logAuditAction({ action: "Generated Product Sales Report", entityType: "Report", entityId: "ProductSales", summary: `Generated Product Sales Report from ${data.startDate} to ${data.endDate}` });
     return { success: true, data: results };
   });
 
@@ -158,7 +158,7 @@ export const getCategorySalesReportFn = createServerFn({ method: "POST" })
     .groupBy(products.category)
     .orderBy(desc(sql`sum(${orderItems.qty} * ${orderItems.unitPrice})`));
 
-    await logAuditAction({ action: "Generated Category Sales Report", entityType: "Report", entityId: "CategorySales" });
+    await logAuditAction({ action: "Generated Category Sales Report", entityType: "Report", entityId: "CategorySales", summary: `Generated Category Sales Report from ${data.startDate} to ${data.endDate}` });
     return { success: true, data: results };
   });
 
@@ -183,7 +183,7 @@ export const getCashierSalesReportFn = createServerFn({ method: "POST" })
     .groupBy(orders.cashierId, staffUsers.name)
     .orderBy(desc(sql`sum(${orders.total})`));
 
-    await logAuditAction({ action: "Generated Cashier Sales Report", entityType: "Report", entityId: "CashierSales" });
+    await logAuditAction({ action: "Generated Cashier Sales Report", entityType: "Report", entityId: "CashierSales", summary: `Generated Cashier Sales Report from ${data.startDate} to ${data.endDate}` });
     return { success: true, data: results };
   });
 
@@ -210,7 +210,7 @@ export const getInventoryValuationReportFn = createServerFn({ method: "POST" })
     .where(and(...conditions))
     .orderBy(branches.name, products.name);
 
-    await logAuditAction({ action: "Generated Inventory Valuation Report", entityType: "Report", entityId: "InventoryValuation" });
+    await logAuditAction({ action: "Generated Inventory Valuation Report", entityType: "Report", entityId: "InventoryValuation", summary: `Generated Inventory Valuation Report` });
     return { success: true, data: results };
   });
 
@@ -240,7 +240,7 @@ export const getLowStockReportFn = createServerFn({ method: "POST" })
     .where(and(...conditions))
     .orderBy(sql`(${stockLevels.reorderLevel} - ${stockLevels.stock}) DESC`);
 
-    await logAuditAction({ action: "Generated Low Stock Report", entityType: "Report", entityId: "LowStock" });
+    await logAuditAction({ action: "Generated Low Stock Report", entityType: "Report", entityId: "LowStock", summary: `Generated Low Stock Report` });
     return { success: true, data: results };
   });
 
@@ -276,7 +276,7 @@ export const getExpiryReportFn = createServerFn({ method: "POST" })
     .where(and(...conditions))
     .orderBy(batches.expiryDate);
 
-    await logAuditAction({ action: "Generated Expiry Report", entityType: "Report", entityId: "ExpiryReport" });
+    await logAuditAction({ action: "Generated Expiry Report", entityType: "Report", entityId: "ExpiryReport", summary: `Generated Expiry Report for next ${data.daysThreshold} days` });
     return { success: true, data: results };
   });
 
@@ -309,7 +309,7 @@ export const getPurchaseReportFn = createServerFn({ method: "POST" })
     .where(and(...conditions))
     .orderBy(desc(purchaseOrders.createdAt));
 
-    await logAuditAction({ action: "Generated Purchase Report", entityType: "Report", entityId: "PurchaseReport" });
+    await logAuditAction({ action: "Generated Purchase Report", entityType: "Report", entityId: "PurchaseReport", summary: `Generated Purchase Report from ${data.startDate} to ${data.endDate}` });
     return { success: true, data: results };
   });
 
@@ -336,7 +336,7 @@ export const getVendorReportFn = createServerFn({ method: "POST" })
     .groupBy(vendors.name)
     .orderBy(desc(sql`sum(${purchaseOrders.total})`));
 
-    await logAuditAction({ action: "Generated Vendor Report", entityType: "Report", entityId: "VendorReport" });
+    await logAuditAction({ action: "Generated Vendor Report", entityType: "Report", entityId: "VendorReport", summary: `Generated Vendor Report from ${data.startDate} to ${data.endDate}` });
     return { success: true, data: results };
   });
 
@@ -364,7 +364,7 @@ export const getVatSummaryReportFn = createServerFn({ method: "POST" })
     const vatAmount = Number(stats?.vatAmount || 0).toFixed(2);
     const salesIncVat = Number(stats?.salesIncVat || 0).toFixed(2);
 
-    await logAuditAction({ action: "Generated VAT Report", entityType: "Report", entityId: "VatSummary" });
+    await logAuditAction({ action: "Generated VAT Report", entityType: "Report", entityId: "VatSummary", summary: `Generated VAT Summary Report from ${data.startDate} to ${data.endDate}` });
     return {
       success: true,
       data: {

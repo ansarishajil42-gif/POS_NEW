@@ -261,8 +261,8 @@ function SuperAdmin() {
             return;
         }
 
-        if (!newBranchForm.name.trim() || !newBranchForm.address.trim()) {
-            toast.error("Please fill all fields");
+        if (!newBranchForm.name.trim()) {
+            toast.error("Please fill all required fields");
             return;
         }
 
@@ -631,8 +631,8 @@ function SuperAdmin() {
                             <ul className="mt-4 space-y-2 font-mono text-xs">
                                 {systemLogs.length === 0 ? (
                                     <li className="text-muted-foreground">No recent activity</li>
-                                ) : systemLogs.map(([time, lvl, msg]) => (
-                                    <li key={String(msg)} className="flex gap-3 rounded-lg bg-surface-2 px-3 py-2">
+                                ) : systemLogs.map(([time, lvl, msg], index) => (
+                                    <li key={`${index}-${String(msg)}`} className="flex gap-3 rounded-lg bg-surface-2 px-3 py-2">
                                         <span className="text-muted-foreground">{time}</span>
                                         <span className={lvl === "WARN" ? "font-bold text-warning-foreground" : "font-bold text-primary"}>
                                             {lvl as string}
@@ -863,7 +863,7 @@ function SuperAdmin() {
                                     <SelectValue placeholder="Select a tenant" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    {tenants.map(t => (
+                                    {tenants.filter(t => t.status !== "Archived").map(t => (
                                         <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
                                     ))}
                                 </SelectContent>
@@ -908,8 +908,8 @@ function SuperAdmin() {
                     <DialogFooter>
                         <Button variant="outline" className="rounded-xl" onClick={() => setGlobalAddBranchOpen(false)}>Cancel</Button>
                         <Button className="rounded-xl" onClick={async () => {
-                            if (!globalNewBranchForm.tenantId || !globalNewBranchForm.name || !globalNewBranchForm.address) {
-                                toast.error("Please fill all fields");
+                            if (!globalNewBranchForm.tenantId || !globalNewBranchForm.name) {
+                                toast.error("Please fill all required fields");
                                 return;
                             }
                             const t = tenants.find(t => t.id === globalNewBranchForm.tenantId);

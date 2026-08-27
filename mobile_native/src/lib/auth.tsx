@@ -6,7 +6,8 @@ interface AuthState {
   role: Role | null;
   roleLabel: string;
   branch: string;
-  signIn: (role: Role) => void;
+  user: any | null;
+  signIn: (role: Role, userData?: any) => void;
   signOut: () => void;
 }
 
@@ -24,14 +25,22 @@ const branchByRole: Record<Role, string> = {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<Role | null>(null);
+  const [user, setUser] = useState<any | null>(null);
 
   const value = useMemo<AuthState>(() => ({
     role,
     roleLabel: role ? ROLES.find((r) => r.id === role)?.label ?? '' : '',
     branch: role ? branchByRole[role] : '',
-    signIn: (r) => setRole(r),
-    signOut: () => setRole(null),
-  }), [role]);
+    user,
+    signIn: (r, userData) => {
+      setRole(r);
+      if (userData) setUser(userData);
+    },
+    signOut: () => {
+      setRole(null);
+      setUser(null);
+    },
+  }), [role, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

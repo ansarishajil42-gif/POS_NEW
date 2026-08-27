@@ -33,6 +33,7 @@ export async function createBranchInternal(data: { tenantId: string; name: strin
       entityId: newBranch.id,
       tenantId: data.tenantId,
       userId: data.userId,
+      summary: `Branch '${data.name}' created`,
       afterValue: { name: data.name }
     }, tx);
 

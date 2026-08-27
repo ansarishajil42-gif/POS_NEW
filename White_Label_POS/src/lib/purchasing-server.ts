@@ -404,7 +404,7 @@ export const createPurchaseOrderServerFn = createServerFn({ method: "POST" })
           action: "CREATED",
           entityType: "PURCHASE_ORDER",
           entityId: newPO.id,
-          details: { total, subtotal, vatAmount, status: "Draft" },
+          details: `PO created — Subtotal AED ${subtotal}, VAT AED ${vatAmount}, Total AED ${total} (${"Draft"})`,
         });
       }
     });
@@ -549,7 +549,7 @@ export const deletePurchaseOrderServerFn = createServerFn({ method: "POST" })
           action: "DELETED",
           entityType: "PURCHASE_ORDER",
           entityId: data.id,
-          details: { status: po.status },
+          details: `${po.status} PO deleted`,
         });
       }
     });
@@ -717,7 +717,7 @@ export const recordGRNServerFn = createServerFn({ method: "POST" })
           action: "RECORDED_GRN",
           entityType: "PURCHASE_ORDER",
           entityId: po.id,
-          details: { grnNumber: data.grnNumber },
+          details: `GRN ${data.grnNumber} recorded`,
         });
       }
     });
@@ -900,7 +900,7 @@ export const createVendorInvoiceServerFn = createServerFn({ method: "POST" })
           action: "CREATED",
           entityType: "VENDOR_INVOICE",
           entityId: newInvoice.id,
-          details: { poId: po.id, grnId: relatedGrn.id, invoiceNumber: data.invoiceNumber, total: data.total },
+          details: `Invoice ${data.invoiceNumber} created for AED ${data.total}`,
         });
       }
     });

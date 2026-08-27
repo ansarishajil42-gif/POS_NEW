@@ -23,6 +23,7 @@ import {
   CheckCircle2,
   Ban,
   Clock,
+  Menu,
 } from "lucide-react";
 import {
   Bar,
@@ -93,7 +94,12 @@ import {
   deleteVendorFn,
   toggleRolePermissionFn,
   handleOverrideRequestFn,
+  createBranchForTenantFn,
+  updateBranchFn,
+  activateBranchFn,
+  deactivateBranchFn,
 } from "@/lib/head-office-server";
+import { getAuditLogsServerFn } from "@/lib/super-admin-server";
 import { stockTransferServerFn } from "@/lib/inventory-manager-server";
 import {
   createPurchaseOrderServerFn,
@@ -217,7 +223,7 @@ function HeadOffice() {
       price: Number(p.salePrice) || 0,
       vat: p.vatIncluded ? "Inc" : "Exc",
       stock: totalStock,
-      isBatchTracked: p.isBatchTracked ?? false,
+      isBatchTracked: p.isBatchTracked === false ? false : true,
       costPriceRaw: p.costPrice,
       salePriceRaw: p.salePrice,
     };
@@ -309,6 +315,15 @@ function HeadOffice() {
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
+  const [addBatchOpen, setAddBatchOpen] = useState(false);
+  const [addBatchForm, setAddBatchForm] = useState<any>({
+    productId: "",
+    branchId: "",
+    batchNumber: "",
+    expiryDate: "",
+    initialStock: 0,
+  });
+  const [isAddingBatch, setIsAddingBatch] = useState(false);
   const [invForm, setInvForm] = useState<any>({
     branchId: "",
     productId: "",
@@ -359,6 +374,42 @@ function HeadOffice() {
   const [deleteProductContext, setDeleteProductContext] = useState<any>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const [branchAddOpen, setBranchAddOpen] = useState(false);
+  const [newBranchName, setNewBranchName] = useState("");
+  const [newBranchAddress, setNewBranchAddress] = useState("");
+  const [isCreatingBranch, setIsCreatingBranch] = useState(false);
+
+  const [editingBranchId, setEditingBranchId] = useState<string | null>(null);
+  const [editBranchName, setEditBranchName] = useState("");
+  const [editBranchAddress, setEditBranchAddress] = useState("");
+
+  const [auditLogsData, setAuditLogsData] = useState<any[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [auditLogsPage, setAuditLogsPage] = useState(1);
+  const auditLogsPerPage = 10;
+
+  useEffect(() => {
+    if (activeTab === "audit_logs") {
+      setIsLoadingLogs(true);
+      getAuditLogsServerFn({ data: { limit: 100 } })
+        .then((res) => {
+          if (res.success) {
+            setAuditLogsData(res.logs || []);
+          } else {
+            toast.error("Failed to load audit logs");
+          }
+        })
+        .catch((err) => {
+          toast.error(err.message || "Failed to load audit logs");
+        })
+        .finally(() => {
+          setIsLoadingLogs(false);
+        });
+    }
+  }, [activeTab]);
 
   const [vendorFormOpen, setVendorFormOpen] = useState(false);
   const [isEditingVendor, setIsEditingVendor] = useState(false);
@@ -789,6 +840,32 @@ function HeadOffice() {
     }
   };
 
+  const handleCreateBranch = async () => {
+    if (!newBranchName) {
+      toast.error("Branch name is required");
+      return;
+    }
+    setIsCreatingBranch(true);
+    try {
+      const res = await createBranchForTenantFn({
+        data: { name: newBranchName, address: newBranchAddress },
+      });
+      if (res.success) {
+        toast.success("Branch created successfully!");
+        setBranchAddOpen(false);
+        setNewBranchName("");
+        setNewBranchAddress("");
+        router.invalidate();
+      } else {
+        toast.error(res.error || "Failed to create branch");
+      }
+    } catch (e: any) {
+      toast.error(e.message || "An error occurred");
+    } finally {
+      setIsCreatingBranch(false);
+    }
+  };
+
   const categoriesList = Array.from(
     new Set((data?.products || []).map((p: any) => p.category).filter(Boolean)),
   ) as string[];
@@ -806,8 +883,21 @@ function HeadOffice() {
         </Button>
       }
     >
-      <Tabs defaultValue="dashboard" className="mt-6 flex flex-col md:flex-row gap-8">
-        <aside className="w-full md:w-56 shrink-0">
+      <Tabs 
+        value={activeTab} 
+        onValueChange={(val) => {
+          setActiveTab(val);
+          setIsMobileMenuOpen(false);
+        }} 
+        className="mt-6 flex flex-col md:flex-row gap-8"
+      >
+        <div className="md:hidden flex items-center justify-between bg-white p-3 rounded-xl border border-gray-200">
+          <span className="font-semibold text-sm">Navigation Menu</span>
+          <Button variant="outline" size="sm" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
+            <Menu className="h-4 w-4" />
+          </Button>
+        </div>
+        <aside className={`w-full md:w-56 shrink-0 ${isMobileMenuOpen ? "block" : "hidden md:block"}`}>
           <TabsList className="flex h-auto w-full flex-col items-stretch justify-start gap-1 rounded-xl bg-transparent p-0">
             <TabsTrigger
               value="dashboard"
@@ -887,6 +977,12 @@ function HeadOffice() {
             >
               Reports & VAT
             </TabsTrigger>
+            <TabsTrigger
+              value="audit_logs"
+              className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+            >
+              Audit Logs
+            </TabsTrigger>
           </TabsList>
         </aside>
 
@@ -943,6 +1039,49 @@ function HeadOffice() {
           </TabsContent>
 
           <TabsContent value="branches" className="mt-0 space-y-5">
+            <div className="flex justify-end mb-4">
+              <Dialog open={branchAddOpen} onOpenChange={setBranchAddOpen}>
+                <DialogTrigger asChild>
+                  <Button className="rounded-xl">
+                    <Plus className="h-4 w-4 mr-2" /> Add Outlet / Branch
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Add New Branch</DialogTitle>
+                    <DialogDescription>Create a new retail outlet or branch location.</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-1.5">
+                      <Label>Branch Name</Label>
+                      <Input
+                        value={newBranchName}
+                        onChange={(e) => setNewBranchName(e.target.value)}
+                        placeholder="e.g. Al Barsha Branch"
+                        className="rounded-xl border-border/50 bg-surface-2"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Address / Location</Label>
+                      <Input
+                        value={newBranchAddress}
+                        onChange={(e) => setNewBranchAddress(e.target.value)}
+                        placeholder="e.g. Dubai, UAE"
+                        className="rounded-xl border-border/50 bg-surface-2"
+                      />
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" className="rounded-xl" onClick={() => setBranchAddOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button className="rounded-xl" onClick={handleCreateBranch} disabled={isCreatingBranch}>
+                      {isCreatingBranch ? "Adding..." : "Add Branch"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {mappedOutlets.map((o: any) => (
                 <Dialog key={o.id}>
@@ -976,6 +1115,86 @@ function HeadOffice() {
                       </DialogDescription>
                     </DialogHeader>
                     <div className="mt-4 space-y-6">
+                      {/* Branch Details and Settings */}
+                      <div className="rounded-xl border border-border p-5 bg-surface-2/50 space-y-4">
+                        <h4 className="text-sm font-bold text-ink">Branch Details</h4>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1.5">
+                            <Label>Branch Name</Label>
+                            <Input
+                              value={editingBranchId === o.id ? editBranchName : o.name}
+                              onFocus={() => {
+                                if (editingBranchId !== o.id) {
+                                  setEditingBranchId(o.id);
+                                  setEditBranchName(o.name);
+                                  setEditBranchAddress(o.address || "");
+                                }
+                              }}
+                              onChange={(e) => setEditBranchName(e.target.value)}
+                              className="rounded-xl border-border/50 bg-surface"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Address / Location</Label>
+                            <Input
+                              value={editingBranchId === o.id ? editBranchAddress : (o.address || "")}
+                              onFocus={() => {
+                                if (editingBranchId !== o.id) {
+                                  setEditingBranchId(o.id);
+                                  setEditBranchName(o.name);
+                                  setEditBranchAddress(o.address || "");
+                                }
+                              }}
+                              onChange={(e) => setEditBranchAddress(e.target.value)}
+                              className="rounded-xl border-border/50 bg-surface"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                          <Button
+                            size="sm"
+                            className="rounded-lg"
+                            disabled={editingBranchId !== o.id || !editBranchName}
+                            onClick={async () => {
+                              try {
+                                const res = await updateBranchFn({
+                                  data: { branchId: o.id, name: editBranchName, address: editBranchAddress }
+                                });
+                                if (res.success) {
+                                  toast.success("Branch details updated!");
+                                  setEditingBranchId(null);
+                                  router.invalidate();
+                                }
+                              } catch (e: any) {
+                                toast.error(e.message);
+                              }
+                            }}
+                          >
+                            Save Details
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-lg"
+                            onClick={async () => {
+                              try {
+                                const res = o.status === "Active"
+                                  ? await deactivateBranchFn({ data: { branchId: o.id } })
+                                  : await activateBranchFn({ data: { branchId: o.id } });
+                                if (res.success) {
+                                  toast.success(`Branch ${o.status === "Active" ? "deactivated" : "activated"}!`);
+                                  router.invalidate();
+                                }
+                              } catch (e: any) {
+                                toast.error(e.message);
+                              }
+                            }}
+                          >
+                            {o.status === "Active" ? "Deactivate Branch" : "Activate Branch"}
+                          </Button>
+                        </div>
+                      </div>
+
                       <div>
                         <h3 className="font-bold text-ink mb-3">Local Inventory</h3>
                         <Table>
@@ -1204,7 +1423,7 @@ function HeadOffice() {
             </div>
 
             <Dialog open={productFormOpen} onOpenChange={setProductFormOpen}>
-              <DialogContent className="sm:max-w-md w-[95vw] sm:w-full">
+              <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto w-[95vw] sm:w-full">
                 <DialogHeader>
                   <DialogTitle>{isEditingProduct ? "Edit Product" : "Add Product"}</DialogTitle>
                   <DialogDescription>Create or modify product details.</DialogDescription>
@@ -1287,6 +1506,216 @@ function HeadOffice() {
                       onCheckedChange={(c) => setProductForm({ ...productForm, isBatchTracked: c })}
                     />
                   </div>
+
+                  {/* Alternate Barcodes Section */}
+                  <div className="space-y-2 border-t pt-3">
+                    <Label className="text-sm font-bold text-ink">Alternate Barcodes</Label>
+                    <div className="space-y-2">
+                      {(productForm.barcodes || []).map((bar: string, idx: number) => (
+                        <div key={idx} className="flex gap-2 items-center">
+                          <Input
+                            value={bar}
+                            onChange={(e) => {
+                              const copy = [...productForm.barcodes];
+                              copy[idx] = e.target.value;
+                              setProductForm({ ...productForm, barcodes: copy });
+                            }}
+                            placeholder="Scan or type barcode"
+                            className="rounded-xl border-border/50 bg-surface-2 flex-1"
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              const copy = productForm.barcodes.filter((_: any, i: number) => i !== idx);
+                              setProductForm({ ...productForm, barcodes: copy });
+                            }}
+                            className="text-destructive hover:bg-destructive/10 h-9 w-9 rounded-xl"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setProductForm({
+                            ...productForm,
+                            barcodes: [...(productForm.barcodes || []), ""],
+                          });
+                        }}
+                        className="rounded-xl mt-1 text-xs"
+                      >
+                        <Plus className="h-3 w-3 mr-1" /> Add Alternate Barcode
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Variants Section */}
+                  <div className="space-y-2 border-t pt-3">
+                    <Label className="text-sm font-bold text-ink">Product Variants</Label>
+                    <div className="space-y-3">
+                      {(productForm.variants || []).map((v: any, idx: number) => (
+                        <div key={idx} className="grid grid-cols-4 gap-2 items-end border border-dashed p-3 rounded-xl bg-surface-2/20">
+                          <div className="space-y-1.5 col-span-1">
+                            <Label className="text-xs">Attribute</Label>
+                            <Input
+                              value={v.variantName}
+                              onChange={(e) => {
+                                const copy = [...productForm.variants];
+                                copy[idx] = { ...v, variantName: e.target.value };
+                                setProductForm({ ...productForm, variants: copy });
+                              }}
+                              placeholder="e.g. Size"
+                              className="rounded-xl border-border/50 bg-surface-2 h-9 text-xs"
+                            />
+                          </div>
+                          <div className="space-y-1.5 col-span-1">
+                            <Label className="text-xs">Value</Label>
+                            <Input
+                              value={v.variantValue}
+                              onChange={(e) => {
+                                const copy = [...productForm.variants];
+                                copy[idx] = { ...v, variantValue: e.target.value };
+                                setProductForm({ ...productForm, variants: copy });
+                              }}
+                              placeholder="e.g. Large"
+                              className="rounded-xl border-border/50 bg-surface-2 h-9 text-xs"
+                            />
+                          </div>
+                          <div className="space-y-1.5 col-span-1">
+                            <Label className="text-xs">Price Adj (+/-)</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={v.priceAdjustment}
+                              onChange={(e) => {
+                                const copy = [...productForm.variants];
+                                copy[idx] = { ...v, priceAdjustment: e.target.value };
+                                setProductForm({ ...productForm, variants: copy });
+                              }}
+                              className="rounded-xl border-border/50 bg-surface-2 h-9 text-xs"
+                            />
+                          </div>
+                          <div className="flex justify-center col-span-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                const copy = productForm.variants.filter((_: any, i: number) => i !== idx);
+                                setProductForm({ ...productForm, variants: copy });
+                              }}
+                              className="text-destructive hover:bg-destructive/10 h-9 w-9 rounded-xl"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setProductForm({
+                            ...productForm,
+                            variants: [
+                              ...(productForm.variants || []),
+                              { variantName: "", variantValue: "", sku: "", priceAdjustment: "0.00" },
+                            ],
+                          });
+                        }}
+                        className="rounded-xl mt-1 text-xs"
+                      >
+                        <Plus className="h-3 w-3 mr-1" /> Add Variant
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Unit Conversions Section */}
+                  <div className="space-y-2 border-t pt-3">
+                    <Label className="text-sm font-bold text-ink">Unit Conversions</Label>
+                    <div className="space-y-3">
+                      {(productForm.conversions || []).map((c: any, idx: number) => (
+                        <div key={idx} className="grid grid-cols-4 gap-2 items-end border border-dashed p-3 rounded-xl bg-surface-2/20">
+                          <div className="space-y-1.5 col-span-1">
+                            <Label className="text-xs">From (Alt Unit)</Label>
+                            <Input
+                              value={c.fromUnit}
+                              onChange={(e) => {
+                                const copy = [...productForm.conversions];
+                                copy[idx] = { ...c, fromUnit: e.target.value };
+                                setProductForm({ ...productForm, conversions: copy });
+                              }}
+                              placeholder="e.g. Box"
+                              className="rounded-xl border-border/50 bg-surface-2 h-9 text-xs"
+                            />
+                          </div>
+                          <div className="space-y-1.5 col-span-1">
+                            <Label className="text-xs">To (Base Unit)</Label>
+                            <Input
+                              value={c.toUnit || productForm.unit}
+                              onChange={(e) => {
+                                const copy = [...productForm.conversions];
+                                copy[idx] = { ...c, toUnit: e.target.value };
+                                setProductForm({ ...productForm, conversions: copy });
+                              }}
+                              placeholder={productForm.unit || "Pcs"}
+                              className="rounded-xl border-border/50 bg-surface-2 h-9 text-xs"
+                            />
+                          </div>
+                          <div className="space-y-1.5 col-span-1">
+                            <Label className="text-xs">Factor (Alt = base * factor)</Label>
+                            <Input
+                              type="number"
+                              step="0.0001"
+                              value={c.conversionFactor}
+                              onChange={(e) => {
+                                const copy = [...productForm.conversions];
+                                copy[idx] = { ...c, conversionFactor: e.target.value };
+                                setProductForm({ ...productForm, conversions: copy });
+                              }}
+                              placeholder="12"
+                              className="rounded-xl border-border/50 bg-surface-2 h-9 text-xs"
+                            />
+                          </div>
+                          <div className="flex justify-center col-span-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                const copy = productForm.conversions.filter((_: any, i: number) => i !== idx);
+                                setProductForm({ ...productForm, conversions: copy });
+                              }}
+                              className="text-destructive hover:bg-destructive/10 h-9 w-9 rounded-xl"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setProductForm({
+                            ...productForm,
+                            conversions: [
+                              ...(productForm.conversions || []),
+                              { fromUnit: "", toUnit: productForm.unit || "", conversionFactor: "" },
+                            ],
+                          });
+                        }}
+                        className="rounded-xl mt-1 text-xs"
+                      >
+                        <Plus className="h-3 w-3 mr-1" /> Add Unit Conversion
+                      </Button>
+                    </div>
+                  </div>
+
                 </div>
                 <DialogFooter>
                   <Button
@@ -1324,53 +1753,18 @@ function HeadOffice() {
                         return;
                       }
 
-                      let payload: any = {};
-                      if (isEditingProduct) {
-                        const original = mappedProducts.find((p: any) => p.id === productForm.id);
-                        if (original) {
-                          if (productForm.name !== original.name) payload.name = productForm.name;
-
-                          const cleanBarcode =
-                            productForm.barcode === "" ||
-                            productForm.barcode === undefined ||
-                            productForm.barcode === null
-                              ? null
-                              : productForm.barcode;
-                          const cleanOrigBarcode =
-                            original.barcode === "" ||
-                            original.barcode === undefined ||
-                            original.barcode === null
-                              ? null
-                              : original.barcode;
-                          if (cleanBarcode !== cleanOrigBarcode) payload.barcode = cleanBarcode;
-
-                          if (productForm.category !== original.category)
-                            payload.category = productForm.category;
-                          if (productForm.unit !== original.unit) payload.unit = productForm.unit;
-                          if (productForm.costPrice !== original.costPriceRaw)
-                            payload.costPrice = productForm.costPrice;
-                          if (productForm.salePrice !== original.salePriceRaw)
-                            payload.salePrice = productForm.salePrice;
-                          if (productForm.isBatchTracked !== original.isBatchTracked)
-                            payload.isBatchTracked = productForm.isBatchTracked;
-                        }
-
-                        if (Object.keys(payload).length === 0) {
-                          toast.info("No changes detected");
-                          setProductFormOpen(false);
-                          return;
-                        }
-                      } else {
-                        payload = {
-                          name: productForm.name,
-                          barcode: productForm.barcode || null,
-                          category: productForm.category,
-                          unit: productForm.unit,
-                          costPrice: productForm.costPrice,
-                          salePrice: productForm.salePrice,
-                          isBatchTracked: productForm.isBatchTracked,
-                        };
-                      }
+                      const payload = {
+                        name: productForm.name,
+                        barcode: productForm.barcode || null,
+                        category: productForm.category,
+                        unit: productForm.unit,
+                        costPrice: productForm.costPrice,
+                        salePrice: productForm.salePrice,
+                        isBatchTracked: productForm.isBatchTracked,
+                        barcodes: productForm.barcodes || [],
+                        variants: productForm.variants || [],
+                        conversions: productForm.conversions || [],
+                      };
 
                       const res = isEditingProduct
                         ? await updateProductFn({ data: { id: productForm.id, ...payload } })
@@ -1477,12 +1871,38 @@ function HeadOffice() {
                 <Button
                   size="sm"
                   className="ml-auto rounded-lg"
-                  onClick={() => toast.success("Clearance pricing applied")}
+                  onClick={async () => {
+                    const nearExpiryBatches = mappedBatches.filter((b: any) => b.daysLeft <= 14);
+                    const uniqueProductIds = Array.from(new Set(nearExpiryBatches.map((b: any) => b.productId)));
+                    if (uniqueProductIds.length === 0) return;
+                    
+                    const loadToast = toast.loading("Applying clearance pricing...");
+                    try {
+                      for (const productId of uniqueProductIds) {
+                        await applyClearanceFn({ data: { productId, discountPct: 20 } });
+                      }
+                      toast.dismiss(loadToast);
+                      toast.success("Clearance pricing applied successfully!");
+                      router.invalidate();
+                    } catch (err: any) {
+                      toast.dismiss(loadToast);
+                      toast.error(err.message || "Failed to apply clearance pricing");
+                    }
+                  }}
                 >
                   Apply clearance
                 </Button>
               </div>
             )}
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h3 className="text-lg font-bold text-ink">Inventory & Batches</h3>
+                <p className="text-sm text-muted-foreground">Manage batches and track expiry dates.</p>
+              </div>
+              <Button onClick={() => setAddBatchOpen(true)} className="rounded-xl font-semibold bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm hover:-translate-y-0.5 transition-all">
+                <Plus className="mr-2 h-4 w-4" /> Add Batch
+              </Button>
+            </div>
             <div className="panel overflow-x-auto">
               <Table className="min-w-[820px]">
                 <TableHeader>
@@ -1747,6 +2167,7 @@ function HeadOffice() {
                                         name: i.product?.name,
                                         orderedQty: i.qty,
                                         receivedQty: i.qty,
+                                        isBatchTracked: i.product?.isBatchTracked === false ? false : true,
                                       })),
                                     });
                                     setGrnModalOpen(true);
@@ -2541,8 +2962,8 @@ function HeadOffice() {
                 </p>
               </div>
             ) : (
-              <div className="panel overflow-x-auto">
-                <Table className="min-w-[900px]">
+              <div className="panel overflow-hidden">
+                <Table className="w-full">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Vendor Name</TableHead>
@@ -3789,7 +4210,210 @@ function HeadOffice() {
               </div>
             </div>
           )}
+
+          <TabsContent value="audit_logs" className="mt-0 space-y-5">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-ink">System Audit Logs</h3>
+                <p className="text-xs text-muted-foreground">
+                  Track user operations and database state changes.
+                </p>
+              </div>
+            </div>
+            <div className="panel p-6 space-y-4">
+              {isLoadingLogs ? (
+                <div className="py-20 text-center text-muted-foreground">Loading audit logs...</div>
+              ) : auditLogsData.length === 0 ? (
+                <div className="py-20 text-center text-muted-foreground">No audit logs found.</div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="overflow-x-auto">
+                    <Table className="min-w-[800px]">
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Timestamp</TableHead>
+                          <TableHead>User / Actor ID</TableHead>
+                          <TableHead>Action</TableHead>
+                          <TableHead>Entity Type</TableHead>
+                          <TableHead>Details</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {auditLogsData.slice((auditLogsPage - 1) * auditLogsPerPage, auditLogsPage * auditLogsPerPage).map((log: any) => (
+                          <TableRow key={log.id}>
+                            <TableCell className="font-mono text-xs">
+                              {new Date(log.createdAt).toLocaleString()}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">{log.userId || "System"}</TableCell>
+                            <TableCell className="capitalize font-semibold text-xs">
+                              <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${
+                                log.action === "create" ? "bg-green-50 text-green-700 ring-green-600/20" :
+                                log.action === "update" ? "bg-blue-50 text-blue-700 ring-blue-600/20" :
+                                "bg-red-50 text-red-700 ring-red-600/20"
+                              }`}>
+                                {log.action}
+                              </span>
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">{log.entityType}</TableCell>
+                            <TableCell className="text-xs max-w-xs truncate" title={typeof log.details === "string" ? log.details : (log.details ? JSON.stringify(log.details) : "N/A")}>
+                              {typeof log.details === "string" ? log.details : (log.details?.summary || (log.details ? Object.entries(log.details).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(" | ") : "N/A"))}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  {auditLogsData.length > auditLogsPerPage && (
+                    <div className="flex items-center justify-between border-t border-border/50 pt-4 px-2">
+                      <p className="text-sm text-muted-foreground">
+                        Showing {((auditLogsPage - 1) * auditLogsPerPage) + 1} to {Math.min(auditLogsPage * auditLogsPerPage, auditLogsData.length)} of {auditLogsData.length} logs
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-lg"
+                          disabled={auditLogsPage === 1}
+                          onClick={() => setAuditLogsPage(p => Math.max(1, p - 1))}
+                        >
+                          Previous
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-lg"
+                          disabled={auditLogsPage >= Math.ceil(auditLogsData.length / auditLogsPerPage)}
+                          onClick={() => setAuditLogsPage(p => p + 1)}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </TabsContent>
         </main>
+
+        <Dialog open={addBatchOpen} onOpenChange={setAddBatchOpen}>
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle>Add Manual Batch</DialogTitle>
+              <DialogDescription>
+                Create a new inventory batch manually (e.g. for stock correction).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="space-y-2">
+                <Label>Product</Label>
+                <Select
+                  value={addBatchForm.productId}
+                  onValueChange={(val) => setAddBatchForm({ ...addBatchForm, productId: val })}
+                >
+                  <SelectTrigger className="rounded-xl border-border/50 bg-surface-2">
+                    <SelectValue placeholder="Select product" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {mappedProducts.filter((p: any) => p.isBatchTracked).map((p: any) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Outlet / Branch</Label>
+                <Select
+                  value={addBatchForm.branchId}
+                  onValueChange={(val) => setAddBatchForm({ ...addBatchForm, branchId: val })}
+                >
+                  <SelectTrigger className="rounded-xl border-border/50 bg-surface-2">
+                    <SelectValue placeholder="Select outlet" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {data?.branches?.map((b: any) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Batch Number</Label>
+                  <Input
+                    placeholder="e.g. BATCH-001"
+                    value={addBatchForm.batchNumber}
+                    onChange={(e) =>
+                      setAddBatchForm({ ...addBatchForm, batchNumber: e.target.value })
+                    }
+                    className="rounded-xl border-border/50 bg-surface-2"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Initial Stock</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={addBatchForm.initialStock}
+                    onChange={(e) =>
+                      setAddBatchForm({ ...addBatchForm, initialStock: parseInt(e.target.value) || 0 })
+                    }
+                    className="rounded-xl border-border/50 bg-surface-2"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Expiry Date</Label>
+                <Input
+                  type="date"
+                  value={addBatchForm.expiryDate}
+                  onChange={(e) =>
+                    setAddBatchForm({ ...addBatchForm, expiryDate: e.target.value })
+                  }
+                  className="rounded-xl border-border/50 bg-surface-2"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" className="rounded-xl" onClick={() => setAddBatchOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={isAddingBatch}
+                className="rounded-xl font-bold bg-primary hover:bg-primary/90 text-primary-foreground"
+                onClick={async () => {
+                  if (!addBatchForm.productId || !addBatchForm.branchId || !addBatchForm.batchNumber || !addBatchForm.expiryDate) {
+                    toast.error("Please fill all required fields");
+                    return;
+                  }
+                  setIsAddingBatch(true);
+                  try {
+                    const res = await createBatchServerFn({ data: addBatchForm });
+                    if (res.success) {
+                      toast.success("Batch added successfully");
+                      setAddBatchOpen(false);
+                      setAddBatchForm({ productId: "", branchId: "", batchNumber: "", expiryDate: "", initialStock: 0 });
+                      router.invalidate();
+                    } else {
+                      toast.error(res.error || "Failed to add batch");
+                    }
+                  } catch (e: any) {
+                    toast.error(e.message || "Failed to add batch");
+                  } finally {
+                    setIsAddingBatch(false);
+                  }
+                }}
+              >
+                {isAddingBatch ? "Adding..." : "Add Batch"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
       </Tabs>
     </DemoShell>
   );

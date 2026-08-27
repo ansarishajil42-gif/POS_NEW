@@ -28,6 +28,7 @@ import {
   Clock,
   Ban,
   Tag,
+  Menu,
 } from "lucide-react";
 import { aedShort, aed } from "@/lib/demo-data";
 import {
@@ -71,6 +72,7 @@ function StoreManager() {
   const data = Route.useLoaderData();
   const router = useRouter();
   const [search, setSearch] = useState("");
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("All Categories");
   const [isCategoryOpen, setIsCategoryOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -486,8 +488,14 @@ function StoreManager() {
           </Button>
         }
       >
-        <Tabs defaultValue="dashboard" className="mt-6 flex flex-col md:flex-row gap-8">
-          <aside className="w-full md:w-56 shrink-0">
+        <Tabs defaultValue="dashboard" onValueChange={() => setIsMobileMenuOpen(false)} className="mt-6 flex flex-col md:flex-row gap-8">
+        <div className="md:hidden flex items-center justify-between bg-white p-3 rounded-xl border border-gray-200">
+          <span className="font-semibold text-sm">Navigation Menu</span>
+          <Button variant="outline" size="sm" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
+            <Menu className="h-4 w-4" />
+          </Button>
+        </div>
+        <aside className={`w-full md:w-56 shrink-0 ${isMobileMenuOpen ? "block" : "hidden md:block"}`}>
             <TabsList className="flex h-auto w-full flex-col items-stretch justify-start gap-1 rounded-xl bg-transparent p-0">
               <TabsTrigger
                 value="dashboard"

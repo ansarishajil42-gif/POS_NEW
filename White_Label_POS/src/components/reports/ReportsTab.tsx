@@ -170,12 +170,6 @@ export function ReportsTab() {
               <SelectItem value="product-sales">Product Sales</SelectItem>
               <SelectItem value="category-sales">Category Sales</SelectItem>
               <SelectItem value="cashier-sales">Cashier Sales</SelectItem>
-              <SelectItem value="inventory-valuation">Inventory Valuation</SelectItem>
-              <SelectItem value="low-stock">Low Stock</SelectItem>
-              <SelectItem value="expiry">Expiry (30 Days)</SelectItem>
-              <SelectItem value="purchase">Purchase Orders</SelectItem>
-              <SelectItem value="vendor">Vendor Summary</SelectItem>
-              <SelectItem value="vat-summary">UAE VAT Summary</SelectItem>
             </SelectContent>
           </Select>
         </div>

@@ -22,6 +22,9 @@ import {
   rolePermissions,
   priceOverrideRequests,
   customerTransactions,
+  productBarcodes,
+  productVariants,
+  unitConversions,
 } from "@/server/db/schema";
 import { eq, and, sql, desc, inArray, ne, or, ilike, lte, gte } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
@@ -149,8 +152,41 @@ export const getHeadOfficeDataFn = createServerFn({ method: "GET" }).handler(asy
   });
 
   // Products
-  const dbProducts = await db.query.products.findMany({
-    where: eq(products.tenantId, tenantId),
+  const [dbProducts, dbBarcodes, dbVariants, dbConversions] = await Promise.all([
+    db.query.products.findMany({
+      where: eq(products.tenantId, tenantId),
+    }),
+    db.select().from(productBarcodes),
+    db.select().from(productVariants),
+    db.select().from(unitConversions),
+  ]);
+
+  const productsWithDetails = dbProducts.map((p) => {
+    const alternateBarcodes = dbBarcodes
+      .filter((b) => b.productId === p.id)
+      .map((b) => b.barcode);
+    const variants = dbVariants
+      .filter((v) => v.productId === p.id)
+      .map((v) => ({
+        variantName: v.variantName,
+        variantValue: v.variantValue,
+        sku: v.sku,
+        priceAdjustment: v.priceAdjustment,
+      }));
+    const conversions = dbConversions
+      .filter((c) => c.productId === p.id)
+      .map((c) => ({
+        fromUnit: c.fromUnit,
+        toUnit: c.toUnit,
+        conversionFactor: c.conversionFactor,
+      }));
+
+    return {
+      ...p,
+      alternateBarcodes,
+      variants,
+      conversions,
+    };
   });
 
   // Stock Levels
@@ -286,7 +322,7 @@ export const getHeadOfficeDataFn = createServerFn({ method: "GET" }).handler(asy
     settings,
     priceRequests: dbPriceOverrideRequests,
     branches: dbBranches,
-    products: dbProducts,
+    products: productsWithDetails,
     stock: dbStock,
     batches: dbBatches,
     purchases: dbPos,
@@ -736,6 +772,9 @@ export const createProductFn = createServerFn({ method: "POST" })
       costPrice: string | number;
       salePrice: string | number;
       isBatchTracked: boolean;
+      barcodes?: string[];
+      variants?: { variantName: string; variantValue: string; sku?: string | null; priceAdjustment: string | number }[];
+      conversions?: { fromUnit: string; toUnit: string; conversionFactor: string | number }[];
     }) => d,
   )
   .handler(async ({ data }) => {
@@ -792,6 +831,38 @@ export const createProductFn = createServerFn({ method: "POST" })
           .returning();
         newProduct = inserted;
 
+        // Insert barcodes
+        if (data.barcodes && data.barcodes.length > 0) {
+          const barcodeInserts = data.barcodes.map((b) => ({
+            productId: newProduct.id,
+            barcode: b,
+          }));
+          await tx.insert(productBarcodes).values(barcodeInserts);
+        }
+
+        // Insert variants
+        if (data.variants && data.variants.length > 0) {
+          const variantInserts = data.variants.map((v) => ({
+            productId: newProduct.id,
+            variantName: v.variantName,
+            variantValue: v.variantValue,
+            sku: v.sku || null,
+            priceAdjustment: Number(v.priceAdjustment).toFixed(2),
+          }));
+          await tx.insert(productVariants).values(variantInserts);
+        }
+
+        // Insert conversions
+        if (data.conversions && data.conversions.length > 0) {
+          const conversionInserts = data.conversions.map((c) => ({
+            productId: newProduct.id,
+            fromUnit: c.fromUnit,
+            toUnit: c.toUnit,
+            conversionFactor: Number(c.conversionFactor).toString(),
+          }));
+          await tx.insert(unitConversions).values(conversionInserts);
+        }
+
         const tenantBranches = await tx
           .select({ id: branches.id })
           .from(branches)
@@ -808,6 +879,7 @@ export const createProductFn = createServerFn({ method: "POST" })
       });
       return { success: true };
     } catch (error: any) {
+      console.error(error);
       return { success: false, error: "Failed to create product" };
     }
   });
@@ -823,6 +895,9 @@ export const updateProductFn = createServerFn({ method: "POST" })
       costPrice?: string | number;
       salePrice?: string | number;
       isBatchTracked?: boolean;
+      barcodes?: string[];
+      variants?: { variantName: string; variantValue: string; sku?: string | null; priceAdjustment: string | number }[];
+      conversions?: { fromUnit: string; toUnit: string; conversionFactor: string | number }[];
     }) => d,
   )
   .handler(async ({ data }) => {
@@ -884,9 +959,53 @@ export const updateProductFn = createServerFn({ method: "POST" })
     if (data.isBatchTracked !== undefined) updates.isBatchTracked = data.isBatchTracked;
 
     try {
-      await db.update(products).set(updates).where(eq(products.id, data.id));
+      await db.transaction(async (tx) => {
+        await tx.update(products).set(updates).where(eq(products.id, data.id));
+
+        // Update barcodes
+        if (data.barcodes !== undefined) {
+          await tx.delete(productBarcodes).where(eq(productBarcodes.productId, data.id));
+          if (data.barcodes.length > 0) {
+            const barcodeInserts = data.barcodes.map((b) => ({
+              productId: data.id,
+              barcode: b,
+            }));
+            await tx.insert(productBarcodes).values(barcodeInserts);
+          }
+        }
+
+        // Update variants
+        if (data.variants !== undefined) {
+          await tx.delete(productVariants).where(eq(productVariants.productId, data.id));
+          if (data.variants.length > 0) {
+            const variantInserts = data.variants.map((v) => ({
+              productId: data.id,
+              variantName: v.variantName,
+              variantValue: v.variantValue,
+              sku: v.sku || null,
+              priceAdjustment: Number(v.priceAdjustment).toFixed(2),
+            }));
+            await tx.insert(productVariants).values(variantInserts);
+          }
+        }
+
+        // Update conversions
+        if (data.conversions !== undefined) {
+          await tx.delete(unitConversions).where(eq(unitConversions.productId, data.id));
+          if (data.conversions.length > 0) {
+            const conversionInserts = data.conversions.map((c) => ({
+              productId: data.id,
+              fromUnit: c.fromUnit,
+              toUnit: c.toUnit,
+              conversionFactor: Number(c.conversionFactor).toString(),
+            }));
+            await tx.insert(unitConversions).values(conversionInserts);
+          }
+        }
+      });
       return { success: true };
     } catch (error: any) {
+      console.error(error);
       return { success: false, error: "Failed to update product" };
     }
   });
@@ -1087,7 +1206,7 @@ export const createBatchServerFn = createServerFn({ method: "POST" })
       .from(products)
       .where(and(eq(products.id, data.productId), eq(products.tenantId, tenantId)));
     if (!branch || !product) throw new Error("Unauthorized or invalid product/branch");
-    if (!product.isBatchTracked) throw new Error("Product must have batch tracking enabled");
+    if (product.isBatchTracked === false) throw new Error("Product must have batch tracking enabled");
 
     await db.transaction(async (tx) => {
       const existingBatch = await tx
@@ -1290,7 +1409,7 @@ export const createVendorFn = createServerFn({ method: "POST" })
       data.email === "" || data.email === undefined || data.email === null ? null : data.email;
     if (cleanEmail) {
       // Check for valid email format
-      const emailRegex = /^[^s@]+@[^s@]+.[^s@]+$/;
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(cleanEmail)) {
         return { success: false, error: "Invalid email format" };
       }
@@ -1344,7 +1463,7 @@ export const updateVendorFn = createServerFn({ method: "POST" })
       data.email === "" || data.email === undefined || data.email === null ? null : data.email;
     if (cleanEmail && cleanEmail !== existingVendor.email) {
       // Check for valid email format
-      const emailRegex = /^[^s@]+@[^s@]+.[^s@]+$/;
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(cleanEmail)) {
         return { success: false, error: "Invalid email format" };
       }
@@ -1818,7 +1937,7 @@ export const createPromotionFn = createServerFn({ method: "POST" })
       maxQty: data.maxQty,
     }).returning();
     
-    await logAuditAction({ action: "Promotion Created", entityType: "Promotion", entityId: newPromo.id });
+    await logAuditAction({ action: "Promotion Created", entityType: "Promotion", entityId: newPromo.id, summary: `Promotion '${newPromo.name}' created` });
     return { success: true, promotion: newPromo };
   });
 
@@ -1939,12 +2058,12 @@ export const archivePromotionFn = createServerFn({ method: "POST" })
   .validator((d: { id: string }) => d)
   .handler(async ({ data }) => {
     const tenantId = await getHeadOfficeTenant();
-    const list = await db.select({ id: promotions.id, status: promotions.status }).from(promotions).where(and(eq(promotions.id, data.id), eq(promotions.tenantId, tenantId))).limit(1);
+    const list = await db.select({ id: promotions.id, name: promotions.name, status: promotions.status }).from(promotions).where(and(eq(promotions.id, data.id), eq(promotions.tenantId, tenantId))).limit(1);
     if (list.length === 0) throw new Error("Promotion not found");
     // Indempotent if already archived, but let's just run it anyway.
     
     await db.update(promotions).set({ status: "Archived" }).where(and(eq(promotions.id, data.id), eq(promotions.tenantId, tenantId)));
-    await logAuditAction({ action: "Promotion Archived", entityType: "Promotion", entityId: data.id });
+    await logAuditAction({ action: "Promotion Archived", entityType: "Promotion", entityId: data.id, summary: `Promotion '${list[0].name}' archived` });
     return { success: true };
   });
 
