@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build",
+  "installCommand": "npm install",
+  "builds": [
+    { "src": ".output/server/index.mjs", "use": "@vercel/node" },
+    { "src": ".output/public/**", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/assets/(.*)", "dest": "/.output/public/assets/$1" },
+    { "src": "/(.*)", "dest": "/.output/server/index.mjs" }
+  ]
+}
