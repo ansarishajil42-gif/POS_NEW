@@ -51,6 +51,7 @@ const { mockDb } = vi.hoisted(() => {
     set: vi.fn(() => mockDbObj),
     values: vi.fn(() => mockDbObj),
     returning: vi.fn(() => mockDbObj),
+    onConflictDoUpdate: vi.fn(() => mockDbObj),
     transaction: vi.fn(async (cb) => {
       return cb(mockDbObj);
     })
@@ -74,7 +75,9 @@ vi.mock("@/server/db/schema", () => ({
   stockLevels: { productId: "productId", branchId: "branchId", stock: "stock" },
   orderPayments: {},
   orderItems: {},
-  customerTransactions: {}
+  customerTransactions: {},
+  invoiceSequences: { tenantId: "tenantId", currentValue: "currentValue" },
+  inventoryLedger: {}
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -125,7 +128,14 @@ describe("checkoutServerFn - POS Loyalty and Credit", () => {
       return this;
     });
     
-    mockDb.returning.mockResolvedValue([{ id: "order-123" }]);
+    mockDb.returning.mockImplementation(() => {
+      const lastInsertCall = mockDb.insert.mock.calls[mockDb.insert.mock.calls.length - 1];
+      const table = lastInsertCall ? lastInsertCall[0] : null;
+      if (table && table.currentValue === "currentValue") {
+        return Promise.resolve([{ val: 1 }]);
+      }
+      return Promise.resolve([{ id: "order-123" }]);
+    });
   });
 
   it("should complete a basic cash order without customer attached", async () => {

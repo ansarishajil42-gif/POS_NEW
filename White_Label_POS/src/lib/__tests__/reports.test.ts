@@ -114,7 +114,8 @@ vi.mock("@/lib/auth-server", () => ({
     return mockAuthTenantId;
   }),
   getSessionServerFn: vi.fn(async () => ({
-    user: { role: mockAuthRole, tenantId: mockAuthTenantId }
+    success: true,
+    session: { role: mockAuthRole, tenantId: mockAuthTenantId }
   }))
 }));
 

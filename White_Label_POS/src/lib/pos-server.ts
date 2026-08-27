@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getSessionServerFn } from "./auth-server";
 import { db } from "../server/db";
 import { eq, and, desc, gte, gt, asc, sql, ne } from "drizzle-orm";
+import * as schema from "../server/db/schema";
 import {
   products,
   stockLevels,

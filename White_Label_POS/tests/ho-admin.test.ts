@@ -10,9 +10,29 @@ import {
   getBranchDetailsFn
 } from "@/lib/head-office-server";
 
+import { vi } from "vitest";
+
+// Mock tanstack createServerFn
+vi.mock('@tanstack/react-start', () => {
+  return {
+    createServerFn: () => {
+      let handlerFunc: any;
+      let validatorFunc = (x: any) => x;
+      const chain: any = {
+        validator: (v: any) => { validatorFunc = v; return chain; },
+        handler: (h: any) => { handlerFunc = h; Object.assign(executeFn, chain); return executeFn; }
+      };
+      const executeFn = async (args: any) => {
+        return handlerFunc({ data: validatorFunc(args?.data || args) });
+      };
+      Object.assign(executeFn, chain);
+      return executeFn;
+    }
+  };
+});
+
 // Mock auth
 import * as authServer from "@/lib/auth-server";
-import { vi } from "vitest";
 
 describe("Head Office Branch Management", () => {
   let tenantId: string;
@@ -22,6 +42,7 @@ describe("Head Office Branch Management", () => {
     // Insert mock tenant
     const [tenant] = await db.insert(tenants).values({
       name: "Test Tenant",
+      subdomain: `testtenant-${Date.now()}`,
       status: "Active",
       outletLimit: 5
     }).returning();

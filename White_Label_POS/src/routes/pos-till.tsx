@@ -271,23 +271,6 @@ function PosTill() {
       return;
     }
 
-  const handleSearchCustomer = async (term: string) => {
-    setCustomerSearchTerm(term);
-    if (term.length < 2) {
-      setCustomerResults([]);
-      return;
-    }
-    setIsSearchingCustomer(true);
-    try {
-      const res = await searchPosCustomersFn({ data: { term } });
-      if (res.success) setCustomerResults(res.customers);
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-    setIsSearchingCustomer(false);
-  };
-    }
-
     if (Math.abs(allocatedTotal - total) > 0.01) {
       toast.error("Allocate the full amount before completing payment.");
       return;
@@ -366,6 +349,22 @@ function PosTill() {
     setCashReceivedInput("");
     setSelectedTenders({});
     setCustomer(null);
+  };
+
+  const handleSearchCustomer = async (term: string) => {
+    setCustomerSearchTerm(term);
+    if (term.length < 2) {
+      setCustomerResults([]);
+      return;
+    }
+    setIsSearchingCustomer(true);
+    try {
+      const res = await searchPosCustomersFn({ data: { term } });
+      if (res.success) setCustomerResults(res.customers);
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+    setIsSearchingCustomer(false);
   };
 
   const handleOpenShift = async () => {
@@ -600,19 +599,6 @@ function PosTill() {
               </div>
             </div>
 
-            <div className="panel flex h-fit flex-col p-5 lg:sticky lg:top-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-bold text-ink">Cart · {cart.length} lines</h2>
-                {cart.length > 0 && (
-                  <button
-                    onClick={() => setCart([])}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-destructive"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" /> Clear
-                  </button>
-                )}
-              </div>
-
                         <div className="panel flex h-fit flex-col p-5 lg:sticky lg:top-6 gap-6">
                             {/* Customer Section */}
                             <div className="rounded-xl border border-border p-4 bg-surface-2/50">
@@ -787,62 +773,7 @@ function PosTill() {
                                 Pay {cart.length > 0 ? aed(total) : ""}
                             </Button>
                         </div>
-
                     </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => step(l.id, -1)}
-                        className="grid h-7 w-7 place-items-center rounded-lg border border-border bg-surface"
-                        aria-label="Decrease"
-                      >
-                        <Minus className="h-3.5 w-3.5" />
-                      </button>
-                      <span className="w-6 text-center text-sm font-bold tabular-nums text-ink">
-                        {l.qty}
-                      </span>
-                      <button
-                        onClick={() => step(l.id, 1)}
-                        className="grid h-7 w-7 place-items-center rounded-lg border border-border bg-surface"
-                        aria-label="Increase"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                    <span className="w-16 text-right text-sm font-bold tabular-nums text-ink">
-                      {(getPrice(l, l.qty) * l.qty).toFixed(2)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-5 space-y-1.5 border-t border-border pt-4 text-sm">
-                <div className="flex justify-between text-muted-foreground">
-                  <span>Net</span>
-                  <span className="tabular-nums">{aed(net)}</span>
-                </div>
-                <div className="flex justify-between text-muted-foreground">
-                  <span>VAT 5%</span>
-                  <span className="tabular-nums">{vat.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between pt-2 text-xl font-extrabold text-ink">
-                  <span>Total</span>
-                  <span className="tabular-nums">{aed(total)}</span>
-                </div>
-              </div>
-
-              <Button
-                size="lg"
-                className="mt-5 rounded-xl text-base font-bold"
-                disabled={cart.length === 0}
-                onClick={() => {
-                  setSplit({ cash: Number(total.toFixed(2)), card: 0, points: 0, credit: 0 });
-                  setPayOpen(true);
-                }}
-              >
-                Pay {cart.length > 0 ? aed(total) : ""}
-              </Button>
-            </div>
-          </div>
         </TabsContent>
 
         <TabsContent value="shift" className="mt-5">

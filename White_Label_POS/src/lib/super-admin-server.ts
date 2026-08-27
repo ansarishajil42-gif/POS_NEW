@@ -448,7 +448,7 @@ export const createBranchServerFn = createServerFn({ method: "POST" })
             });
             return { success: true, branchId: branch.id };
         } catch (e: any) {
-            throw new Error(e.message);
+            return { success: false, error: e.message };
         }
     });
 

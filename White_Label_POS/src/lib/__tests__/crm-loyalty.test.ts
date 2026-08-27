@@ -107,7 +107,7 @@ describe('CRM & Loyalty Endpoints', () => {
         success: true,
         session: { role: 'Head Office Admin', tenantId: 'tenant-1' }
       });
-      mockWhere.mockResolvedValueOnce([]); // no existing customer
+      mockLimit.mockResolvedValueOnce([]); // no existing customer
       
       const result = await createCustomerFn({ data: { name: 'Test', email: 'test@test.com' } });
       
@@ -120,7 +120,7 @@ describe('CRM & Loyalty Endpoints', () => {
         success: true,
         session: { role: 'Head Office Admin', tenantId: 'tenant-1' }
       });
-      mockWhere.mockResolvedValueOnce([{ id: 'existing' }]); // existing customer
+      mockLimit.mockResolvedValueOnce([{ id: 'existing' }]); // existing customer
       
       await expect(createCustomerFn({ data: { name: 'Test', email: 'test@test.com' } }))
         .rejects.toThrow('Email is already in use');
