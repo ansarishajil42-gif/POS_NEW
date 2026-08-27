@@ -2,7 +2,7 @@ import { o as __toESM } from "../_runtime.mjs";
 import { u as require_react } from "../_libs/@floating-ui/react-dom+[...].mjs";
 import { s as require_jsx_runtime } from "../_libs/@radix-ui/react-collection+[...].mjs";
 import { i as cn, n as Logo, t as Button } from "./button-BlBeOJmP.mjs";
-import { h as Link } from "../_libs/@tanstack/react-router+[...].mjs";
+import { _ as Link } from "../_libs/@tanstack/react-router+[...].mjs";
 import { B as Mail, M as Phone, R as Menu, U as Linkedin, l as Twitter, n as X, z as MapPin } from "../_libs/lucide-react.mjs";
 //#region node_modules/.nitro/vite/services/ssr/assets/Reveal-EeYOLuaN.js
 var import_react = /* @__PURE__ */ __toESM(require_react());

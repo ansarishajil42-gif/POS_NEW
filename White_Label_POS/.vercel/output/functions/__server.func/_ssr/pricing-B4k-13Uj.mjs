@@ -2,7 +2,7 @@ import { o as __toESM } from "../_runtime.mjs";
 import { u as require_react } from "../_libs/@floating-ui/react-dom+[...].mjs";
 import { s as require_jsx_runtime } from "../_libs/@radix-ui/react-collection+[...].mjs";
 import { t as Button } from "./button-BlBeOJmP.mjs";
-import { h as Link } from "../_libs/@tanstack/react-router+[...].mjs";
+import { _ as Link } from "../_libs/@tanstack/react-router+[...].mjs";
 import { L as Minus, ft as Check, xt as ArrowRight } from "../_libs/lucide-react.mjs";
 import { t as Switch } from "./switch-BbovR4Kp.mjs";
 import { n as Navbar, r as Reveal, t as Footer } from "./Reveal-EeYOLuaN.mjs";
