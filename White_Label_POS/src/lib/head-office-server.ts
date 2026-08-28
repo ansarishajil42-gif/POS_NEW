@@ -29,7 +29,7 @@ import {
 import { eq, and, sql, desc, inArray, ne, or, ilike, lte, gte } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
 import { logAuditAction } from "@/lib/audit-logger";
-import bcrypt from "bcryptjs";
+import { hash } from "@node-rs/argon2";
 import { createBranchInternal } from "@/lib/branch-server-helpers";
 import { z } from "zod";
 
@@ -1302,14 +1302,36 @@ export const createStaffFn = createServerFn({ method: "POST" })
 
     if (data.role === "cashier") {
       if (!data.pin) throw new Error("PIN is required for Cashier on creation");
-      payload.pinHash = await bcrypt.hash(data.pin, 10);
+      payload.pinHash = await hash(data.pin);
     } else {
       if (!data.password) throw new Error("Password is required on creation");
-      payload.passwordHash = await bcrypt.hash(data.password, 10);
+      payload.passwordHash = await hash(data.password);
     }
 
     await db.insert(staffUsers).values(payload);
     return { success: true };
+  });
+
+export const deleteStaffFn = createServerFn({ method: "POST" })
+  .validator((d: { id: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+    const [existing] = await db
+      .select()
+      .from(staffUsers)
+      .where(and(eq(staffUsers.id, data.id), eq(staffUsers.tenantId, tenantId)));
+    if (!existing) throw new Error("Staff not found or unauthorized");
+
+    try {
+      await db.delete(staffUsers).where(eq(staffUsers.id, data.id));
+      return { success: true, message: "Staff member deleted successfully." };
+    } catch (error: any) {
+      if (error.code === '23503' || (error.cause && error.cause.code === '23503')) {
+        await db.update(staffUsers).set({ isActive: false }).where(eq(staffUsers.id, data.id));
+        return { success: true, message: "This staff member cannot be deleted because they have linked records (orders, adjustments, etc). They have been deactivated instead." };
+      }
+      throw error;
+    }
   });
 
 export const updateStaffFn = createServerFn({ method: "POST" })
@@ -1371,17 +1393,17 @@ export const updateStaffFn = createServerFn({ method: "POST" })
     // Handle role transitions and credential preservation
     if (data.role === "cashier" && existingUser.role !== "cashier") {
       if (!data.pin) throw new Error("PIN is required when changing role to Cashier");
-      updates.pinHash = await bcrypt.hash(data.pin, 10);
+      updates.pinHash = await hash(data.pin);
       updates.passwordHash = null;
     } else if (data.role !== "cashier" && existingUser.role === "cashier") {
       if (!data.password) throw new Error("Password is required when changing role from Cashier");
-      updates.passwordHash = await bcrypt.hash(data.password, 10);
+      updates.passwordHash = await hash(data.password);
       updates.pinHash = null;
     } else {
       // Same role category, just update if provided
       if (data.password && data.role !== "cashier")
-        updates.passwordHash = await bcrypt.hash(data.password, 10);
-      if (data.pin && data.role === "cashier") updates.pinHash = await bcrypt.hash(data.pin, 10);
+        updates.passwordHash = await hash(data.password);
+      if (data.pin && data.role === "cashier") updates.pinHash = await hash(data.pin);
     }
 
     await db.update(staffUsers).set(updates).where(eq(staffUsers.id, data.id));

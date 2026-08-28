@@ -46,7 +46,6 @@ function Login() {
   // Credentials state
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
   
   // PIN state
   const [selectedTenant, setSelectedTenant] = useState("");
@@ -54,6 +53,8 @@ function Login() {
   const [selectedCashierId, setSelectedCashierId] = useState("");
   const [selectedTillId, setSelectedTillId] = useState("");
   const [pin, setPin] = useState("");
+  const [showPin, setShowPin] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const [cashiersList, setCashiersList] = useState<{ id: string; name: string | null; email: string | null }[]>([]);
   const [tillsList, setTillsList] = useState<{ id: string; name: string; status: string }[]>([]);
@@ -256,8 +257,9 @@ function Login() {
                   />
                   <button
                     type="button"
-                    onClick={() => setShowPassword(!showPassword)}
+                    tabIndex={-1}
                     className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-ink transition-colors"
+                    onClick={() => setShowPassword(!showPassword)}
                   >
                     {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                   </button>
@@ -370,13 +372,20 @@ function Login() {
                   <Lock className="absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     id="pin"
-                    type="password"
+                    type={showPin ? "text" : "password"}
                     maxLength={4}
                     placeholder="••••"
                     value={pin}
                     onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-                    className="pl-11 rounded-xl py-6 text-center text-xl font-bold tracking-widest"
+                    className="pl-11 pr-11 rounded-xl py-6 text-center text-xl font-bold tracking-widest"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPin(!showPin)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-ink transition-colors"
+                  >
+                    {showPin ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
                 </div>
               </div>
 
