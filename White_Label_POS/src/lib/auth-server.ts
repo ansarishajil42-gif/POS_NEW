@@ -3,7 +3,7 @@ import { getCookie, setCookie } from "@tanstack/react-start/server";
 import { db } from "../server/db/index.js";
 import { staffUsers, tenants, branches, vendors, tills, loginAttempts, shifts } from "../server/db/schema.js";
 import { eq, and, desc } from "drizzle-orm";
-import { hash, verify } from "@node-rs/argon2";
+import bcrypt from "bcryptjs";
 import * as jose from "jose";
 
 const JWT_SECRET = new TextEncoder().encode(
@@ -70,7 +70,7 @@ export const loginServerFn = createServerFn()
 
       let validPassword = false;
       try {
-        validPassword = await verify(passwordHashStr, password);
+        validPassword = await bcrypt.compare(password, passwordHashStr);
       } catch (e: any) {
         validPassword = false;
       }
@@ -219,7 +219,7 @@ export const pinLoginServerFn = createServerFn({ method: "POST" })
       let isValid = false;
       if (cashier.pinHash) {
         try {
-          isValid = await verify(cashier.pinHash, pin);
+          isValid = await bcrypt.compare(pin, cashier.pinHash);
         } catch (e: any) {
           isValid = false;
         }
@@ -369,7 +369,7 @@ export const resetCashierPinSelfFn = createServerFn({ method: "POST" })
       }
 
       // Success: hash new PIN
-      const hashed = await hash(newPin);
+      const hashed = await bcrypt.hash(newPin, 10);
       await db.update(staffUsers).set({ pinHash: hashed }).where(eq(staffUsers.id, cashier.id));
 
       // Reset attempts

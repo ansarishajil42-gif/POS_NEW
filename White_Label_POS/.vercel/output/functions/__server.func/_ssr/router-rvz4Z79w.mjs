@@ -1,12 +1,12 @@
 import { s as require_jsx_runtime } from "../_libs/@radix-ui/react-collection+[...].mjs";
 import { L as redirect, _ as Link, f as createRouter, g as createRootRouteWithContext, h as createFileRoute, l as Scripts, m as lazyRouteComponent, p as Outlet, u as HeadContent, y as useRouter } from "../_libs/@tanstack/react-router+[...].mjs";
-import { n as __exportAll, r as createServerFn } from "./server-DMTiVVOr.mjs";
-import { r as getSessionServerFn, t as createSsrRpc } from "./auth-server-DvbM03n9.mjs";
-import { t as roleRoutes } from "./auth-C7cLdC_r.mjs";
+import { n as __exportAll, r as createServerFn } from "./server-po8kJpue.mjs";
+import { r as getSessionServerFn, t as createSsrRpc } from "./auth-server-Cg0hQhNk.mjs";
+import { t as roleRoutes } from "./auth-DmKKdzi8.mjs";
 import { t as Toaster } from "../_libs/sonner.mjs";
 import { t as QueryClient } from "../_libs/tanstack__query-core.mjs";
 import { n as QueryClientProvider } from "../_libs/tanstack__react-query.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/purchasing-server-DqzDbHdS.js
+//#region node_modules/.nitro/vite/services/ssr/assets/purchasing-server-z-NyDNYg.js
 var getPurchasingDataServerFn = createServerFn({ method: "GET" }).handler(createSsrRpc("e120523c02615bc4f341f67ba9e18dec26dd92687884ed3ae320da9ee1941f8f"));
 var createVendorServerFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("5b4d5a14987c0106e76b2bdd4f8b245acb8f304e86ea09c8f3c140a7f83c9c7b"));
 var updateVendorServerFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("b2d816eebf0d34a3ac413eb5fa41d94f384d0a8ee482d3e9accd6b60d89c46a8"));
@@ -37,7 +37,7 @@ var createVendorInvoiceServerFn = createServerFn({ method: "POST" }).validator((
 var getInvoiceDetailsServerFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("c0f19bd559164d2f1d870de125d03268019e202b8c5fee7f1f770c47f0a7e6b5"));
 var recordVendorPaymentServerFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("ede17655b6f97502ed1aa9c1a6e38a58c35b5bdf54d1bade37de2f17b1ff7484"));
 //#endregion
-//#region node_modules/.nitro/vite/services/ssr/assets/super-admin-server-DQy6Jf7-.js
+//#region node_modules/.nitro/vite/services/ssr/assets/super-admin-server-COm7dSs-.js
 var getTenantsServerFn = createServerFn({ method: "GET" }).handler(createSsrRpc("9522f7bccab5fa9333fef4e1199cd6c73a5c45c013bd6ba2154f9f7a3478acd4"));
 var getBranchesServerFn = createServerFn({ method: "GET" }).handler(createSsrRpc("54139ac1bb2be9b228b95564a8fe70cad5ac0c0cfc8ea8db0acf996bb7fd7dfd"));
 var createTenantServerFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("c754b5b78a97d70604ce3dd3e384708f53a1861ab9072f068510848d7ebdd984"));
@@ -60,7 +60,7 @@ var getAuditLogsServerFn = createServerFn({ method: "GET" }).validator((d) => d)
 var getAnalyticsServerFn = createServerFn({ method: "GET" }).validator((d) => d).handler(createSsrRpc("51694eb31157e15791cd2586b60b1b883cc605060a823f885689fc75e56b2ed1"));
 var archiveTenantServerFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("191598a72a4c54ff48c315e9f096024a984ca4948d781b131ab5d6b4e6478378"));
 //#endregion
-//#region node_modules/.nitro/vite/services/ssr/assets/router-B7PuFS5E.js
+//#region node_modules/.nitro/vite/services/ssr/assets/router-rvz4Z79w.js
 var import_jsx_runtime = require_jsx_runtime();
 var styles_default = "/assets/styles-Cv6keH-M.css";
 var Toaster$1 = ({ ...props }) => {
@@ -243,7 +243,7 @@ var Route$10 = createFileRoute("/")({
 	] }),
 	component: lazyRouteComponent($$splitComponentImporter$10, "component")
 });
-var $$splitComponentImporter$9 = () => import("./aggregators-Blvt9HA1.mjs");
+var $$splitComponentImporter$9 = () => import("./aggregators-B7APoAGJ.mjs");
 var Route$9 = createFileRoute("/aggregators")({
 	beforeLoad: async () => {
 		const res = await getSessionServerFn();
@@ -316,7 +316,7 @@ var activatePromotionFn = createServerFn({ method: "POST" }).validator((d) => d)
 var deactivatePromotionFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("d81218fee0f3c248bd25cba6566a46e66937a30b43e8f5c49bf6510e1a78a754"));
 var archivePromotionFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("8a9393b718da3717be67bcbd8a4b58fd88e36bb491a9d19cf8a9cab9f28a7b6b"));
 createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("6ac19b5d163ae7ee3ddcb420776481e2657534e9030d4574bc06e7fa55dad7a8"));
-var $$splitComponentImporter$8 = () => import("./head-office-CIcLkqnR.mjs");
+var $$splitComponentImporter$8 = () => import("./head-office-YqszQGt2.mjs");
 var Route$8 = createFileRoute("/head-office")({
 	beforeLoad: async () => {
 		const res = await getSessionServerFn();
@@ -355,7 +355,7 @@ createServerFn({ method: "POST" }).validator((z) => z.object({
 createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("270a84e37623743570d34749e1646581ea7cc9fb9db1af5ff7742d2708a68c2a"));
 var getInventoryLedgerFn = createServerFn({ method: "GET" }).handler(createSsrRpc("1d286daf14004ee63e13a358a09107f060063302bf5963754a649bc5dc12fc43"));
 var $$splitErrorComponentImporter = () => import("./inventory-manager-MNJTzNGV.mjs");
-var $$splitComponentImporter$7 = () => import("./inventory-manager-Bj5_szlt.mjs");
+var $$splitComponentImporter$7 = () => import("./inventory-manager-DdMZBvjd.mjs");
 var Route$7 = createFileRoute("/inventory-manager")({
 	beforeLoad: async () => {
 		const res = await getSessionServerFn();
@@ -369,7 +369,7 @@ var Route$7 = createFileRoute("/inventory-manager")({
 	component: lazyRouteComponent($$splitComponentImporter$7, "component"),
 	errorComponent: lazyRouteComponent($$splitErrorComponentImporter, "errorComponent")
 });
-var $$splitComponentImporter$6 = () => import("./login-BNTz_mnU.mjs");
+var $$splitComponentImporter$6 = () => import("./login-n0813-oj.mjs");
 var Route$6 = createFileRoute("/login")({ component: lazyRouteComponent($$splitComponentImporter$6, "component") });
 var getPosCatalogServerFn = createServerFn({ method: "GET" }).handler(createSsrRpc("b116881fb6043bfe519e458a2d633897c4dc063e4925ae6afdb22f3f931c17f6"));
 var openShiftServerFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("768e9878293484dded9c758e9b59a11433e70d1fa2edb65fc04d359e1aa6b8ae"));
@@ -380,7 +380,7 @@ var searchPosCustomersFn = createServerFn({ method: "POST" }).validator((d) => d
 var checkoutServerFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("d0272c20467dadca6bb9bf2864cd5967d07f4d7394c5a81060bc41392231a3f0"));
 var generateShiftReportFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("e1a4abab4de0b5bbb6a57acfbfb74a3bb1779d8c900c493949e5e5a76f5722fa"));
 var getBranchTillsServerFn = createServerFn({ method: "GET" }).handler(createSsrRpc("26d6cd683c1ea2eb4119adf59cc2b8ce4d537263453c8a14908305855d9c4539"));
-var $$splitComponentImporter$5 = () => import("./pos-till-Cyn2WfKv.mjs");
+var $$splitComponentImporter$5 = () => import("./pos-till-D6ESb6VO.mjs");
 var Route$5 = createFileRoute("/pos-till")({
 	beforeLoad: async () => {
 		const res = await getSessionServerFn();
@@ -442,7 +442,7 @@ var Route$4 = createFileRoute("/pricing")({
 	] }),
 	component: lazyRouteComponent($$splitComponentImporter$4, "component")
 });
-var $$splitComponentImporter$3 = () => import("./purchasing-CdC-OSOi.mjs");
+var $$splitComponentImporter$3 = () => import("./purchasing-Cer4tp6X.mjs");
 var Route$3 = createFileRoute("/purchasing")({
 	beforeLoad: async () => {
 		const res = await getSessionServerFn();
@@ -463,11 +463,11 @@ var deleteRosterShiftFn = createServerFn({ method: "POST" }).validator((d) => d)
 var createTillFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("2cdc8a9b47ae93821e2054381344608153473e8ba76c13147200d26e3ae0842d"));
 var resetCashierPinByManagerFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("7ea2d3820ce8de71d78a527d59c81158efeff13df5499103dbd88da8f87c975c"));
 var adjustStockFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("35dd1c052f09dff6467417c24ab651efd40eb79ff4cf9de726eb5224c372c902"));
-var getStockAdjustmentHistoryFn = createServerFn({ method: "GET" }).validator((d) => d).handler(createSsrRpc("da5c637dfc46c3944be86943a337758583b70bccdc184bc4083472c54f9edb00"));
-var exportZReportFn = createServerFn({ method: "POST" }).handler(createSsrRpc("d5251edd6ea3a46509907367f81e96d6c639be63405a031114af40fc913ce61f"));
+var getStockAdjustmentHistoryFn = createServerFn({ method: "GET" }).handler(createSsrRpc("da5c637dfc46c3944be86943a337758583b70bccdc184bc4083472c54f9edb00"));
+var exportZReportFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("d5251edd6ea3a46509907367f81e96d6c639be63405a031114af40fc913ce61f"));
 var recordCashDropFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("4e2433c358339345979e224ae350964943a59838f6f73822385d6c9c27e54810"));
 var closeShiftFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createSsrRpc("ed7791bce8fd415c1c67818bc3f51f7012ae68120fd9ef0f865bb363274b2651"));
-var $$splitComponentImporter$2 = () => import("./store-manager-XsRTIV2H.mjs");
+var $$splitComponentImporter$2 = () => import("./store-manager-Bl6x9wag.mjs");
 var Route$2 = createFileRoute("/store-manager")({
 	beforeLoad: async () => {
 		const res = await getSessionServerFn();
@@ -480,7 +480,7 @@ var Route$2 = createFileRoute("/store-manager")({
 	},
 	component: lazyRouteComponent($$splitComponentImporter$2, "component")
 });
-var $$splitComponentImporter$1 = () => import("./super-admin-MSMrsP0J.mjs");
+var $$splitComponentImporter$1 = () => import("./super-admin-nKhin6_D.mjs");
 var Route$1 = createFileRoute("/super-admin")({
 	beforeLoad: async () => {
 		const res = await getSessionServerFn();
@@ -533,7 +533,7 @@ var Route$1 = createFileRoute("/super-admin")({
 	component: lazyRouteComponent($$splitComponentImporter$1, "component")
 });
 var getVendorPortalDataServerFn = createServerFn({ method: "GET" }).handler(createSsrRpc("6610ab817629658d9f049d6b90fc6e684fa747d3853b87397c76decc8ca65aca"));
-var $$splitComponentImporter = () => import("./vendor-portal-C6Tr6-XK.mjs");
+var $$splitComponentImporter = () => import("./vendor-portal-CDMQ22vp.mjs");
 var Route = createFileRoute("/vendor-portal")({
 	beforeLoad: async () => {
 		const res = await getSessionServerFn();

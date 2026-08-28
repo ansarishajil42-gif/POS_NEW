@@ -3,11 +3,11 @@ import { u as require_react } from "../_libs/@floating-ui/react-dom+[...].mjs";
 import { s as require_jsx_runtime } from "../_libs/@radix-ui/react-collection+[...].mjs";
 import { t as Button } from "./button-BlBeOJmP.mjs";
 import { Q as Download, R as Menu, ct as CircleAlert, et as CreditCard, y as ShoppingCart } from "../_libs/lucide-react.mjs";
-import { a as TabsList, i as TabsContent, n as StatCard, o as TabsTrigger, r as Tabs, t as DemoShell } from "./tabs-DHhejuE7.mjs";
+import { a as TabsList, i as TabsContent, n as StatCard, o as TabsTrigger, r as Tabs, t as DemoShell } from "./tabs-Cf1Xb3Zq.mjs";
 import { t as aed } from "./demo-data-C-13_S7Y.mjs";
 import { n as toast } from "../_libs/sonner.mjs";
-import { n as Route } from "./router-B7PuFS5E.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/vendor-portal-C6Tr6-XK.js
+import { n as Route } from "./router-rvz4Z79w.mjs";
+//#region node_modules/.nitro/vite/services/ssr/assets/vendor-portal-CDMQ22vp.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 function VendorPortal() {

@@ -4,8 +4,6 @@
   "type": "module",
   "private": true,
   "dependencies": {
-    "@node-rs/argon2": "2.1.0",
-    "@node-rs/argon2-win32-x64-msvc": "2.1.0",
     "tslib": "2.8.1"
   }
 }

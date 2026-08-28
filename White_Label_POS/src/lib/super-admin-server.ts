@@ -3,7 +3,7 @@ import { db } from "@/server/db";
 import { tenants, branches, tenantSettings, orders, platformSettings, staffUsers, auditLogs } from "@/server/db/schema";
 import { eq, and, sql, desc, gte, lte } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
-import { hash } from "@node-rs/argon2";
+import bcrypt from "bcryptjs";
 import { logAuditAction } from "@/lib/audit-logger";
 import { z } from "zod";
 import { createBranchInternal } from "@/lib/branch-server-helpers";
@@ -96,7 +96,7 @@ export const createTenantServerFn = createServerFn({ method: "POST" })
                 });
                 
                 // Hash password
-                const passwordHash = await hash(data.adminPassword);
+                const passwordHash = await bcrypt.hash(data.adminPassword, 10);
 
                 // Insert Head Office Admin (branchId: null)
                 await tx.insert(staffUsers).values({
@@ -270,7 +270,7 @@ export const createExistingTenantAdminServerFn = createServerFn({ method: "POST"
         await ensureSuperAdmin();
         
         try {
-            const passwordHash = await hash(data.password);
+            const passwordHash = await bcrypt.hash(data.password, 10);
 
             await db.transaction(async (tx) => {
                 const [newUser] = await tx.insert(staffUsers).values({
@@ -324,7 +324,7 @@ export const updateTenantAdminServerFn = createServerFn({ method: "POST" })
                     address: data.address
                 };
                 if (data.password) {
-                    updates.passwordHash = await hash(data.password);
+                    updates.passwordHash = await bcrypt.hash(data.password, 10);
                 }
 
                 await tx.update(staffUsers).set(updates).where(eq(staffUsers.id, data.id));

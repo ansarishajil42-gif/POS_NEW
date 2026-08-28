@@ -4,11 +4,11 @@ import { s as require_jsx_runtime } from "../_libs/@radix-ui/react-collection+[.
 import { t as Button } from "./button-BlBeOJmP.mjs";
 import { P as isRedirect, y as useRouter } from "../_libs/@tanstack/react-router+[...].mjs";
 import { $ as DollarSign, Ct as ArrowRightLeft, Q as Download, R as Menu, S as Search, Y as FileText, _t as Boxes, at as CircleCheck, d as TriangleAlert, n as X, q as History, rt as Clock, y as ShoppingCart } from "../_libs/lucide-react.mjs";
-import { a as TabsList, i as TabsContent, n as StatCard, o as TabsTrigger, r as Tabs, t as DemoShell } from "./tabs-DHhejuE7.mjs";
+import { a as TabsList, i as TabsContent, n as StatCard, o as TabsTrigger, r as Tabs, t as DemoShell } from "./tabs-Cf1Xb3Zq.mjs";
 import { n as toast } from "../_libs/sonner.mjs";
-import { C as Route$7, E as stockTransferServerFn, T as getInventoryLedgerFn, w as draftPurchaseOrderServerFn } from "./router-B7PuFS5E.mjs";
+import { C as Route$7, E as stockTransferServerFn, T as getInventoryLedgerFn, w as draftPurchaseOrderServerFn } from "./router-rvz4Z79w.mjs";
 import { t as Input } from "./input-Cexa0DG2.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/inventory-manager-Bj5_szlt.js
+//#region node_modules/.nitro/vite/services/ssr/assets/inventory-manager-DdMZBvjd.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 function useServerFn(serverFn) {

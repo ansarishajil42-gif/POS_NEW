@@ -4,15 +4,15 @@ import { s as require_jsx_runtime } from "../_libs/@radix-ui/react-collection+[.
 import { t as Button } from "./button-BlBeOJmP.mjs";
 import { y as useRouter } from "../_libs/@tanstack/react-router+[...].mjs";
 import { F as Package, I as Monitor, O as Receipt, Q as Download, R as Menu, S as Search, at as CircleCheck, bt as Ban, d as TriangleAlert, f as TrendingUp, h as Tag, rt as Clock } from "../_libs/lucide-react.mjs";
-import { a as TabsList, i as TabsContent, n as StatCard, o as TabsTrigger, r as Tabs, t as DemoShell } from "./tabs-DHhejuE7.mjs";
+import { a as TabsList, i as TabsContent, n as StatCard, o as TabsTrigger, r as Tabs, t as DemoShell } from "./tabs-Cf1Xb3Zq.mjs";
 import { n as aedShort, t as aed } from "./demo-data-C-13_S7Y.mjs";
 import { n as toast } from "../_libs/sonner.mjs";
-import { a as adjustStockFn, c as createRosterShiftFn, d as exportZReportFn, f as getStockAdjustmentHistoryFn, i as Route$2, l as createTillFn, m as resetCashierPinByManagerFn, o as closeShiftFn, p as recordCashDropFn, s as createOverrideRequestFn, u as deleteRosterShiftFn } from "./router-B7PuFS5E.mjs";
+import { a as adjustStockFn, c as createRosterShiftFn, d as exportZReportFn, f as getStockAdjustmentHistoryFn, i as Route$2, l as createTillFn, m as resetCashierPinByManagerFn, o as closeShiftFn, p as recordCashDropFn, s as createOverrideRequestFn, u as deleteRosterShiftFn } from "./router-rvz4Z79w.mjs";
 import { a as DialogHeader, i as DialogFooter, n as DialogContent, o as DialogTitle, r as DialogDescription, t as Dialog } from "./dialog-BTVuOq31.mjs";
 import { t as Input } from "./input-Cexa0DG2.mjs";
 import { t as Label } from "./label-CZhEvsKN.mjs";
 import { c as ResponsiveContainer, i as XAxis, l as Tooltip, n as BarChart, o as CartesianGrid, r as YAxis, s as Bar } from "../_libs/recharts+[...].mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/store-manager-XsRTIV2H.js
+//#region node_modules/.nitro/vite/services/ssr/assets/store-manager-Bl6x9wag.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 function StoreManager() {

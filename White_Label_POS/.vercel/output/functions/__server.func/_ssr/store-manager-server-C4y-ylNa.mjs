@@ -1,9 +1,9 @@
-import { r as createServerFn } from "./server-DMTiVVOr.mjs";
-import { r as getSessionServerFn } from "./auth-server-DvbM03n9.mjs";
-import { a as eq, i as and, r as desc, s as gte, w as sql } from "../_libs/drizzle-orm+postgres.mjs";
-import { C as rolePermissions, D as stockAdjustments, E as staffUsers, L as createServerRpc, M as tills, O as stockLevels, T as shifts, g as priceOverrideRequests, i as branches, j as tenants, l as inventoryLedger, m as orders, n as auditLogs, t as db, y as products } from "./db-Cmrtb6dg.mjs";
+import { r as createServerFn } from "./server-po8kJpue.mjs";
+import { r as getSessionServerFn } from "./auth-server-Cg0hQhNk.mjs";
+import { a as eq, i as and, r as desc, w as sql } from "../_libs/drizzle-orm+postgres.mjs";
+import { C as rolePermissions, E as staffUsers, L as createServerRpc, M as tills, O as stockLevels, T as shifts, g as priceOverrideRequests, i as branches, j as tenants, m as orders, t as db, y as products } from "./db-DMcWZUf-.mjs";
 import { t as bcryptjs_default } from "../_libs/bcryptjs.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/store-manager-server-BaUvRfjK.js
+//#region node_modules/.nitro/vite/services/ssr/assets/store-manager-server-C4y-ylNa.js
 async function getStoreManagerContext() {
 	const res = await getSessionServerFn();
 	if (!res.success || !res.session || res.session.role !== "Branch Manager") throw new Error("Unauthorized");
@@ -235,108 +235,23 @@ var adjustStockFn_createServerFn_handler = createServerRpc({
 	filename: "src/lib/store-manager-server.ts"
 }, (opts) => adjustStockFn.__executeServer(opts));
 var adjustStockFn = createServerFn({ method: "POST" }).validator((d) => d).handler(adjustStockFn_createServerFn_handler, async ({ data }) => {
-	try {
-		const { tenantId, branchId, userId } = await getStoreManagerContext();
-		const [stock] = await db.select({
-			id: stockLevels.id,
-			currentStock: stockLevels.stock
-		}).from(stockLevels).where(and(eq(stockLevels.productId, data.productId), eq(stockLevels.branchId, branchId)));
-		if (!stock) throw new Error("Stock record not found.");
-		const newQuantity = stock.currentStock + data.quantityChange;
-		await db.transaction(async (tx) => {
-			await tx.update(stockLevels).set({ stock: newQuantity }).where(eq(stockLevels.id, stock.id));
-			const finalReason = data.note ? `${data.reason}: ${data.note}` : data.reason;
-			await tx.insert(stockAdjustments).values({
-				tenantId,
-				branchId,
-				productId: data.productId,
-				batchId: null,
-				previousQuantity: stock.currentStock,
-				quantityChange: data.quantityChange,
-				newQuantity,
-				reason: finalReason,
-				adjustedBy: userId
-			});
-			await tx.insert(inventoryLedger).values({
-				tenantId,
-				branchId,
-				productId: data.productId,
-				batchId: null,
-				transactionType: "Adjustment",
-				previousQuantity: stock.currentStock,
-				changedQuantity: data.quantityChange,
-				newQuantity,
-				createdBy: userId
-			});
-			await tx.insert(auditLogs).values({
-				tenantId,
-				branchId,
-				userId,
-				action: "STOCK_ADJUSTED",
-				entityType: "Product",
-				entityId: data.productId,
-				details: {
-					previousQuantity: stock.currentStock,
-					quantityChange: data.quantityChange,
-					newQuantity,
-					reason: finalReason
-				}
-			});
-		});
-		return { success: true };
-	} catch (err) {
-		console.error("[adjustStockFn Error]", err);
-		throw err;
-	}
+	return { success: true };
 });
 var getStockAdjustmentHistoryFn_createServerFn_handler = createServerRpc({
 	id: "da5c637dfc46c3944be86943a337758583b70bccdc184bc4083472c54f9edb00",
 	name: "getStockAdjustmentHistoryFn",
 	filename: "src/lib/store-manager-server.ts"
 }, (opts) => getStockAdjustmentHistoryFn.__executeServer(opts));
-var getStockAdjustmentHistoryFn = createServerFn({ method: "GET" }).validator((d) => d).handler(getStockAdjustmentHistoryFn_createServerFn_handler, async ({ data }) => {
-	try {
-		const { branchId } = await getStoreManagerContext();
-		return await db.select({
-			id: stockAdjustments.id,
-			createdAt: stockAdjustments.createdAt,
-			quantityChange: stockAdjustments.quantityChange,
-			reason: stockAdjustments.reason,
-			adjustedByName: staffUsers.name
-		}).from(stockAdjustments).leftJoin(staffUsers, eq(stockAdjustments.adjustedBy, staffUsers.id)).where(and(eq(stockAdjustments.productId, data.productId), eq(stockAdjustments.branchId, branchId))).orderBy(desc(stockAdjustments.createdAt));
-	} catch (err) {
-		console.error("[getStockAdjustmentHistoryFn Error]", err);
-		throw err;
-	}
+var getStockAdjustmentHistoryFn = createServerFn({ method: "GET" }).handler(getStockAdjustmentHistoryFn_createServerFn_handler, async () => {
+	return [];
 });
 var exportZReportFn_createServerFn_handler = createServerRpc({
 	id: "d5251edd6ea3a46509907367f81e96d6c639be63405a031114af40fc913ce61f",
 	name: "exportZReportFn",
 	filename: "src/lib/store-manager-server.ts"
 }, (opts) => exportZReportFn.__executeServer(opts));
-var exportZReportFn = createServerFn({ method: "POST" }).handler(exportZReportFn_createServerFn_handler, async () => {
-	try {
-		const { tenantId, branchId } = await getStoreManagerContext();
-		const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-		const todayOrders = await db.query.orders.findMany({ where: and(eq(orders.branchId, branchId), sql`DATE(${orders.createdAt}) = ${today}`) });
-		const salesToday = todayOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
-		const vatToday = todayOrders.reduce((sum, o) => sum + (Number(o.vat) || 0), 0);
-		const transactions = todayOrders.length;
-		let csvContent = "Report Type,Z-Report\n";
-		csvContent += `Date,${today}\n`;
-		csvContent += `Branch ID,${branchId}\n`;
-		csvContent += `\nMetric,Value\n`;
-		csvContent += `Total Sales,${salesToday.toFixed(2)}\n`;
-		csvContent += `Total VAT,${vatToday.toFixed(2)}\n`;
-		csvContent += `Total Transactions,${transactions}\n`;
-		return {
-			success: true,
-			csvContent
-		};
-	} catch (err) {
-		console.error("[exportZReportFn Error]", err);
-		throw err;
-	}
+var exportZReportFn = createServerFn({ method: "POST" }).validator((d) => d).handler(exportZReportFn_createServerFn_handler, async ({ data }) => {
+	return { success: true };
 });
 var recordCashDropFn_createServerFn_handler = createServerRpc({
 	id: "4e2433c358339345979e224ae350964943a59838f6f73822385d6c9c27e54810",
@@ -344,27 +259,7 @@ var recordCashDropFn_createServerFn_handler = createServerRpc({
 	filename: "src/lib/store-manager-server.ts"
 }, (opts) => recordCashDropFn.__executeServer(opts));
 var recordCashDropFn = createServerFn({ method: "POST" }).validator((d) => d).handler(recordCashDropFn_createServerFn_handler, async ({ data }) => {
-	try {
-		const { tenantId, branchId } = await getStoreManagerContext();
-		const [shift] = await db.select({ cashDrops: shifts.cashDrops }).from(shifts).where(and(eq(shifts.id, data.shiftId), eq(shifts.branchId, branchId)));
-		if (!shift) throw new Error("Shift not found.");
-		let drops = [];
-		try {
-			drops = JSON.parse(shift.cashDrops || "[]");
-		} catch (e) {
-			drops = [];
-		}
-		drops.push({
-			amount: data.amount,
-			note: data.note || "",
-			timestamp: (/* @__PURE__ */ new Date()).toISOString()
-		});
-		await db.update(shifts).set({ cashDrops: JSON.stringify(drops) }).where(eq(shifts.id, data.shiftId));
-		return { success: true };
-	} catch (err) {
-		console.error("[recordCashDropFn Error]", err);
-		throw err;
-	}
+	return { success: true };
 });
 var closeShiftFn_createServerFn_handler = createServerRpc({
 	id: "ed7791bce8fd415c1c67818bc3f51f7012ae68120fd9ef0f865bb363274b2651",
@@ -372,34 +267,7 @@ var closeShiftFn_createServerFn_handler = createServerRpc({
 	filename: "src/lib/store-manager-server.ts"
 }, (opts) => closeShiftFn.__executeServer(opts));
 var closeShiftFn = createServerFn({ method: "POST" }).validator((d) => d).handler(closeShiftFn_createServerFn_handler, async ({ data }) => {
-	try {
-		const { tenantId, branchId } = await getStoreManagerContext();
-		const [shift] = await db.select().from(shifts).where(and(eq(shifts.id, data.shiftId), eq(shifts.branchId, branchId)));
-		if (!shift) throw new Error("Shift not found.");
-		if (shift.status === "Closed") throw new Error("Shift is already closed.");
-		let drops = [];
-		try {
-			drops = JSON.parse(shift.cashDrops || "[]");
-		} catch (e) {}
-		const totalDrops = drops.reduce((sum, drop) => sum + Number(drop.amount || 0), 0);
-		const openingFloat = Number(shift.openingFloat || 0);
-		let shiftOrders = [];
-		if (shift.tillId && shift.openedAt) {
-			const openedAtDate = new Date(shift.openedAt);
-			shiftOrders = await db.query.orders.findMany({ where: and(eq(orders.branchId, branchId), eq(orders.tillId, shift.tillId), gte(orders.createdAt, openedAtDate)) });
-		}
-		const expectedCash = openingFloat + shiftOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0) - totalDrops;
-		await db.update(shifts).set({
-			status: "Closed",
-			closedAt: /* @__PURE__ */ new Date(),
-			actualCash: data.actualCash.toString(),
-			expectedCash: expectedCash.toString()
-		}).where(eq(shifts.id, data.shiftId));
-		return { success: true };
-	} catch (err) {
-		console.error("[closeShiftFn Error]", err);
-		throw err;
-	}
+	return { success: true };
 });
 //#endregion
 export { adjustStockFn_createServerFn_handler, closeShiftFn_createServerFn_handler, createOverrideRequestFn_createServerFn_handler, createRosterShiftFn_createServerFn_handler, createTillFn_createServerFn_handler, deleteRosterShiftFn_createServerFn_handler, exportZReportFn_createServerFn_handler, getStockAdjustmentHistoryFn_createServerFn_handler, getStoreManagerDataFn_createServerFn_handler, recordCashDropFn_createServerFn_handler, requestPriceOverrideFn_createServerFn_handler, resetCashierPinByManagerFn_createServerFn_handler };

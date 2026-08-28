@@ -29,7 +29,7 @@ import {
 import { eq, and, sql, desc, inArray, ne, or, ilike, lte, gte } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
 import { logAuditAction } from "@/lib/audit-logger";
-import { hash } from "@node-rs/argon2";
+import bcrypt from "bcryptjs";
 import { createBranchInternal } from "@/lib/branch-server-helpers";
 import { z } from "zod";
 
@@ -1302,10 +1302,10 @@ export const createStaffFn = createServerFn({ method: "POST" })
 
     if (data.role === "cashier") {
       if (!data.pin) throw new Error("PIN is required for Cashier on creation");
-      payload.pinHash = await hash(data.pin);
+      payload.pinHash = await bcrypt.hash(data.pin, 10);
     } else {
       if (!data.password) throw new Error("Password is required on creation");
-      payload.passwordHash = await hash(data.password);
+      payload.passwordHash = await bcrypt.hash(data.password, 10);
     }
 
     await db.insert(staffUsers).values(payload);
@@ -1393,17 +1393,17 @@ export const updateStaffFn = createServerFn({ method: "POST" })
     // Handle role transitions and credential preservation
     if (data.role === "cashier" && existingUser.role !== "cashier") {
       if (!data.pin) throw new Error("PIN is required when changing role to Cashier");
-      updates.pinHash = await hash(data.pin);
+      updates.pinHash = await bcrypt.hash(data.pin, 10);
       updates.passwordHash = null;
     } else if (data.role !== "cashier" && existingUser.role === "cashier") {
       if (!data.password) throw new Error("Password is required when changing role from Cashier");
-      updates.passwordHash = await hash(data.password);
+      updates.passwordHash = await bcrypt.hash(data.password, 10);
       updates.pinHash = null;
     } else {
       // Same role category, just update if provided
       if (data.password && data.role !== "cashier")
-        updates.passwordHash = await hash(data.password);
-      if (data.pin && data.role === "cashier") updates.pinHash = await hash(data.pin);
+        updates.passwordHash = await bcrypt.hash(data.password, 10);
+      if (data.pin && data.role === "cashier") updates.pinHash = await bcrypt.hash(data.pin, 10);
     }
 
     await db.update(staffUsers).set(updates).where(eq(staffUsers.id, data.id));

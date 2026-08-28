@@ -1,9 +1,9 @@
-import { i as getCookie, r as createServerFn, s as setCookie$1 } from "./server-DMTiVVOr.mjs";
+import { i as getCookie, r as createServerFn, s as setCookie$1 } from "./server-po8kJpue.mjs";
 import { a as eq, i as and, r as desc } from "../_libs/drizzle-orm+postgres.mjs";
-import { E as staffUsers, I as vendors, L as createServerRpc, M as tills, T as shifts, d as loginAttempts, i as branches, j as tenants, t as db } from "./db-Cmrtb6dg.mjs";
+import { E as staffUsers, I as vendors, L as createServerRpc, M as tills, T as shifts, d as loginAttempts, i as branches, j as tenants, t as db } from "./db-DMcWZUf-.mjs";
+import { t as bcryptjs_default } from "../_libs/bcryptjs.mjs";
 import { n as jwtVerify, t as SignJWT } from "../_libs/jose.mjs";
-import { hash, verify } from "@node-rs/argon2";
-//#region node_modules/.nitro/vite/services/ssr/assets/auth-server-B_U70ZW4.js
+//#region node_modules/.nitro/vite/services/ssr/assets/auth-server-CLdJcDBZ.js
 var JWT_SECRET = new TextEncoder().encode(process.env["JWT_SECRET"] || "pos-secret-key-at-least-32-characters-long-key-string-for-jwt");
 var dbRoleToFrontendRole = {
 	super_admin: "Super Admin",
@@ -46,7 +46,7 @@ var loginServerFn = createServerFn().validator((d) => d).handler(loginServerFn_c
 		}
 		let validPassword = false;
 		try {
-			validPassword = await verify(passwordHashStr, password);
+			validPassword = await bcryptjs_default.compare(password, passwordHashStr);
 		} catch (e) {
 			validPassword = false;
 		}
@@ -142,7 +142,7 @@ var pinLoginServerFn = createServerFn({ method: "POST" }).validator((d) => d).ha
 		}
 		let isValid = false;
 		if (cashier.pinHash) try {
-			isValid = await verify(cashier.pinHash, pin);
+			isValid = await bcryptjs_default.compare(pin, cashier.pinHash);
 		} catch (e) {
 			isValid = false;
 		}
@@ -231,7 +231,7 @@ var resetCashierPinSelfFn = createServerFn({ method: "POST" }).validator((d) => 
 			await recordFailedAttempt(email);
 			throw new Error("Invalid credentials.");
 		}
-		const hashed = await hash(newPin);
+		const hashed = await bcryptjs_default.hash(newPin, 10);
 		await db.update(staffUsers).set({ pinHash: hashed }).where(eq(staffUsers.id, cashier.id));
 		await resetFailedAttempts(email);
 		return { success: true };

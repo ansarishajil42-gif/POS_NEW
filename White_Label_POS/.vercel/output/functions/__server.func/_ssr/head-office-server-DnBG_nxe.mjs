@@ -1,11 +1,11 @@
-import { r as createServerFn } from "./server-DMTiVVOr.mjs";
-import { r as getSessionServerFn } from "./auth-server-DvbM03n9.mjs";
+import { r as createServerFn } from "./server-po8kJpue.mjs";
+import { r as getSessionServerFn } from "./auth-server-Cg0hQhNk.mjs";
 import { a as eq, c as ilike, d as lte, f as ne, i as and, l as inArray, p as or, r as desc, s as gte, w as sql } from "../_libs/drizzle-orm+postgres.mjs";
-import { A as tenantSettings, C as rolePermissions, E as staffUsers, I as vendors, L as createServerRpc, N as unitConversions, O as stockLevels, P as vendorInvoices, S as purchaseOrders, _ as productBarcodes, a as customerTransactions, b as promotions, c as grnItems, f as orderItems, g as priceOverrideRequests, i as branches, j as tenants, k as stockTransfers, m as orders, o as customers, r as batches, t as db, v as productVariants, x as purchaseOrderItems, y as products } from "./db-Cmrtb6dg.mjs";
-import { t as logAuditAction } from "./audit-logger-Bum8DgFi.mjs";
-import { t as createBranchInternal } from "./branch-server-helpers-BEBIUJQU.mjs";
-import { hash } from "@node-rs/argon2";
-//#region node_modules/.nitro/vite/services/ssr/assets/head-office-server-Dg-14AsO.js
+import { A as tenantSettings, C as rolePermissions, E as staffUsers, I as vendors, L as createServerRpc, N as unitConversions, O as stockLevels, P as vendorInvoices, S as purchaseOrders, _ as productBarcodes, a as customerTransactions, b as promotions, c as grnItems, f as orderItems, g as priceOverrideRequests, i as branches, j as tenants, k as stockTransfers, m as orders, o as customers, r as batches, t as db, v as productVariants, x as purchaseOrderItems, y as products } from "./db-DMcWZUf-.mjs";
+import { t as bcryptjs_default } from "../_libs/bcryptjs.mjs";
+import { t as logAuditAction } from "./audit-logger-DbocvFYh.mjs";
+import { t as createBranchInternal } from "./branch-server-helpers-BSTdo2k4.mjs";
+//#region node_modules/.nitro/vite/services/ssr/assets/head-office-server-DnBG_nxe.js
 async function getHeadOfficeSession() {
 	const res = await getSessionServerFn();
 	if (!res.success || !res.session || res.session.role !== "Head Office Admin") throw new Error("Unauthorized");
@@ -824,10 +824,10 @@ var createStaffFn = createServerFn({ method: "POST" }).validator((d) => d).handl
 	};
 	if (data.role === "cashier") {
 		if (!data.pin) throw new Error("PIN is required for Cashier on creation");
-		payload.pinHash = await hash(data.pin);
+		payload.pinHash = await bcryptjs_default.hash(data.pin, 10);
 	} else {
 		if (!data.password) throw new Error("Password is required on creation");
-		payload.passwordHash = await hash(data.password);
+		payload.passwordHash = await bcryptjs_default.hash(data.password, 10);
 	}
 	await db.insert(staffUsers).values(payload);
 	return { success: true };
@@ -891,15 +891,15 @@ var updateStaffFn = createServerFn({ method: "POST" }).validator((d) => d).handl
 	};
 	if (data.role === "cashier" && existingUser.role !== "cashier") {
 		if (!data.pin) throw new Error("PIN is required when changing role to Cashier");
-		updates.pinHash = await hash(data.pin);
+		updates.pinHash = await bcryptjs_default.hash(data.pin, 10);
 		updates.passwordHash = null;
 	} else if (data.role !== "cashier" && existingUser.role === "cashier") {
 		if (!data.password) throw new Error("Password is required when changing role from Cashier");
-		updates.passwordHash = await hash(data.password);
+		updates.passwordHash = await bcryptjs_default.hash(data.password, 10);
 		updates.pinHash = null;
 	} else {
-		if (data.password && data.role !== "cashier") updates.passwordHash = await hash(data.password);
-		if (data.pin && data.role === "cashier") updates.pinHash = await hash(data.pin);
+		if (data.password && data.role !== "cashier") updates.passwordHash = await bcryptjs_default.hash(data.password, 10);
+		if (data.pin && data.role === "cashier") updates.pinHash = await bcryptjs_default.hash(data.pin, 10);
 	}
 	await db.update(staffUsers).set(updates).where(eq(staffUsers.id, data.id));
 	return { success: true };
