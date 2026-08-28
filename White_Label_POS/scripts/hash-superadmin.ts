@@ -8,7 +8,7 @@ async function main() {
   const password = "superadmin@cloudynationpos.com";
 
   console.log(`Hashing password for ${email}...`);
-  const hash = await argon2.hash(password);
+  const hash = await argon2Hash(password);
 
   console.log(`Updating database...`);
   const result = await db.update(staffUsers)
