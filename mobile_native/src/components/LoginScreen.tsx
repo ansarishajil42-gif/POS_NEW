@@ -24,8 +24,8 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 export function LoginScreen({ onBack }: { onBack?: () => void }) {
   const { signIn } = useAuth();
   const [selected, setSelected] = useState<Role | null>(null);
-  const [email, setEmail] = useState('demo@cloudynationpos.com');
-  const [password, setPassword] = useState('demo1234');
+  const [email, setEmail] = useState('superadmin@cloudynationpos.com');
+  const [password, setPassword] = useState('superadmin@cloudynationpos.com');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   // Chevron rotation animation
@@ -87,8 +87,8 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
     if (selected === 'super-admin') {
       setIsLoading(true);
       try {
-        const { api, storage } = require('../lib/apiClient');
-        const res = await api.post('/auth/login', { email, password });
+        const { apiClient, storage } = require('../lib/apiClient');
+        const res = await apiClient.post('/auth/login', { email, password });
         if (res.token) {
           await storage.setToken(res.token);
         }

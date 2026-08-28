@@ -1,10 +1,10 @@
 import { db } from "./index.js";
 import * as schema from "./schema.js";
-import * as argon2 from "argon2";
+import { hash as argon2Hash } from "@node-rs/argon2";
 import "dotenv/config";
 
 async function hash(password: string) {
-  return await argon2.hash(password);
+  return await argon2Hash(password);
 }
 
 async function main() {

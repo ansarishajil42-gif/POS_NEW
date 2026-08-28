@@ -36,10 +36,17 @@ export const loginServerFn = createServerFn()
     const { email, password } = data;
 
     try {
-      const user = await db.query.staffUsers.findFirst({
-        where: eq(staffUsers.email, email),
-        with: { tenant: true },
-      });
+      const result = await db
+        .select({
+          user: staffUsers,
+          tenant: tenants,
+        })
+        .from(staffUsers)
+        .leftJoin(tenants, eq(staffUsers.tenantId, tenants.id))
+        .where(eq(staffUsers.email, email))
+        .limit(1);
+
+      const user = result.length > 0 ? { ...result[0].user, tenant: result[0].tenant } : undefined;
 
       let id: string;
       let tenantId: string | null;
@@ -205,16 +212,17 @@ export const pinLoginServerFn = createServerFn({ method: "POST" })
 
       // Parallelize independent DB queries
       const [cashier, till, scheduledShift, activeTillShift] = await Promise.all([
-        db.query.staffUsers.findFirst({
-          where: and(
+        db.select({ user: staffUsers, tenant: tenants })
+          .from(staffUsers)
+          .leftJoin(tenants, eq(staffUsers.tenantId, tenants.id))
+          .where(and(
             eq(staffUsers.id, cashierId),
             eq(staffUsers.tenantId, tenantId),
             eq(staffUsers.branchId, branchId),
             eq(staffUsers.role, "cashier"),
             eq(staffUsers.isActive, true)
-          ),
-          with: { tenant: true }
-        }),
+          ))
+          .limit(1),
         db.query.tills.findFirst({
           where: and(
             eq(tills.id, tillId),
@@ -237,7 +245,9 @@ export const pinLoginServerFn = createServerFn({ method: "POST" })
         })
       ]);
 
-      if (!cashier) {
+      const mappedCashier = cashier.length > 0 ? { ...cashier[0].user, tenant: cashier[0].tenant } : undefined;
+
+      if (!mappedCashier) {
         await recordFailedAttempt(cashierId);
         throw new Error("Invalid cashier, till, or PIN code.");
       }

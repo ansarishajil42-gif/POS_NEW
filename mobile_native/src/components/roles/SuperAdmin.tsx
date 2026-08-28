@@ -28,8 +28,8 @@ export function SuperAdminHome() {
   const { tenants } = useSuperAdmin();
 
   const activeTenants = tenants.filter((t) => t.status === 'active' || t.status === 'trial').length;
-  const totalTills = tenants.reduce((a, t) => a + t.tills, 0);
-  const mrr = tenants.reduce((a, t) => a + t.mrr, 0);
+  const totalTills = tenants.reduce((a, t) => a + (t.tills || 0), 0);
+  const mrr = tenants.reduce((a, t) => a + (t.mrr || 0), 0);
 
   return (
     <View style={styles.flex1}>
@@ -574,8 +574,8 @@ export function TenantDetail({ id, onBack }: { id: string; onBack: () => void })
           <Text style={styles.configCardTitle}>Configuration</Text>
           <View style={styles.configList}>
             <DetailRow label="Plan tier" value={t.plan} />
-            <DetailRow label="Country" value={t.country} />
-            <DetailRow label="TRN" value={t.trn} />
+            <DetailRow label="Country" value={t.country || 'N/A'} />
+            <DetailRow label="TRN" value={t.trn || 'N/A'} />
             <DetailRow label="Billing cycle" value="Monthly" />
             <DetailRow label="Branch limit" value={`${tenantBranchesCount} / ${t.outlets}`} />
           </View>

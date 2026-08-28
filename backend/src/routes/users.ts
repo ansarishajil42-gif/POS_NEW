@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "../db/index.js";
 import { staffUsers } from "../db/schema.js";
 import { eq, and } from "drizzle-orm";
-import * as argon2 from "argon2";
+import { hash } from "@node-rs/argon2";
 
 const router = Router();
 
@@ -66,11 +66,11 @@ router.post("/", async (req, res) => {
     let pinHash = null;
 
     if (password) {
-      passwordHash = await argon2.hash(password);
+      passwordHash = await hash(password);
     }
 
     if (pin) {
-      pinHash = await argon2.hash(pin);
+      pinHash = await hash(pin);
     }
 
     const newUser = await db.insert(staffUsers).values({
@@ -107,11 +107,11 @@ router.patch("/:id", async (req, res) => {
     let pinHash = undefined;
 
     if (password) {
-      passwordHash = await argon2.hash(password);
+      passwordHash = await hash(password);
     }
 
     if (pin) {
-      pinHash = await argon2.hash(pin);
+      pinHash = await hash(pin);
     }
 
     const updated = await db.update(staffUsers)

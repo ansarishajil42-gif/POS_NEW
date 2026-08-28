@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useMemo, useEffect, type ReactNode } from 'react';
-import { api } from './apiClient';
+import { apiClient as api } from './apiClient';
 
 export interface Tenant {
   id: string;
