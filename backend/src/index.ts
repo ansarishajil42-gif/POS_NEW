@@ -25,9 +25,18 @@ app.use((req, res, next) => {
 });
 
 // Health check endpoint
+// Root endpoint
 app.get("/", (req, res) => {
   res.send("POS Backend API is running successfully!");
 });
+
+// Health check endpoint
+app.get("/health", (req, res) => {
+  res.json({ status: "healthy", timestamp: new Date().toISOString() });
+});
+
+
+
 
 
 // API Routes
