@@ -1,4 +1,4 @@
-import * as argon2 from "argon2";
+import { hash, verify } from "@node-rs/argon2";
 
 async function testArgon() {
   console.log("Testing argon2 speed...");
