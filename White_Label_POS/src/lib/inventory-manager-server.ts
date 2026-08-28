@@ -408,6 +408,22 @@ export const draftPurchaseOrderServerFn = createServerFn({ method: "POST" })
     return { success: true, poId };
   });
 
+export const applyClearanceFn = createServerFn({ method: "POST" })
+  .validator((z) => z.object({ productId: z.string(), discountPct: z.number() }))
+  .handler(async ({ data }) => {
+    const { tenantId } = await getInventoryManagerContext();
+    await db.insert(schema.promotions).values({
+      tenantId,
+      name: "Clearance Sale - Near Expiry",
+      discountType: "percentage",
+      discountValue: data.discountPct.toString(),
+      startDate: new Date(),
+      endDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 days
+      status: "Active",
+    });
+    return { success: true };
+  });
+
 export const createStockAdjustmentFn = createServerFn({ method: 'POST' })
   .validator((d: { productId: string; branchId: string; batchId?: string; quantityChange: number; reason: string }) => d)
   .handler(async ({ data }) => {

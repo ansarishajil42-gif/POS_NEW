@@ -3,7 +3,7 @@ import { getCookie, setCookie } from "@tanstack/react-start/server";
 import { db } from "../server/db/index.js";
 import { staffUsers, tenants, branches, vendors, tills, loginAttempts, shifts } from "../server/db/schema.js";
 import { eq, and, desc } from "drizzle-orm";
-import bcrypt from "bcryptjs";
+import * as argon2 from "argon2";
 import * as jose from "jose";
 
 const JWT_SECRET = new TextEncoder().encode(
@@ -38,6 +38,7 @@ export const loginServerFn = createServerFn()
     try {
       const user = await db.query.staffUsers.findFirst({
         where: eq(staffUsers.email, email),
+        with: { tenant: true },
       });
 
       let id: string;
@@ -45,6 +46,8 @@ export const loginServerFn = createServerFn()
       let branchId: string | null = null;
       let frontendRole: string;
       let passwordHashStr: string;
+      let tenantName = "";
+      let tenantStatus = "";
 
       if (user) {
         if (!user.isActive) throw new Error("User account is suspended");
@@ -54,6 +57,10 @@ export const loginServerFn = createServerFn()
         branchId = user.branchId;
         frontendRole = dbRoleToFrontendRole[user.role] || "Vendor";
         passwordHashStr = user.passwordHash;
+        if (user.tenant) {
+          tenantName = user.tenant.name;
+          tenantStatus = user.tenant.status;
+        }
       } else {
         // Fallback to vendors
         const vendorUser = await db.query.vendors.findFirst({
@@ -68,7 +75,7 @@ export const loginServerFn = createServerFn()
         passwordHashStr = vendorUser.passwordHash;
       }
 
-      const validPassword = await bcrypt.compare(password, passwordHashStr);
+      const validPassword = await argon2.verify(passwordHashStr, password);
       if (!validPassword) {
         throw new Error("Invalid email or password");
       }
@@ -95,17 +102,17 @@ export const loginServerFn = createServerFn()
         maxAge: 60 * 60 * 24, // 1 day
       });
 
-      // Get tenant details if applicable
-      let tenantName = "";
-      if (tenantId) {
+      // Get tenant details if applicable (skipped if fetched via relation for staff)
+      if (tenantId && !tenantName) {
         const tenant = await db.query.tenants.findFirst({
           where: eq(tenants.id, tenantId),
         });
         if (!tenant) throw new Error("Tenant not found");
-        if (tenant.status === "Archived") {
-          throw new Error("Tenant is archived and cannot be accessed");
-        }
         tenantName = tenant.name;
+        tenantStatus = tenant.status;
+      }
+      if (tenantStatus === "Archived") {
+        throw new Error("Tenant is archived and cannot be accessed");
       }
 
       return {
@@ -194,63 +201,67 @@ export const pinLoginServerFn = createServerFn({ method: "POST" })
     await checkRateLimit(cashierId);
 
     try {
-      // Find cashier in the branch
-      const cashier = await db.query.staffUsers.findFirst({
-        where: and(
-          eq(staffUsers.id, cashierId),
-          eq(staffUsers.tenantId, tenantId),
-          eq(staffUsers.branchId, branchId),
-          eq(staffUsers.role, "cashier"),
-          eq(staffUsers.isActive, true)
-        )
-      });
+      const today = new Date().toISOString().split("T")[0] as string; // YYYY-MM-DD
+
+      // Parallelize independent DB queries
+      const [cashier, till, scheduledShift, activeTillShift] = await Promise.all([
+        db.query.staffUsers.findFirst({
+          where: and(
+            eq(staffUsers.id, cashierId),
+            eq(staffUsers.tenantId, tenantId),
+            eq(staffUsers.branchId, branchId),
+            eq(staffUsers.role, "cashier"),
+            eq(staffUsers.isActive, true)
+          ),
+          with: { tenant: true }
+        }),
+        db.query.tills.findFirst({
+          where: and(
+            eq(tills.id, tillId),
+            eq(tills.tenantId, tenantId),
+            eq(tills.branchId, branchId)
+          )
+        }),
+        db.query.shifts.findFirst({
+          where: and(
+            eq(shifts.cashierId, cashierId),
+            eq(shifts.shiftDate, today),
+            eq(shifts.status, "Scheduled")
+          )
+        }),
+        db.query.shifts.findFirst({
+          where: and(
+            eq(shifts.tillId, tillId),
+            eq(shifts.status, "Open")
+          )
+        })
+      ]);
 
       if (!cashier) {
         await recordFailedAttempt(cashierId);
         throw new Error("Invalid cashier, till, or PIN code.");
       }
 
-      // Verify PIN against bcrypt hash
-      const validPin = await bcrypt.compare(pin, cashier.pinHash || "");
-      if (!validPin) {
+      // Verify PIN against Argon2id hash
+      const isValid = cashier.pinHash ? await argon2.verify(cashier.pinHash, pin) : false;
+      if (!isValid) {
         await recordFailedAttempt(cashierId);
         throw new Error("Invalid cashier, till, or PIN code.");
       }
 
       // Verify Till belongs to same branch/tenant and exists
-      const till = await db.query.tills.findFirst({
-        where: and(
-          eq(tills.id, tillId),
-          eq(tills.tenantId, tenantId),
-          eq(tills.branchId, branchId)
-        )
-      });
       if (!till) {
         await recordFailedAttempt(cashierId);
         throw new Error("Invalid cashier, till, or PIN code.");
       }
 
       // Shift overlapping and scheduling validation
-      const today = new Date().toISOString().split("T")[0] as string; // YYYY-MM-DD
-      const scheduledShift = await db.query.shifts.findFirst({
-        where: and(
-          eq(shifts.cashierId, cashierId),
-          eq(shifts.shiftDate, today),
-          eq(shifts.status, "Scheduled")
-        )
-      });
       if (scheduledShift && scheduledShift.tillId !== tillId && scheduledShift.tillId !== till.name) {
         await recordFailedAttempt(cashierId);
         throw new Error("The selected till terminal does not match your scheduled shift assignment.");
       }
 
       // If the till is already in use by another active cashier session/shift, reject the login
-      const activeTillShift = await db.query.shifts.findFirst({
-        where: and(
-          eq(shifts.tillId, tillId),
-          eq(shifts.status, "Open")
-        )
-      });
       if (activeTillShift && activeTillShift.cashierId !== cashierId) {
         await recordFailedAttempt(cashierId);
         throw new Error("This till terminal is currently in use by another cashier.");
@@ -285,16 +296,9 @@ export const pinLoginServerFn = createServerFn({ method: "POST" })
         maxAge: 60 * 60 * 24, // 1 day
       });
 
-      let tenantName = "";
-      if (cashier.tenantId) {
-        const tenant = await db.query.tenants.findFirst({
-          where: eq(tenants.id, cashier.tenantId),
-        });
-        if (!tenant) throw new Error("Tenant not found");
-        if (tenant.status === "Archived") {
-          throw new Error("Tenant is archived and cannot be accessed");
-        }
-        tenantName = tenant.name;
+      let tenantName = cashier.tenant?.name || "";
+      if (cashier.tenant?.status === "Archived") {
+        throw new Error("Tenant is archived and cannot be accessed");
       }
 
       return {
@@ -350,14 +354,14 @@ export const resetCashierPinSelfFn = createServerFn({ method: "POST" })
       }
 
       // Re-authenticate password
-      const validPass = await bcrypt.compare(currentPass, cashier.passwordHash);
+      const validPass = await argon2.verify(cashier.passwordHash, currentPass);
       if (!validPass) {
         await recordFailedAttempt(email);
         throw new Error("Invalid credentials.");
       }
 
       // Success: hash new PIN
-      const hashed = await bcrypt.hash(newPin, 10);
+      const hashed = await argon2.hash(newPin);
       await db.update(staffUsers).set({ pinHash: hashed }).where(eq(staffUsers.id, cashier.id));
 
       // Reset attempts

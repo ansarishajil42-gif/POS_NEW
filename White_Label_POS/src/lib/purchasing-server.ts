@@ -526,6 +526,156 @@ export const submitPurchaseOrderServerFn = createServerFn({ method: "POST" })
     return { success: true };
   });
 
+
+export const updateGrnServerFn = createServerFn({ method: "POST" })
+  .validator((z) => z.object({
+    id: z.string(),
+    items: z.array(z.object({
+      productId: z.string(),
+      orderedQty: z.number(),
+      receivedQty: z.number(),
+      batchNumber: z.string().optional(),
+      expiryDate: z.string().optional()
+    }))
+  }))
+  .handler(async ({ data }) => {
+    const { tenantId, user } = await getPurchasingContext();
+
+    await db.transaction(async (tx) => {
+      const existingGrn = await tx.query.grn.findFirst({
+        where: and(eq(grn.id, data.id), eq(grn.tenantId, tenantId)),
+        with: { items: true, purchaseOrder: true }
+      });
+      if (!existingGrn) throw new Error("GRN not found");
+
+      const invoice = await tx.query.vendorInvoices.findFirst({
+        where: and(eq(vendorInvoices.purchaseOrderId, existingGrn.purchaseOrderId), eq(vendorInvoices.tenantId, tenantId))
+      });
+      if (invoice) throw new Error("Cannot edit GRN because a vendor invoice already exists for this PO");
+
+      // Reverse existing stock and delete batches
+      for (const item of existingGrn.items) {
+        if (item.receivedQty > 0) {
+          const existingStock = await tx.select().from(stockLevels).where(
+            and(eq(stockLevels.tenantId, tenantId), eq(stockLevels.branchId, existingGrn.branchId), eq(stockLevels.productId, item.productId))
+          ).limit(1);
+
+          if (existingStock.length > 0) {
+            await tx.update(stockLevels).set({
+              quantity: sql`${stockLevels.quantity} - ${item.receivedQty}`
+            }).where(eq(stockLevels.id, existingStock[0].id));
+          }
+        }
+      }
+      await tx.delete(batches).where(eq(batches.grnId, existingGrn.id));
+      await tx.delete(grnItems).where(eq(grnItems.grnId, existingGrn.id));
+
+      // Re-apply new stock, create new batches, create new GRN items
+      const hasVariance = data.items.some(item => item.orderedQty !== item.receivedQty);
+      await tx.update(grn).set({
+        status: hasVariance ? "Variance" : "Completed",
+        updatedAt: sql`NOW()`
+      }).where(eq(grn.id, existingGrn.id));
+
+      const gItems = data.items.map((item) => ({
+        grnId: existingGrn.id,
+        tenantId,
+        productId: item.productId,
+        orderedQty: item.orderedQty,
+        receivedQty: item.receivedQty,
+        variance: item.receivedQty - item.orderedQty,
+        batchNumber: item.batchNumber || null,
+        expiryDate: item.expiryDate || null,
+      }));
+      await tx.insert(grnItems).values(gItems);
+
+      for (const item of data.items) {
+        if (item.receivedQty > 0) {
+          const existingStock = await tx.select().from(stockLevels).where(
+            and(eq(stockLevels.tenantId, tenantId), eq(stockLevels.branchId, existingGrn.branchId), eq(stockLevels.productId, item.productId))
+          ).limit(1);
+
+          if (existingStock.length > 0) {
+            await tx.update(stockLevels).set({
+              quantity: sql`${stockLevels.quantity} + ${item.receivedQty}`,
+              updatedAt: sql`NOW()`
+            }).where(eq(stockLevels.id, existingStock[0].id));
+          } else {
+            await tx.insert(stockLevels).values({
+              tenantId,
+              branchId: existingGrn.branchId,
+              productId: item.productId,
+              quantity: item.receivedQty
+            });
+          }
+          
+          if (item.batchNumber) {
+            await tx.insert(batches).values({
+              tenantId,
+              branchId: existingGrn.branchId,
+              productId: item.productId,
+              batchNumber: item.batchNumber,
+              expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
+              quantity: item.receivedQty,
+              grnId: existingGrn.id
+            });
+          }
+        }
+      }
+
+      await tx.insert(auditLogs).values({
+        tenantId,
+        userId: user.id,
+        action: "UPDATE",
+        entityType: "GRN",
+        entityId: existingGrn.id,
+        details: { message: `GRN ${existingGrn.grnNumber} updated` }
+      });
+    });
+    return { success: true };
+  });
+
+export const updateVendorInvoiceServerFn = createServerFn({ method: "POST" })
+  .validator((z) => z.object({
+    id: z.string(),
+    invoiceNumber: z.string(),
+    dueDate: z.string()
+  }))
+  .handler(async ({ data }) => {
+    const { tenantId, user } = await getPurchasingContext();
+    await db.transaction(async (tx) => {
+      const existingInvoice = await tx.query.vendorInvoices.findFirst({
+        where: and(eq(vendorInvoices.id, data.id), eq(vendorInvoices.tenantId, tenantId))
+      });
+      if (!existingInvoice) throw new Error("Vendor Invoice not found");
+      if (Number(existingInvoice.paidAmount) > 0) throw new Error("Cannot edit an invoice that has payments");
+
+      const existingInvNum = await tx.select().from(vendorInvoices).where(and(
+        eq(vendorInvoices.tenantId, tenantId),
+        eq(vendorInvoices.invoiceNumber, data.invoiceNumber),
+        not(eq(vendorInvoices.id, data.id))
+      )).limit(1);
+
+      if (existingInvNum.length > 0) throw new Error("Invoice number already exists");
+
+      await tx.update(vendorInvoices).set({
+        invoiceNumber: data.invoiceNumber,
+        dueDate: new Date(data.dueDate),
+        updatedAt: sql`NOW()`
+      }).where(eq(vendorInvoices.id, data.id));
+
+      await tx.insert(auditLogs).values({
+        tenantId,
+        userId: user.id,
+        action: "UPDATE",
+        entityType: "VENDOR_INVOICE",
+        entityId: data.id,
+        details: { message: `Vendor Invoice updated` }
+      });
+    });
+    return { success: true };
+  });
+
 export const deletePurchaseOrderServerFn = createServerFn({ method: "POST" })
   .validator((d: { id: string }) => d)
   .handler(async ({ data }) => {

@@ -161,7 +161,9 @@ export const stockLevels = pgTable("stock_levels", {
   stock: integer("stock").notNull().default(0),
   reorderLevel: integer("reorder_level").notNull().default(10),
   priceOverride: decimal("price_override", { precision: 10, scale: 2 }), // Branch-specific pricing
-});
+}, (table) => ({
+  branchIdx: index("stock_levels_branch_idx").on(table.branchId),
+}));
 
 // 5.01 stock_transfers
 export const stockTransfers = pgTable("stock_transfers", {
@@ -505,7 +507,10 @@ export const shifts = pgTable("shifts", {
   endTime: text("end_time"),
   shiftDate: text("shift_date"),
   notes: text("notes"),
-});
+}, (table) => ({
+  tenantIdx: index("shifts_tenant_idx").on(table.tenantId),
+  branchIdx: index("shifts_branch_idx").on(table.branchId),
+}));
 
 // 15. orders
 export const orders = pgTable("orders", {
@@ -530,7 +535,11 @@ export const orders = pgTable("orders", {
   invoiceNumber: text("invoice_number"),
   status: text("status").notNull().default("completed"), // completed, voided, refunded, auto-synced
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  tenantIdx: index("orders_tenant_idx").on(table.tenantId),
+  branchIdx: index("orders_branch_idx").on(table.branchId),
+  createdAtIdx: index("orders_created_at_idx").on(table.createdAt),
+}));
 
 // 15.01 invoice_sequences
 export const invoiceSequences = pgTable("invoice_sequences", {
@@ -672,7 +681,10 @@ export const auditLogs = pgTable("audit_logs", {
   entityId: text("entity_id").notNull(),
   details: json("details"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  tenantIdx: index("audit_logs_tenant_idx").on(table.tenantId),
+  createdAtIdx: index("audit_logs_created_at_idx").on(table.createdAt),
+}));
 
 export const tenantsRelations = relations(tenants, ({ one, many }) => ({
   settings: one(tenantSettings),

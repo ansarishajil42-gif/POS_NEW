@@ -652,6 +652,22 @@ var CreditCard = createLucideIcon("credit-card", [["rect", {
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var DollarSign = createLucideIcon("dollar-sign", [["line", {
+	x1: "12",
+	x2: "12",
+	y1: "2",
+	y2: "22",
+	key: "7eqyqh"
+}], ["path", {
+	d: "M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6",
+	key: "1b0p4s"
+}]]);
+/**
+* @license lucide-react v0.575.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var Download = createLucideIcon("download", [
 	["path", {
 		d: "M12 15V3",
@@ -1646,4 +1662,4 @@ var Zap = createLucideIcon("zap", [["path", {
 	key: "1xq2db"
 }]]);
 //#endregion
-export { CreditCard as $, Plus as A, Mail as B, ScrollText as C, ArrowLeft as Ct, RefreshCw as D, Rocket as E, Package as F, Layers as G, LoaderCircle as H, Monitor as I, Gauge as J, KeyRound as K, Minus as L, Phone as M, Pencil as N, Receipt as O, Pen as P, Download as Q, Menu as R, Search as S, ArrowRightLeft as St, Scale as T, Activity as Tt, Linkedin as U, Lock as V, Link2 as W, Eye as X, FileText as Y, EyeOff as Z, Star as _, Barcode as _t, Wallet as a, CircleArrowUp as at, Shield as b, BadgeCheck as bt, UserMinus as c, ChevronUp as ct, TriangleAlert as d, ChevronDown as dt, Coins as et, TrendingUp as f, Check as ft, Store as g, Boxes as gt, Tag as h, Briefcase as ht, WifiOff as i, CircleCheck as it, Play as j, Printer as k, Twitter as l, ChevronRight as lt, Timer as m, Building2 as mt, X as n, Clock as nt, Users as o, CircleArrowDown as ot, Trash2 as p, Calendar as pt, History as q, Wifi as r, CircleUser as rt, User as s, CircleAlert as st, Zap as t, CloudOff as tt, Truck as u, ChevronLeft as ut, Square as v, Banknote as vt, ScanBarcode as w, Archive as wt, ShieldCheck as x, ArrowRight as xt, ShoppingCart as y, Ban as yt, MapPin as z };
+export { DollarSign as $, Plus as A, Mail as B, ScrollText as C, ArrowRightLeft as Ct, RefreshCw as D, Rocket as E, Activity as Et, Package as F, Layers as G, LoaderCircle as H, Monitor as I, Gauge as J, KeyRound as K, Minus as L, Phone as M, Pencil as N, Receipt as O, Pen as P, Download as Q, Menu as R, Search as S, ArrowRight as St, Scale as T, Archive as Tt, Linkedin as U, Lock as V, Link2 as W, Eye as X, FileText as Y, EyeOff as Z, Star as _, Boxes as _t, Wallet as a, CircleCheck as at, Shield as b, Ban as bt, UserMinus as c, CircleAlert as ct, TriangleAlert as d, ChevronLeft as dt, CreditCard as et, TrendingUp as f, ChevronDown as ft, Store as g, Briefcase as gt, Tag as h, Building2 as ht, WifiOff as i, CircleUser as it, Play as j, Printer as k, Twitter as l, ChevronUp as lt, Timer as m, Calendar as mt, X as n, CloudOff as nt, Users as o, CircleArrowUp as ot, Trash2 as p, Check as pt, History as q, Wifi as r, Clock as rt, User as s, CircleArrowDown as st, Zap as t, Coins as tt, Truck as u, ChevronRight as ut, Square as v, Barcode as vt, ScanBarcode as w, ArrowLeft as wt, ShieldCheck as x, BadgeCheck as xt, ShoppingCart as y, Banknote as yt, MapPin as z };

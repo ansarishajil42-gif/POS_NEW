@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getSessionServerFn } from "./auth-server";
 import * as argon2 from "argon2";
 import { db } from "../server/db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, gte } from "drizzle-orm";
 import {
   branches,
   stockLevels,
@@ -15,6 +15,9 @@ import {
   staffUsers,
   tills,
   tenants,
+  stockAdjustments,
+  inventoryLedger,
+  auditLogs,
 } from "../server/db/schema";
 
 // Middleware
@@ -490,4 +493,231 @@ export const resetCashierPinByManagerFn = createServerFn({ method: "POST" })
     await db.update(staffUsers).set({ pinHash: hashed }).where(eq(staffUsers.id, data.cashierId));
 
     return { success: true };
+  });
+
+export const adjustStockFn = createServerFn({ method: "POST" })
+  .validator((d: { productId: string; quantityChange: number; reason: string; note?: string }) => d)
+  .handler(async ({ data }) => {
+    try {
+      const { tenantId, branchId, userId } = await getStoreManagerContext();
+
+      const [stock] = await db
+        .select({ id: stockLevels.id, currentStock: stockLevels.stock })
+        .from(stockLevels)
+        .where(and(eq(stockLevels.productId, data.productId), eq(stockLevels.branchId, branchId)));
+
+      if (!stock) throw new Error("Stock record not found.");
+
+      const newQuantity = stock.currentStock + data.quantityChange;
+
+      await db.transaction(async (tx) => {
+        await tx
+          .update(stockLevels)
+          .set({ stock: newQuantity })
+          .where(eq(stockLevels.id, stock.id));
+
+        const finalReason = data.note ? `${data.reason}: ${data.note}` : data.reason;
+
+        await tx.insert(stockAdjustments).values({
+          tenantId,
+          branchId,
+          productId: data.productId,
+          batchId: null,
+          previousQuantity: stock.currentStock,
+          quantityChange: data.quantityChange,
+          newQuantity,
+          reason: finalReason,
+          adjustedBy: userId,
+        });
+
+        await tx.insert(inventoryLedger).values({
+          tenantId,
+          branchId,
+          productId: data.productId,
+          batchId: null,
+          transactionType: "Adjustment",
+          previousQuantity: stock.currentStock,
+          changedQuantity: data.quantityChange,
+          newQuantity,
+          createdBy: userId,
+        });
+
+        await tx.insert(auditLogs).values({
+          tenantId,
+          branchId,
+          userId,
+          action: "STOCK_ADJUSTED",
+          entityType: "Product",
+          entityId: data.productId,
+          details: {
+            previousQuantity: stock.currentStock,
+            quantityChange: data.quantityChange,
+            newQuantity,
+            reason: finalReason,
+          },
+        });
+      });
+
+      return { success: true };
+    } catch (err: any) {
+      console.error("[adjustStockFn Error]", err);
+      throw err;
+    }
+  });
+
+export const getStockAdjustmentHistoryFn = createServerFn({ method: "GET" })
+  .validator((d: { productId: string }) => d)
+  .handler(async ({ data }) => {
+    try {
+      const { branchId } = await getStoreManagerContext();
+
+      const history = await db
+        .select({
+          id: stockAdjustments.id,
+          createdAt: stockAdjustments.createdAt,
+          quantityChange: stockAdjustments.quantityChange,
+          reason: stockAdjustments.reason,
+          adjustedByName: staffUsers.name,
+        })
+        .from(stockAdjustments)
+        .leftJoin(staffUsers, eq(stockAdjustments.adjustedBy, staffUsers.id))
+        .where(
+          and(
+            eq(stockAdjustments.productId, data.productId),
+            eq(stockAdjustments.branchId, branchId)
+          )
+        )
+        .orderBy(desc(stockAdjustments.createdAt));
+
+      return history;
+    } catch (err: any) {
+      console.error("[getStockAdjustmentHistoryFn Error]", err);
+      throw err;
+    }
+  });
+
+export const exportZReportFn = createServerFn({ method: "POST" })
+  .handler(async () => {
+    try {
+      const { tenantId, branchId } = await getStoreManagerContext();
+      const today = new Date().toISOString().split("T")[0];
+
+      const todayOrders = await db.query.orders.findMany({
+        where: and(
+          eq(orders.branchId, branchId),
+          sql`DATE(${orders.createdAt}) = ${today}`
+        ),
+      });
+
+      const salesToday = todayOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+      const vatToday = todayOrders.reduce((sum, o) => sum + (Number(o.vat) || 0), 0);
+      const transactions = todayOrders.length;
+
+      let csvContent = "Report Type,Z-Report\n";
+      csvContent += `Date,${today}\n`;
+      csvContent += `Branch ID,${branchId}\n`;
+      csvContent += `\nMetric,Value\n`;
+      csvContent += `Total Sales,${salesToday.toFixed(2)}\n`;
+      csvContent += `Total VAT,${vatToday.toFixed(2)}\n`;
+      csvContent += `Total Transactions,${transactions}\n`;
+
+      return { success: true, csvContent };
+    } catch (err: any) {
+      console.error("[exportZReportFn Error]", err);
+      throw err;
+    }
+  });
+
+export const recordCashDropFn = createServerFn({ method: "POST" })
+  .validator((d: { shiftId: string; amount: number; note?: string }) => d)
+  .handler(async ({ data }) => {
+    try {
+      const { tenantId, branchId } = await getStoreManagerContext();
+
+      const [shift] = await db
+        .select({ cashDrops: shifts.cashDrops })
+        .from(shifts)
+        .where(and(eq(shifts.id, data.shiftId), eq(shifts.branchId, branchId)));
+
+      if (!shift) throw new Error("Shift not found.");
+
+      let drops = [];
+      try {
+        drops = JSON.parse(shift.cashDrops || "[]");
+      } catch (e) {
+        drops = [];
+      }
+      
+      drops.push({
+        amount: data.amount,
+        note: data.note || "",
+        timestamp: new Date().toISOString()
+      });
+
+      await db
+        .update(shifts)
+        .set({ cashDrops: JSON.stringify(drops) })
+        .where(eq(shifts.id, data.shiftId));
+
+      return { success: true };
+    } catch (err: any) {
+      console.error("[recordCashDropFn Error]", err);
+      throw err;
+    }
+  });
+
+export const closeShiftFn = createServerFn({ method: "POST" })
+  .validator((d: { shiftId: string; actualCash: number }) => d)
+  .handler(async ({ data }) => {
+    try {
+      const { tenantId, branchId } = await getStoreManagerContext();
+
+      const [shift] = await db
+        .select()
+        .from(shifts)
+        .where(and(eq(shifts.id, data.shiftId), eq(shifts.branchId, branchId)));
+
+      if (!shift) throw new Error("Shift not found.");
+      if (shift.status === "Closed") throw new Error("Shift is already closed.");
+
+      let drops = [];
+      try {
+        drops = JSON.parse(shift.cashDrops || "[]");
+      } catch (e) {}
+      
+      const totalDrops = drops.reduce((sum: number, drop: any) => sum + Number(drop.amount || 0), 0);
+      const openingFloat = Number(shift.openingFloat || 0);
+
+      // Calculate sales cash for this shift
+      let shiftOrders: any[] = [];
+      if (shift.tillId && shift.openedAt) {
+        const openedAtDate = new Date(shift.openedAt as string | Date);
+        shiftOrders = await db.query.orders.findMany({
+          where: and(
+            eq(orders.branchId, branchId),
+            eq(orders.tillId, shift.tillId),
+            gte(orders.createdAt, openedAtDate)
+          ),
+        });
+      }
+      
+      // Simplification: Assume all orders are cash for expected cash calculation
+      const salesCash = shiftOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+      const expectedCash = openingFloat + salesCash - totalDrops;
+
+      await db
+        .update(shifts)
+        .set({ 
+          status: "Closed", 
+          closedAt: new Date(),
+          actualCash: data.actualCash.toString(),
+          expectedCash: expectedCash.toString()
+        })
+        .where(eq(shifts.id, data.shiftId));
+
+      return { success: true };
+    } catch (err: any) {
+      console.error("[closeShiftFn Error]", err);
+      throw err;
+    }
   });

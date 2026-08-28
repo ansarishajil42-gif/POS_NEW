@@ -7,10 +7,15 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
-    nitro: { preset: "vercel" },
+    nitro: { 
+        preset: "vercel",
+        externals: {
+            // Force Nitro/Vercel to treat these as external Node modules 
+            // and include them in the final deployment bundle
+            external: ["argon2", "tslib"]
+        }
+    },
     tanstackStart: {
-        // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
-        // nitro/vite builds from this
         server: { entry: "server" },
     },
 });

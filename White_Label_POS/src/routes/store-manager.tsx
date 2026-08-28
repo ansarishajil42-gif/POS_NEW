@@ -50,6 +50,11 @@ import {
   deleteRosterShiftFn,
   createTillFn,
   resetCashierPinByManagerFn,
+  adjustStockFn,
+  getStockAdjustmentHistoryFn,
+  exportZReportFn,
+  recordCashDropFn,
+  closeShiftFn,
 } from "@/lib/store-manager-server";
 import { useRouter } from "@tanstack/react-router";
 
@@ -115,6 +120,33 @@ function StoreManager() {
   const [confirmPin, setConfirmPin] = useState("");
   const [isResetSubmitting, setIsResetSubmitting] = useState(false);
   const [resetErrorMsg, setResetErrorMsg] = useState("");
+
+  // Stock Adjustment states
+  const [adjustStockModalOpen, setAdjustStockModalOpen] = useState(false);
+  const [adjustProductId, setAdjustProductId] = useState("");
+  const [adjustQuantity, setAdjustQuantity] = useState("");
+  const [adjustReason, setAdjustReason] = useState("Correction");
+  const [adjustNote, setAdjustNote] = useState("");
+  const [isAdjusting, setIsAdjusting] = useState(false);
+
+  // Stock History states
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [historyProductId, setHistoryProductId] = useState("");
+  const [historyData, setHistoryData] = useState<any[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+
+  // Cash Drop states
+  const [cashDropModalOpen, setCashDropModalOpen] = useState(false);
+  const [dropShiftId, setDropShiftId] = useState("");
+  const [dropAmount, setDropAmount] = useState("");
+  const [dropNote, setDropNote] = useState("");
+  const [isDropping, setIsDropping] = useState(false);
+
+  // Close Shift states
+  const [closeShiftModalOpen, setCloseShiftModalOpen] = useState(false);
+  const [closeShiftId, setCloseShiftId] = useState("");
+  const [closeActualCash, setCloseActualCash] = useState("");
+  const [isClosingShift, setIsClosingShift] = useState(false);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -405,6 +437,114 @@ function StoreManager() {
     }
   };
 
+  const handleExportZReport = async () => {
+    try {
+      const res = await exportZReportFn();
+      if (res.success && res.csvContent) {
+        const blob = new Blob([res.csvContent], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.setAttribute("download", `Z-Report-${new Date().toISOString().split("T")[0]}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        toast.success("Z-Report exported successfully!");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to export Z-Report.");
+    }
+  };
+
+  const handleAdjustStockSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const qty = Number(adjustQuantity);
+    if (!adjustQuantity || isNaN(qty)) {
+      toast.error("Please enter a valid quantity change.");
+      return;
+    }
+    setIsAdjusting(true);
+    try {
+      const res = await adjustStockFn({
+        data: {
+          productId: adjustProductId,
+          quantityChange: qty,
+          reason: adjustReason,
+          note: adjustNote,
+        }
+      });
+      if (res.success) {
+        toast.success("Stock adjusted successfully!");
+        setAdjustStockModalOpen(false);
+        setAdjustQuantity("");
+        setAdjustNote("");
+        router.invalidate();
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to adjust stock.");
+    } finally {
+      setIsAdjusting(false);
+    }
+  };
+
+  const handleCashDropSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amt = Number(dropAmount);
+    if (!dropAmount || isNaN(amt) || amt <= 0) {
+      toast.error("Please enter a valid drop amount.");
+      return;
+    }
+    setIsDropping(true);
+    try {
+      const res = await recordCashDropFn({
+        data: {
+          shiftId: dropShiftId,
+          amount: amt,
+          note: dropNote,
+        }
+      });
+      if (res.success) {
+        toast.success("Cash drop recorded successfully!");
+        setCashDropModalOpen(false);
+        setDropAmount("");
+        setDropNote("");
+        router.invalidate();
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to record cash drop.");
+    } finally {
+      setIsDropping(false);
+    }
+  };
+
+  const handleCloseShiftSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amt = Number(closeActualCash);
+    if (!closeActualCash || isNaN(amt) || amt < 0) {
+      toast.error("Please enter a valid actual cash amount.");
+      return;
+    }
+    setIsClosingShift(true);
+    try {
+      const res = await closeShiftFn({
+        data: {
+          shiftId: closeShiftId,
+          actualCash: amt,
+        }
+      });
+      if (res.success) {
+        toast.success("Shift closed successfully!");
+        setCloseShiftModalOpen(false);
+        setCloseActualCash("");
+        router.invalidate();
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to close shift.");
+    } finally {
+      setIsClosingShift(false);
+    }
+  };
+
   if ((data as any).error) {
     return (
       <div className="p-8">
@@ -482,7 +622,7 @@ function StoreManager() {
         actions={
           <Button
             className="rounded-xl font-semibold"
-            onClick={() => toast.success("Daily Z-report exported")}
+            onClick={handleExportZReport}
           >
             <Download className="mr-1.5 h-4 w-4" /> Export Z-Report
           </Button>
@@ -743,16 +883,48 @@ function StoreManager() {
                                   </span>
                                 </p>
                               </div>
-                              <div className="w-28 flex justify-end">
+                              <div className="flex items-center gap-3 ml-4">
                                 {isLow ? (
-                                  <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/10 px-3 py-1.5 text-xs font-bold text-accent shadow-sm ring-1 ring-inset ring-accent/20">
+                                  <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/10 px-3 py-1.5 text-xs font-bold text-accent shadow-sm ring-1 ring-inset ring-accent/20 shrink-0">
                                     <AlertTriangle className="h-3.5 w-3.5" /> Low
                                   </span>
                                 ) : (
-                                  <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-3 py-1.5 text-xs font-bold text-success shadow-sm ring-1 ring-inset ring-success/20">
+                                  <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-3 py-1.5 text-xs font-bold text-success shadow-sm ring-1 ring-inset ring-success/20 shrink-0">
                                     <CheckCircle2 className="h-3.5 w-3.5" /> Healthy
                                   </span>
                                 )}
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  className="h-8 w-8 rounded-full shrink-0 text-muted-foreground hover:text-primary"
+                                  onClick={async () => {
+                                    setHistoryProductId(p.productId);
+                                    setHistoryModalOpen(true);
+                                    setIsHistoryLoading(true);
+                                    try {
+                                      const hist = await getStockAdjustmentHistoryFn({ data: { productId: p.productId } });
+                                      setHistoryData(hist || []);
+                                    } catch (err: any) {
+                                      toast.error(err.message || "Failed to load history");
+                                    } finally {
+                                      setIsHistoryLoading(false);
+                                    }
+                                  }}
+                                  title="View History"
+                                >
+                                  <Clock className="h-4 w-4" />
+                                </Button>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="h-8 rounded-full px-4 text-xs font-semibold shrink-0 bg-surface hover:bg-surface-2 transition-colors border-border/50"
+                                  onClick={() => {
+                                    setAdjustProductId(p.productId);
+                                    setAdjustStockModalOpen(true);
+                                  }}
+                                >
+                                  Adjust
+                                </Button>
                               </div>
                             </div>
                           </div>
@@ -762,6 +934,121 @@ function StoreManager() {
                   </div>
                 </div>
               )}
+
+
+              {/* Stock History Modal */}
+              <Dialog open={historyModalOpen} onOpenChange={setHistoryModalOpen}>
+                <DialogContent className="sm:max-w-xl w-[95vw] sm:w-full max-h-[85vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Stock Adjustment History</DialogTitle>
+                    <DialogDescription>
+                      Past adjustments for this product.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="py-4">
+                    {isHistoryLoading ? (
+                      <div className="flex justify-center p-8">
+                        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary"></div>
+                      </div>
+                    ) : historyData.length === 0 ? (
+                      <p className="text-center text-sm text-muted-foreground p-8">No adjustments found.</p>
+                    ) : (
+                      <div className="space-y-4">
+                        {historyData.map((h, i) => (
+                          <div key={i} className="flex flex-col gap-1 p-3 rounded-lg border border-border/50 bg-surface-2/50 text-sm">
+                            <div className="flex justify-between font-semibold">
+                              <span>{new Date(h.createdAt).toLocaleString()}</span>
+                              <span className={h.quantityChange > 0 ? "text-success" : "text-accent"}>
+                                {h.quantityChange > 0 ? "+" : ""}{h.quantityChange}
+                              </span>
+                            </div>
+                            <div className="text-muted-foreground">
+                              Reason: {h.reason}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              By: {h.adjustedByName || "Unknown"}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </DialogContent>
+              </Dialog>
+
+              {/* Adjust Stock Modal */}
+              <Dialog
+                open={adjustStockModalOpen}
+                onOpenChange={(open) => {
+                  if (!isAdjusting) {
+                    setAdjustStockModalOpen(open);
+                    if (!open) {
+                      setAdjustQuantity("");
+                      setAdjustReason("Correction");
+                      setAdjustNote("");
+                    }
+                  }
+                }}
+              >
+                <DialogContent className="sm:max-w-md w-[95vw] sm:w-full">
+                  <DialogHeader>
+                    <DialogTitle>Adjust Stock</DialogTitle>
+                    <DialogDescription>
+                      Manually adjust the stock quantity for the selected product.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <form onSubmit={handleAdjustStockSubmit} className="space-y-4 py-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="adj-qty">Quantity Change (+/-)</Label>
+                      <Input
+                        id="adj-qty"
+                        type="number"
+                        placeholder="e.g. -5 or 10"
+                        value={adjustQuantity}
+                        onChange={(e) => setAdjustQuantity(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="adj-reason">Reason</Label>
+                      <select
+                        id="adj-reason"
+                        className="flex h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                        value={adjustReason}
+                        onChange={(e) => setAdjustReason(e.target.value)}
+                      >
+                        <option value="Correction">Correction</option>
+                        <option value="Wastage">Wastage</option>
+                        <option value="Damage">Damage</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="adj-note">Note (Optional)</Label>
+                      <Input
+                        id="adj-note"
+                        type="text"
+                        placeholder="e.g. Found extra items in warehouse"
+                        value={adjustNote}
+                        onChange={(e) => setAdjustNote(e.target.value)}
+                      />
+                    </div>
+                    <DialogFooter className="flex justify-end gap-2 mt-6">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setAdjustStockModalOpen(false)}
+                        disabled={isAdjusting}
+                      >
+                        Cancel
+                      </Button>
+                      <Button type="submit" disabled={isAdjusting}>
+                        {isAdjusting ? "Saving..." : "Save Adjustment"}
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </DialogContent>
+              </Dialog>
             </TabsContent>
 
             <TabsContent value="pricing" className="mt-0 space-y-5">
@@ -1091,6 +1378,32 @@ function StoreManager() {
                                   >
                                     Cancel Shift
                                   </Button>
+                                )}
+                                {!isCompleted && (shift.status === "Active" || shift.status === "Open") && (
+                                  <div className="flex gap-2 justify-end">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 rounded-lg text-xs font-bold"
+                                      onClick={() => {
+                                        setDropShiftId(shift.id);
+                                        setCashDropModalOpen(true);
+                                      }}
+                                    >
+                                      Record Cash Drop
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 rounded-lg text-xs font-bold border-orange-200 text-orange-600 hover:bg-orange-50"
+                                      onClick={() => {
+                                        setCloseShiftId(shift.id);
+                                        setCloseShiftModalOpen(true);
+                                      }}
+                                    >
+                                      Close Shift
+                                    </Button>
+                                  </div>
                                 )}
                               </td>
                             </tr>
@@ -1614,6 +1927,117 @@ function StoreManager() {
                           </Button>
                           <Button type="submit" disabled={isResetSubmitting}>
                             {isResetSubmitting ? "Resetting..." : "Reset PIN"}
+                          </Button>
+                        </DialogFooter>
+                      </form>
+                    </DialogContent>
+                  </Dialog>
+
+                  {/* Cash Drop Modal */}
+                  <Dialog
+                    open={cashDropModalOpen}
+                    onOpenChange={(open) => {
+                      if (!isDropping) {
+                        setCashDropModalOpen(open);
+                        if (!open) {
+                          setDropAmount("");
+                          setDropNote("");
+                        }
+                      }
+                    }}
+                  >
+                    <DialogContent className="sm:max-w-md w-[95vw] sm:w-full">
+                      <DialogHeader>
+                        <DialogTitle>Record Cash Drop</DialogTitle>
+                        <DialogDescription>
+                          Record cash taken from the till during an active shift.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <form onSubmit={handleCashDropSubmit} className="space-y-4 py-2">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="drop-amount">Drop Amount (AED)</Label>
+                          <Input
+                            id="drop-amount"
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            placeholder="e.g. 500"
+                            value={dropAmount}
+                            onChange={(e) => setDropAmount(e.target.value)}
+                            required
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="drop-note">Note (Optional)</Label>
+                          <Input
+                            id="drop-note"
+                            type="text"
+                            placeholder="e.g. Safe deposit"
+                            value={dropNote}
+                            onChange={(e) => setDropNote(e.target.value)}
+                          />
+                        </div>
+                        <DialogFooter className="flex justify-end gap-2 mt-6">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setCashDropModalOpen(false)}
+                            disabled={isDropping}
+                          >
+                            Cancel
+                          </Button>
+                          <Button type="submit" disabled={isDropping}>
+                            {isDropping ? "Saving..." : "Record Drop"}
+                          </Button>
+                        </DialogFooter>
+                      </form>
+                    </DialogContent>
+                  </Dialog>
+
+                  {/* Close Shift Modal */}
+                  <Dialog
+                    open={closeShiftModalOpen}
+                    onOpenChange={(open) => {
+                      if (!isClosingShift) {
+                        setCloseShiftModalOpen(open);
+                        if (!open) {
+                          setCloseActualCash("");
+                        }
+                      }
+                    }}
+                  >
+                    <DialogContent className="sm:max-w-md w-[95vw] sm:w-full">
+                      <DialogHeader>
+                        <DialogTitle>Close Shift</DialogTitle>
+                        <DialogDescription>
+                          Enter the actual closing cash float to officially close this shift.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <form onSubmit={handleCloseShiftSubmit} className="space-y-4 py-2">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="close-cash">Actual Closing Cash (AED)</Label>
+                          <Input
+                            id="close-cash"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="e.g. 1500"
+                            value={closeActualCash}
+                            onChange={(e) => setCloseActualCash(e.target.value)}
+                            required
+                          />
+                        </div>
+                        <DialogFooter className="flex justify-end gap-2 mt-6">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setCloseShiftModalOpen(false)}
+                            disabled={isClosingShift}
+                          >
+                            Cancel
+                          </Button>
+                          <Button type="submit" disabled={isClosingShift}>
+                            {isClosingShift ? "Closing..." : "Close Shift"}
                           </Button>
                         </DialogFooter>
                       </form>

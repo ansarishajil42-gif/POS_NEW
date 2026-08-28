@@ -19,6 +19,7 @@ import {
   DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { 
   ShoppingCart, 
@@ -72,6 +73,23 @@ function PurchasingOfficer() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedPoId, setSelectedPoId] = useState<string | null>(null);
   const [selectedPoDetails, setSelectedPoDetails] = useState<any>(null);
+  const [isDeletingGrn, setIsDeletingGrn] = useState(false);
+  const [deleteGrnId, setDeleteGrnId] = useState<string | null>(null);
+  const [isDeletingInvoice, setIsDeletingInvoice] = useState(false);
+  const [deleteInvoiceId, setDeleteInvoiceId] = useState<string | null>(null);
+  
+  // View/Edit states
+  const [viewGrnOpen, setViewGrnOpen] = useState(false);
+  const [editGrnOpen, setEditGrnOpen] = useState(false);
+  const [selectedGrn, setSelectedGrn] = useState<any>(null);
+  const [editGrnForm, setEditGrnForm] = useState<any>({ id: "", items: [] });
+  const [isUpdatingGrn, setIsUpdatingGrn] = useState(false);
+
+  const [viewInvoiceOpen, setViewInvoiceOpen] = useState(false);
+  const [editInvoiceOpen, setEditInvoiceOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
+  const [editInvoiceForm, setEditInvoiceForm] = useState({ id: "", invoiceNumber: "", dueDate: "" });
+  const [isUpdatingInvoice, setIsUpdatingInvoice] = useState(false);
 
   const handleRowClick = async (poId: string) => {
     setSelectedPoId(poId);
@@ -250,7 +268,7 @@ function PurchasingOfficer() {
     }
 
     // Validate quantities and batch info
-    for (const item of grnForm.items) {
+    for (const item of editGrnForm.items) {
       if (item.receivedQty < 0) {
         toast.error(`Invalid quantity for ${item.productName}`);
         return;
@@ -283,7 +301,7 @@ function PurchasingOfficer() {
         vendorId: targetPo.vendorId,
         branchId: targetPo.branchId,
         grnNumber: grnForm.grnNumber,
-        items: grnForm.items.map((i: any) => ({
+        items: editGrnForm.items.map((i: any) => ({
           productId: i.productId,
           orderedQty: i.orderedQty,
           receivedQty: i.receivedQty,
@@ -304,7 +322,7 @@ function PurchasingOfficer() {
   };
 
   const handleCreateInvoice = async () => {
-    if (!invoiceForm.poId || !invoiceForm.invoiceNumber || !invoiceForm.dueDate) {
+    if (!invoiceForm.poId || !editInvoiceForm.invoiceNumber || !editInvoiceForm.dueDate) {
       toast.error("Please fill in all invoice details");
       return;
     }
@@ -321,8 +339,8 @@ function PurchasingOfficer() {
     try {
       await createVendorInvoiceServerFn({ data: {
         purchaseOrderId: targetPo.id,
-        invoiceNumber: invoiceForm.invoiceNumber,
-        dueDate: invoiceForm.dueDate,
+        invoiceNumber: editInvoiceForm.invoiceNumber,
+        dueDate: editInvoiceForm.dueDate,
         subtotal,
         vatRate,
         vatAmount,
@@ -395,6 +413,105 @@ function PurchasingOfficer() {
     } finally {
       setIsSubmittingVendor(false);
     }
+  };
+
+  const handleDeleteGrn = async () => {
+    if (!deleteGrnId) return;
+    setIsDeletingGrn(true);
+    try {
+      await deleteGrnServerFn({ data: { id: deleteGrnId } });
+      toast.success("GRN deleted and stock reversed successfully");
+      setDeleteGrnId(null);
+      router.invalidate();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to delete GRN");
+    } finally {
+      setIsDeletingGrn(false);
+    }
+  };
+
+  const handleDeleteInvoice = async () => {
+    if (!deleteInvoiceId) return;
+    setIsDeletingInvoice(true);
+    try {
+      await deleteInvoiceServerFn({ data: { id: deleteInvoiceId } });
+      toast.success("Vendor Invoice deleted successfully");
+      setDeleteInvoiceId(null);
+      router.invalidate();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to delete Vendor Invoice");
+    } finally {
+      setIsDeletingInvoice(false);
+    }
+  };
+
+  const handleUpdateGrn = async () => {
+    setIsUpdatingGrn(true);
+    try {
+      await updateGrnServerFn({ data: editGrnForm });
+      toast.success("GRN updated and stock adjusted successfully");
+      setEditGrnOpen(false);
+      router.invalidate();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to update GRN");
+    } finally {
+      setIsUpdatingGrn(false);
+    }
+  };
+
+  const handleUpdateInvoice = async () => {
+    setIsUpdatingInvoice(true);
+    try {
+      await updateVendorInvoiceServerFn({ data: editInvoiceForm });
+      toast.success("Vendor Invoice updated successfully");
+      setEditInvoiceOpen(false);
+      router.invalidate();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to update Vendor Invoice");
+    } finally {
+      setIsUpdatingInvoice(false);
+    }
+  };
+
+  const handleViewGrn = async (id: string) => {
+    try {
+      const details = await getGrnDetailsServerFn({ data: { id } });
+      setSelectedGrn(details);
+      setViewGrnOpen(true);
+    } catch (e: any) { toast.error("Failed to load GRN details"); }
+  };
+
+  const handleEditGrn = async (grn: any) => {
+    try {
+      const details = await getGrnDetailsServerFn({ data: { id: grn.id } });
+      const items = details.items.map((i: any) => ({
+        productId: i.productId,
+        name: i.product?.name,
+        orderedQty: i.orderedQty,
+        receivedQty: i.receivedQty,
+        batchNumber: i.batchNumber || "",
+        expiryDate: i.expiryDate ? new Date(i.expiryDate).toISOString().split('T')[0] : ""
+      }));
+      setEditGrnForm({ id: grn.id, items });
+      setEditGrnOpen(true);
+    } catch (e: any) { toast.error("Failed to load GRN for editing"); }
+  };
+
+  const handleViewInvoice = async (id: string) => {
+    try {
+      const details = await getInvoiceDetailsServerFn({ data: { id } });
+      setSelectedInvoice(details);
+      setViewInvoiceOpen(true);
+    } catch (e: any) { toast.error("Failed to load Invoice details"); }
+  };
+
+  const handleEditInvoice = (inv: any) => {
+    setEditInvoiceForm({
+      id: inv.id,
+      invoiceNumber: inv.invoiceNumber,
+      dueDate: inv.dueDate ? new Date(inv.dueDate).toISOString().split('T')[0] : ""
+    });
+    setEditInvoiceOpen(true);
   };
 
   const handleDeleteVendor = async () => {
@@ -687,7 +804,7 @@ function PurchasingOfficer() {
                       <Input placeholder="e.g. GRN-9912" value={grnForm.grnNumber} onChange={e => setGrnForm({...grnForm, grnNumber: e.target.value})} />
                     </div>
                     
-                    {grnForm.items.length > 0 && (
+                    {editGrnForm.items.length > 0 && (
                       <div className="mt-4 space-y-4">
                         <Label>Received Items</Label>
                         <div className="rounded-md border border-border">
@@ -701,7 +818,7 @@ function PurchasingOfficer() {
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
-                              {grnForm.items.map((item, idx) => (
+                              {editGrnForm.items.map((item, idx) => (
                                 <React.Fragment key={idx}>
                                   <tr>
                                     <td className="px-3 py-3 font-medium">{item.productName}</td>
@@ -715,7 +832,7 @@ function PurchasingOfficer() {
                                         className="h-8" 
                                         value={item.receivedQty} 
                                         onChange={e => {
-                                          const newItems = [...grnForm.items];
+                                          const newItems = [...editGrnForm.items];
                                           let val = Number(e.target.value);
                                           if (val > item.orderedQty) val = item.orderedQty;
                                           newItems[idx].receivedQty = val;
@@ -735,7 +852,7 @@ function PurchasingOfficer() {
                                               placeholder="Required"
                                               value={item.batchNumber}
                                               onChange={e => {
-                                                const newItems = [...grnForm.items];
+                                                const newItems = [...editGrnForm.items];
                                                 newItems[idx].batchNumber = e.target.value;
                                                 setGrnForm({...grnForm, items: newItems});
                                               }}
@@ -761,7 +878,7 @@ function PurchasingOfficer() {
                                                   mode="single"
                                                   selected={item.manufacturingDate ? new Date(item.manufacturingDate) : undefined}
                                                   onSelect={(d) => {
-                                                    const newItems = [...grnForm.items];
+                                                    const newItems = [...editGrnForm.items];
                                                     newItems[idx].manufacturingDate = d ? format(d, "yyyy-MM-dd") : "";
                                                     setGrnForm({...grnForm, items: newItems});
                                                   }}
@@ -790,7 +907,7 @@ function PurchasingOfficer() {
                                                   mode="single"
                                                   selected={item.expiryDate ? new Date(item.expiryDate) : undefined}
                                                   onSelect={(d) => {
-                                                    const newItems = [...grnForm.items];
+                                                    const newItems = [...editGrnForm.items];
                                                     newItems[idx].expiryDate = d ? format(d, "yyyy-MM-dd") : "";
                                                     setGrnForm({...grnForm, items: newItems});
                                                   }}
@@ -878,7 +995,7 @@ function PurchasingOfficer() {
                         <select 
                           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                           value={invoiceForm.poId} 
-                          onChange={e => setInvoiceForm({...invoiceForm, poId: e.target.value})}
+                          onChange={e => setEditInvoiceForm({...editInvoiceForm, poId: e.target.value})}
                         >
                           <option value="">Select PO...</option>
                           {pos.filter((p: any) => p.status === 'Ordered' || p.status === 'GRN' || p.status === 'Received').map((p: any) => (
@@ -890,16 +1007,16 @@ function PurchasingOfficer() {
                       </div>
                       <div className="space-y-2">
                         <Label>Supplier Invoice Number</Label>
-                        <Input placeholder="INV-001" value={invoiceForm.invoiceNumber} onChange={e => setInvoiceForm({...invoiceForm, invoiceNumber: e.target.value})} />
+                        <Input placeholder="INV-001" value={editInvoiceForm.invoiceNumber} onChange={e => setEditInvoiceForm({...editInvoiceForm, invoiceNumber: e.target.value})} />
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label>Due Date</Label>
-                          <Input type="date" value={invoiceForm.dueDate} onChange={e => setInvoiceForm({...invoiceForm, dueDate: e.target.value})} />
+                          <Input type="date" value={editInvoiceForm.dueDate} onChange={e => setEditInvoiceForm({...editInvoiceForm, dueDate: e.target.value})} />
                         </div>
                         <div className="space-y-2">
                           <Label>VAT Rate (%)</Label>
-                          <Input type="number" value={invoiceForm.vatRate} onChange={e => setInvoiceForm({...invoiceForm, vatRate: Number(e.target.value)})} />
+                          <Input type="number" value={invoiceForm.vatRate} onChange={e => setEditInvoiceForm({...editInvoiceForm, vatRate: Number(e.target.value)})} />
                         </div>
                       </div>
                     </div>

@@ -78,6 +78,20 @@
       "when": 1787588680414,
       "tag": "0010_ambitious_sharon_carter",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1787865172553,
+      "tag": "0011_silent_killmonger",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1787879562108,
+      "tag": "0012_previous_misty_knight",
+      "breakpoints": true
     }
   ]
 }

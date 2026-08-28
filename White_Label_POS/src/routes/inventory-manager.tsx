@@ -21,12 +21,15 @@ import {
   X,
   History,
   Menu,
+  FileText,
+  DollarSign,
+  Download,
 } from "lucide-react";
 import {
   getInventoryDataServerFn,
   stockTransferServerFn,
   draftPurchaseOrderServerFn,
-  getInventoryLedgerFn,
+  getInventoryLedgerFn, applyClearanceFn,
 } from "@/lib/inventory-manager-server";
 
 export const Route = createFileRoute("/inventory-manager")({
@@ -89,6 +92,15 @@ function InventoryManager() {
   });
 
   const [searchQuery, setSearchQuery] = useState("");
+  const applyClearance = async (productId: string) => {
+    try {
+      await applyClearanceFn({ data: { productId, discountPct: 20 } });
+      toast.success("Clearance pricing (20% off) applied successfully!");
+      router.invalidate();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to apply clearance pricing");
+    }
+  };
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const {
@@ -219,7 +231,8 @@ function InventoryManager() {
             >
               Low-Stock Alerts
             </TabsTrigger>
-          <TabsTrigger value="ledger" className="w-full justify-start rounded-lg px-4 py-3 text-sm font-semibold transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg"><History className="mr-2 h-5 w-5" />Ledger</TabsTrigger></TabsList>
+          <TabsTrigger value="ledger" className="w-full justify-start rounded-lg px-4 py-3 text-sm font-semibold transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg"><History className="mr-2 h-5 w-5" />Ledger</TabsTrigger>
+            <TabsTrigger value="reports" className="w-full justify-start rounded-lg px-4 py-3 text-sm font-semibold transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg"><FileText className="mr-2 h-5 w-5" />Reports</TabsTrigger></TabsList>
         </aside>
 
         <main className="min-w-0 flex-1">
@@ -579,6 +592,89 @@ function InventoryManager() {
                   )}
                 </div>
               ))}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="ledger" className="mt-0">
+            <LedgerTabContent />
+          </TabsContent>
+
+          <TabsContent value="reports" className="mt-0 space-y-5">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight text-ink">Inventory Valuation Report</h2>
+                <p className="text-muted-foreground">Value of current stock on hand.</p>
+              </div>
+              <Button onClick={() => {
+                const header = ["Product", "SKU", "Branch", "Quantity", "Unit Cost", "Total Value"];
+                const rows = stockLevels.map((s: any) => [
+                  s.productName,
+                  s.sku || "-",
+                  s.branchName || "Main Branch",
+                  s.stock,
+                  Number(s.costPrice || 0),
+                  s.stock * Number(s.costPrice || 0)
+                ]);
+                const csv = [header, ...rows].map((r: any[]) => r.join(",")).join("\n");
+                const blob = new Blob([csv], { type: "text/csv" });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "inventory-valuation.csv";
+                a.click();
+              }}>
+                <Download className="mr-2 h-4 w-4" /> Export CSV
+              </Button>
+            </div>
+            
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-xl border border-border bg-white p-6 shadow-sm">
+                <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground mb-2">
+                  <DollarSign className="h-4 w-4" /> Total Value
+                </div>
+                <div className="text-3xl font-bold text-ink">
+                  {new Intl.NumberFormat('en-AE', { style: 'currency', currency: 'AED' }).format(
+                    stockLevels.reduce((acc: number, s: any) => acc + (s.stock * Number(s.costPrice || 0)), 0)
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="panel overflow-hidden">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Product</th>
+                    <th className="px-4 py-3 font-medium">Branch</th>
+                    <th className="px-4 py-3 font-medium text-right">Quantity</th>
+                    <th className="px-4 py-3 font-medium text-right">Unit Cost</th>
+                    <th className="px-4 py-3 font-medium text-right">Total Value</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {stockLevels.map((s: any, idx: number) => {
+                    const unitCost = Number(s.costPrice || 0);
+                    const totalValue = s.stock * unitCost;
+                    return (
+                      <tr key={idx} className="hover:bg-surface-2/50 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="font-semibold text-ink">{s.productName}</div>
+                          <div className="text-xs text-muted-foreground">{s.sku}</div>
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground">{s.branchName || "-"}</td>
+                        <td className="px-4 py-3 text-right font-medium">{s.stock}</td>
+                        <td className="px-4 py-3 text-right">{new Intl.NumberFormat('en-AE', { style: 'currency', currency: 'AED' }).format(unitCost)}</td>
+                        <td className="px-4 py-3 text-right font-bold text-primary">{new Intl.NumberFormat('en-AE', { style: 'currency', currency: 'AED' }).format(totalValue)}</td>
+                      </tr>
+                    );
+                  })}
+                  {stockLevels.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-4 text-center text-muted-foreground">No data available.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </TabsContent>
         </main>

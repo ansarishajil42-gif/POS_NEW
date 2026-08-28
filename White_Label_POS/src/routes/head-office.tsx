@@ -400,6 +400,9 @@ function HeadOffice() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [auditLogsPage, setAuditLogsPage] = useState(1);
   const auditLogsPerPage = 10;
+  
+  const [logDetailsModalOpen, setLogDetailsModalOpen] = useState(false);
+  const [selectedLogDetails, setSelectedLogDetails] = useState<any>(null);
 
   useEffect(() => {
     if (activeTab === "audit_logs") {
@@ -4265,8 +4268,25 @@ function HeadOffice() {
                               </span>
                             </TableCell>
                             <TableCell className="font-mono text-xs">{log.entityType}</TableCell>
-                            <TableCell className="text-xs max-w-xs truncate" title={typeof log.details === "string" ? log.details : (log.details ? JSON.stringify(log.details) : "N/A")}>
-                              {typeof log.details === "string" ? log.details : (log.details?.summary || (log.details ? Object.entries(log.details).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(" | ") : "N/A"))}
+                            <TableCell className="text-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="max-w-[200px] truncate block" title={typeof log.details === "string" ? log.details : (log.details ? JSON.stringify(log.details) : "N/A")}>
+                                  {typeof log.details === "string" ? log.details : (log.details?.summary || (log.details ? Object.entries(log.details).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(" | ") : "N/A"))}
+                                </span>
+                                {log.details && (
+                                  <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    className="h-6 text-[10px] px-2 rounded-full ml-auto"
+                                    onClick={() => {
+                                      setSelectedLogDetails(log.details);
+                                      setLogDetailsModalOpen(true);
+                                    }}
+                                  >
+                                    View
+                                  </Button>
+                                )}
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -4300,11 +4320,55 @@ function HeadOffice() {
                       </div>
                     </div>
                   )}
+
+                  {/* Log Details Modal */}
+                  <Dialog open={logDetailsModalOpen} onOpenChange={setLogDetailsModalOpen}>
+                    <DialogContent className="sm:max-w-2xl w-[95vw] sm:w-full">
+                      <DialogHeader>
+                        <DialogTitle>Audit Log Details</DialogTitle>
+                        <DialogDescription>
+                          Complete information for this action.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="py-4 overflow-auto max-h-[60vh]">
+                        {selectedLogDetails ? (
+                          typeof selectedLogDetails === 'string' ? (
+                            <div className="bg-surface-2/50 rounded-lg border border-border/50 p-4 text-sm text-muted-foreground whitespace-pre-wrap break-all">
+                              {selectedLogDetails}
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              {Object.entries(selectedLogDetails).map(([key, value]) => (
+                                <div key={key} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4 p-3 rounded-lg border border-border/50 bg-surface-2/50">
+                                  <div className="sm:w-1/3 font-semibold text-sm capitalize text-ink">
+                                    {key.replace(/([A-Z])/g, ' $1').trim()}
+                                  </div>
+                                  <div className="sm:w-2/3 text-sm text-muted-foreground break-words font-medium">
+                                    {typeof value === 'object' && value !== null ? (
+                                      <pre className="text-[11px] whitespace-pre-wrap font-mono mt-1 sm:mt-0 p-2 bg-surface rounded border border-border/30">
+                                        {JSON.stringify(value, null, 2)}
+                                      </pre>
+                                    ) : (
+                                      String(value)
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        ) : (
+                          <div className="text-center text-sm text-muted-foreground p-8 border border-border/50 rounded-lg bg-surface-2/50">
+                            No details available
+                          </div>
+                        )}
+                      </div>
+                    </DialogContent>
+                  </Dialog>
                 </div>
               )}
             </div>
-          </TabsContent>
-        </main>
+            </TabsContent>
+          </main>
 
         <Dialog open={addBatchOpen} onOpenChange={setAddBatchOpen}>
           <DialogContent className="sm:max-w-[425px]">
