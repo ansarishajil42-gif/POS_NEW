@@ -1,9 +1,9 @@
-import { r as createServerFn } from "./server-BlyqvE9x.mjs";
-import { r as getSessionServerFn } from "./auth-server-CSle8uu9.mjs";
+import { r as createServerFn } from "./server-DrMPL4gN.mjs";
+import { r as getSessionServerFn } from "./auth-server-Cm_FskrZ.mjs";
 import { a as eq, i as and, r as desc, s as gte, w as sql } from "../_libs/drizzle-orm+postgres.mjs";
-import { C as rolePermissions, D as stockAdjustments, E as staffUsers, L as createServerRpc, M as tills, O as stockLevels, T as shifts, g as priceOverrideRequests, i as branches, j as tenants, l as inventoryLedger, m as orders, n as auditLogs, t as db, y as products } from "./db-D6V11D2M.mjs";
-import * as argon2 from "argon2";
-//#region node_modules/.nitro/vite/services/ssr/assets/store-manager-server-C1ES8hxS.js
+import { C as rolePermissions, D as stockAdjustments, E as staffUsers, L as createServerRpc, M as tills, O as stockLevels, T as shifts, g as priceOverrideRequests, i as branches, j as tenants, l as inventoryLedger, m as orders, n as auditLogs, t as db, y as products } from "./db-DPJpDhh1.mjs";
+import { hash } from "@node-rs/argon2";
+//#region node_modules/.nitro/vite/services/ssr/assets/store-manager-server-y6_DIO0p.js
 async function getStoreManagerContext() {
 	const res = await getSessionServerFn();
 	if (!res.success || !res.session || res.session.role !== "Branch Manager") throw new Error("Unauthorized");
@@ -225,7 +225,7 @@ var resetCashierPinByManagerFn = createServerFn({ method: "POST" }).validator((d
 	if (!/^\d{4}$/.test(data.newPin)) throw new Error("PIN must be exactly 4 digits.");
 	const [cashier] = await db.select().from(staffUsers).where(and(eq(staffUsers.id, data.cashierId), eq(staffUsers.branchId, branchId), eq(staffUsers.tenantId, tenantId), eq(staffUsers.role, "cashier")));
 	if (!cashier) throw new Error("Cashier user not found in this branch.");
-	const hashed = await argon2.hash(data.newPin);
+	const hashed = await hash(data.newPin);
 	await db.update(staffUsers).set({ pinHash: hashed }).where(eq(staffUsers.id, data.cashierId));
 	return { success: true };
 });

@@ -1,9 +1,9 @@
-import { i as getCookie, r as createServerFn, s as setCookie$1 } from "./server-BlyqvE9x.mjs";
+import { i as getCookie, r as createServerFn, s as setCookie$1 } from "./server-DrMPL4gN.mjs";
 import { a as eq, i as and, r as desc } from "../_libs/drizzle-orm+postgres.mjs";
-import { E as staffUsers, I as vendors, L as createServerRpc, M as tills, T as shifts, d as loginAttempts, i as branches, j as tenants, t as db } from "./db-D6V11D2M.mjs";
+import { E as staffUsers, I as vendors, L as createServerRpc, M as tills, T as shifts, d as loginAttempts, i as branches, j as tenants, t as db } from "./db-DPJpDhh1.mjs";
 import { n as jwtVerify, t as SignJWT } from "../_libs/jose.mjs";
-import * as argon2 from "argon2";
-//#region node_modules/.nitro/vite/services/ssr/assets/auth-server-D483nBal.js
+import { hash, verify } from "@node-rs/argon2";
+//#region node_modules/.nitro/vite/services/ssr/assets/auth-server-DLqwkkAM.js
 var JWT_SECRET = new TextEncoder().encode(process.env["JWT_SECRET"] || "pos-secret-key-at-least-32-characters-long-key-string-for-jwt");
 var dbRoleToFrontendRole = {
 	super_admin: "Super Admin",
@@ -53,7 +53,7 @@ var loginServerFn = createServerFn().validator((d) => d).handler(loginServerFn_c
 			frontendRole = "Vendor";
 			passwordHashStr = vendorUser.passwordHash;
 		}
-		if (!await argon2.verify(passwordHashStr, password)) throw new Error("Invalid email or password");
+		if (!await verify(passwordHashStr, password)) throw new Error("Invalid email or password");
 		const token = await new SignJWT({
 			id,
 			email,
@@ -152,7 +152,7 @@ var pinLoginServerFn = createServerFn({ method: "POST" }).validator((d) => d).ha
 			await recordFailedAttempt(cashierId);
 			throw new Error("Invalid cashier, till, or PIN code.");
 		}
-		if (!(cashier.pinHash ? await argon2.verify(cashier.pinHash, pin) : false)) {
+		if (!(cashier.pinHash ? await verify(cashier.pinHash, pin) : false)) {
 			await recordFailedAttempt(cashierId);
 			throw new Error("Invalid cashier, till, or PIN code.");
 		}
@@ -224,11 +224,11 @@ var resetCashierPinSelfFn = createServerFn({ method: "POST" }).validator((d) => 
 			await recordFailedAttempt(email);
 			throw new Error("Invalid credentials.");
 		}
-		if (!await argon2.verify(cashier.passwordHash, currentPass)) {
+		if (!await verify(cashier.passwordHash, currentPass)) {
 			await recordFailedAttempt(email);
 			throw new Error("Invalid credentials.");
 		}
-		const hashed = await argon2.hash(newPin);
+		const hashed = await hash(newPin);
 		await db.update(staffUsers).set({ pinHash: hashed }).where(eq(staffUsers.id, cashier.id));
 		await resetFailedAttempts(email);
 		return { success: true };

@@ -4,15 +4,15 @@ import { s as require_jsx_runtime } from "../_libs/@radix-ui/react-collection+[.
 import { t as Button } from "./button-BlBeOJmP.mjs";
 import { y as useRouter } from "../_libs/@tanstack/react-router+[...].mjs";
 import { A as Plus, L as Minus, S as Search, T as Scale, a as Wallet, c as UserMinus, et as CreditCard, i as WifiOff, k as Printer, p as Trash2, r as Wifi, s as User, w as ScanBarcode, yt as Banknote } from "../_libs/lucide-react.mjs";
-import { a as TabsList, i as TabsContent, o as TabsTrigger, r as Tabs, t as DemoShell } from "./tabs-ClS19XRw.mjs";
+import { a as TabsList, i as TabsContent, o as TabsTrigger, r as Tabs, t as DemoShell } from "./tabs-DCPg-Tmq.mjs";
 import { t as Switch } from "./switch-BbovR4Kp.mjs";
 import { t as aed } from "./demo-data-C-13_S7Y.mjs";
 import { n as toast } from "../_libs/sonner.mjs";
-import { S as searchPosCustomersFn, _ as checkoutServerFn, b as openShiftServerFn, g as Route$5, v as closeShiftServerFn, x as recordCashDropServerFn, y as generateShiftReportFn } from "./router-DfZaL7a3.mjs";
+import { S as searchPosCustomersFn, _ as checkoutServerFn, b as openShiftServerFn, g as Route$5, v as closeShiftServerFn, x as recordCashDropServerFn, y as generateShiftReportFn } from "./router-Ba-c9wR4.mjs";
 import { a as DialogHeader, i as DialogFooter, n as DialogContent, o as DialogTitle, r as DialogDescription, s as DialogTrigger, t as Dialog } from "./dialog-BTVuOq31.mjs";
 import { t as Input } from "./input-Cexa0DG2.mjs";
 import { t as Label } from "./label-CZhEvsKN.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/pos-till-CPveG8wX.js
+//#region node_modules/.nitro/vite/services/ssr/assets/pos-till-BHtpjXYQ.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 function PosTill() {

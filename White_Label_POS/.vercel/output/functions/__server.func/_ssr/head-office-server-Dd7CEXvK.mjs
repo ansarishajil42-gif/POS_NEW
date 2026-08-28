@@ -1,11 +1,11 @@
-import { r as createServerFn } from "./server-BlyqvE9x.mjs";
-import { r as getSessionServerFn } from "./auth-server-CSle8uu9.mjs";
+import { r as createServerFn } from "./server-DrMPL4gN.mjs";
+import { r as getSessionServerFn } from "./auth-server-Cm_FskrZ.mjs";
 import { a as eq, c as ilike, d as lte, f as ne, i as and, l as inArray, p as or, r as desc, s as gte, w as sql } from "../_libs/drizzle-orm+postgres.mjs";
-import { A as tenantSettings, C as rolePermissions, E as staffUsers, I as vendors, L as createServerRpc, N as unitConversions, O as stockLevels, P as vendorInvoices, S as purchaseOrders, _ as productBarcodes, a as customerTransactions, b as promotions, c as grnItems, f as orderItems, g as priceOverrideRequests, i as branches, j as tenants, k as stockTransfers, m as orders, o as customers, r as batches, t as db, v as productVariants, x as purchaseOrderItems, y as products } from "./db-D6V11D2M.mjs";
-import { t as logAuditAction } from "./audit-logger-DOPj3gI1.mjs";
-import { t as createBranchInternal } from "./branch-server-helpers-C_5JggS1.mjs";
-import * as argon2 from "argon2";
-//#region node_modules/.nitro/vite/services/ssr/assets/head-office-server-DBEHQozQ.js
+import { A as tenantSettings, C as rolePermissions, E as staffUsers, I as vendors, L as createServerRpc, N as unitConversions, O as stockLevels, P as vendorInvoices, S as purchaseOrders, _ as productBarcodes, a as customerTransactions, b as promotions, c as grnItems, f as orderItems, g as priceOverrideRequests, i as branches, j as tenants, k as stockTransfers, m as orders, o as customers, r as batches, t as db, v as productVariants, x as purchaseOrderItems, y as products } from "./db-DPJpDhh1.mjs";
+import { t as logAuditAction } from "./audit-logger-C-IaIwVw.mjs";
+import { t as createBranchInternal } from "./branch-server-helpers-BZyPfTgf.mjs";
+import { hash } from "@node-rs/argon2";
+//#region node_modules/.nitro/vite/services/ssr/assets/head-office-server-Dd7CEXvK.js
 async function getHeadOfficeSession() {
 	const res = await getSessionServerFn();
 	if (!res.success || !res.session || res.session.role !== "Head Office Admin") throw new Error("Unauthorized");
@@ -824,10 +824,10 @@ var createStaffFn = createServerFn({ method: "POST" }).validator((d) => d).handl
 	};
 	if (data.role === "cashier") {
 		if (!data.pin) throw new Error("PIN is required for Cashier on creation");
-		payload.pinHash = await argon2.hash(data.pin);
+		payload.pinHash = await hash(data.pin);
 	} else {
 		if (!data.password) throw new Error("Password is required on creation");
-		payload.passwordHash = await argon2.hash(data.password);
+		payload.passwordHash = await hash(data.password);
 	}
 	await db.insert(staffUsers).values(payload);
 	return { success: true };
@@ -865,15 +865,15 @@ var updateStaffFn = createServerFn({ method: "POST" }).validator((d) => d).handl
 	};
 	if (data.role === "cashier" && existingUser.role !== "cashier") {
 		if (!data.pin) throw new Error("PIN is required when changing role to Cashier");
-		updates.pinHash = await argon2.hash(data.pin);
+		updates.pinHash = await hash(data.pin);
 		updates.passwordHash = null;
 	} else if (data.role !== "cashier" && existingUser.role === "cashier") {
 		if (!data.password) throw new Error("Password is required when changing role from Cashier");
-		updates.passwordHash = await argon2.hash(data.password);
+		updates.passwordHash = await hash(data.password);
 		updates.pinHash = null;
 	} else {
-		if (data.password && data.role !== "cashier") updates.passwordHash = await argon2.hash(data.password);
-		if (data.pin && data.role === "cashier") updates.pinHash = await argon2.hash(data.pin);
+		if (data.password && data.role !== "cashier") updates.passwordHash = await hash(data.password);
+		if (data.pin && data.role === "cashier") updates.pinHash = await hash(data.pin);
 	}
 	await db.update(staffUsers).set(updates).where(eq(staffUsers.id, data.id));
 	return { success: true };

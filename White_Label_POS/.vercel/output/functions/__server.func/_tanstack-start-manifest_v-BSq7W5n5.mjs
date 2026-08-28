@@ -1,7 +1,7 @@
-//#region node_modules/.nitro/vite/services/ssr/assets/_tanstack-start-manifest_v-CRb7CIjM.js
+//#region node_modules/.nitro/vite/services/ssr/assets/_tanstack-start-manifest_v-BSq7W5n5.js
 var tsrStartManifest = () => ({ routes: {
 	__root__: {
-		filePath: "C:/Users/THE MT/Downloads/PoS/PoS/White_Label_POS/src/routes/__root.tsx",
+		filePath: "D:/Sharjeel/New_PoS/White_Label_POS/src/routes/__root.tsx",
 		children: [
 			"/",
 			"/aggregators",
@@ -30,7 +30,7 @@ var tsrStartManifest = () => ({ routes: {
 		} }]
 	},
 	"/": {
-		filePath: "C:/Users/THE MT/Downloads/PoS/PoS/White_Label_POS/src/routes/index.tsx",
+		filePath: "D:/Sharjeel/New_PoS/White_Label_POS/src/routes/index.tsx",
 		children: void 0,
 		preloads: [
 			"/assets/routes-CgHvgX5_.js",
@@ -52,7 +52,7 @@ var tsrStartManifest = () => ({ routes: {
 		]
 	},
 	"/aggregators": {
-		filePath: "C:/Users/THE MT/Downloads/PoS/PoS/White_Label_POS/src/routes/aggregators.tsx",
+		filePath: "D:/Sharjeel/New_PoS/White_Label_POS/src/routes/aggregators.tsx",
 		children: void 0,
 		preloads: [
 			"/assets/aggregators-Ce3MYdGq.js",
@@ -66,7 +66,7 @@ var tsrStartManifest = () => ({ routes: {
 		]
 	},
 	"/head-office": {
-		filePath: "C:/Users/THE MT/Downloads/PoS/PoS/White_Label_POS/src/routes/head-office.tsx",
+		filePath: "D:/Sharjeel/New_PoS/White_Label_POS/src/routes/head-office.tsx",
 		children: void 0,
 		preloads: [
 			"/assets/head-office-C9ZFICRl.js",
@@ -101,7 +101,7 @@ var tsrStartManifest = () => ({ routes: {
 		]
 	},
 	"/inventory-manager": {
-		filePath: "C:/Users/THE MT/Downloads/PoS/PoS/White_Label_POS/src/routes/inventory-manager.tsx",
+		filePath: "D:/Sharjeel/New_PoS/White_Label_POS/src/routes/inventory-manager.tsx",
 		children: void 0,
 		preloads: [
 			"/assets/inventory-manager-14DmgUOx.js",
@@ -121,7 +121,7 @@ var tsrStartManifest = () => ({ routes: {
 		]
 	},
 	"/login": {
-		filePath: "C:/Users/THE MT/Downloads/PoS/PoS/White_Label_POS/src/routes/login.tsx",
+		filePath: "D:/Sharjeel/New_PoS/White_Label_POS/src/routes/login.tsx",
 		children: void 0,
 		preloads: [
 			"/assets/login-CDRWuTN6.js",
@@ -137,7 +137,7 @@ var tsrStartManifest = () => ({ routes: {
 		]
 	},
 	"/pos-till": {
-		filePath: "C:/Users/THE MT/Downloads/PoS/PoS/White_Label_POS/src/routes/pos-till.tsx",
+		filePath: "D:/Sharjeel/New_PoS/White_Label_POS/src/routes/pos-till.tsx",
 		children: void 0,
 		preloads: [
 			"/assets/pos-till-9N3CA4w_.js",
@@ -158,7 +158,7 @@ var tsrStartManifest = () => ({ routes: {
 		]
 	},
 	"/pricing": {
-		filePath: "C:/Users/THE MT/Downloads/PoS/PoS/White_Label_POS/src/routes/pricing.tsx",
+		filePath: "D:/Sharjeel/New_PoS/White_Label_POS/src/routes/pricing.tsx",
 		children: void 0,
 		preloads: [
 			"/assets/pricing-pwcqOqwd.js",
@@ -170,7 +170,7 @@ var tsrStartManifest = () => ({ routes: {
 		]
 	},
 	"/purchasing": {
-		filePath: "C:/Users/THE MT/Downloads/PoS/PoS/White_Label_POS/src/routes/purchasing.tsx",
+		filePath: "D:/Sharjeel/New_PoS/White_Label_POS/src/routes/purchasing.tsx",
 		children: void 0,
 		preloads: [
 			"/assets/purchasing-gP_IEMz6.js",
@@ -192,7 +192,7 @@ var tsrStartManifest = () => ({ routes: {
 		]
 	},
 	"/store-manager": {
-		filePath: "C:/Users/THE MT/Downloads/PoS/PoS/White_Label_POS/src/routes/store-manager.tsx",
+		filePath: "D:/Sharjeel/New_PoS/White_Label_POS/src/routes/store-manager.tsx",
 		children: void 0,
 		preloads: [
 			"/assets/store-manager-CFfUkVFE.js",
@@ -214,7 +214,7 @@ var tsrStartManifest = () => ({ routes: {
 		]
 	},
 	"/super-admin": {
-		filePath: "C:/Users/THE MT/Downloads/PoS/PoS/White_Label_POS/src/routes/super-admin.tsx",
+		filePath: "D:/Sharjeel/New_PoS/White_Label_POS/src/routes/super-admin.tsx",
 		children: void 0,
 		preloads: [
 			"/assets/super-admin-DU38jHZg.js",
@@ -239,7 +239,7 @@ var tsrStartManifest = () => ({ routes: {
 		]
 	},
 	"/vendor-portal": {
-		filePath: "C:/Users/THE MT/Downloads/PoS/PoS/White_Label_POS/src/routes/vendor-portal.tsx",
+		filePath: "D:/Sharjeel/New_PoS/White_Label_POS/src/routes/vendor-portal.tsx",
 		children: void 0,
 		preloads: [
 			"/assets/vendor-portal-CLvCZndI.js",

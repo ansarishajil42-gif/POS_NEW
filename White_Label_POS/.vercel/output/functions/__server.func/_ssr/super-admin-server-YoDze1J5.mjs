@@ -1,11 +1,11 @@
-import { r as createServerFn } from "./server-BlyqvE9x.mjs";
-import { r as getSessionServerFn } from "./auth-server-CSle8uu9.mjs";
+import { r as createServerFn } from "./server-DrMPL4gN.mjs";
+import { r as getSessionServerFn } from "./auth-server-Cm_FskrZ.mjs";
 import { a as eq, d as lte, i as and, r as desc, s as gte, w as sql } from "../_libs/drizzle-orm+postgres.mjs";
-import { A as tenantSettings, E as staffUsers, L as createServerRpc, h as platformSettings, i as branches, j as tenants, m as orders, n as auditLogs, t as db } from "./db-D6V11D2M.mjs";
-import { t as logAuditAction } from "./audit-logger-DOPj3gI1.mjs";
-import { t as createBranchInternal } from "./branch-server-helpers-C_5JggS1.mjs";
-import * as argon2 from "argon2";
-//#region node_modules/.nitro/vite/services/ssr/assets/super-admin-server-BQoNjLB3.js
+import { A as tenantSettings, E as staffUsers, L as createServerRpc, h as platformSettings, i as branches, j as tenants, m as orders, n as auditLogs, t as db } from "./db-DPJpDhh1.mjs";
+import { t as logAuditAction } from "./audit-logger-C-IaIwVw.mjs";
+import { t as createBranchInternal } from "./branch-server-helpers-BZyPfTgf.mjs";
+import { hash } from "@node-rs/argon2";
+//#region node_modules/.nitro/vite/services/ssr/assets/super-admin-server-YoDze1J5.js
 function redactSecrets(obj) {
 	if (obj === null || obj === void 0) return obj;
 	if (typeof obj !== "object") return obj;
@@ -86,7 +86,7 @@ var createTenantServerFn = createServerFn({ method: "POST" }).validator((d) => d
 					tenantId: newTenant.id,
 					taxRegistrationNumber: data.trn
 				});
-				const passwordHash = await argon2.hash(data.adminPassword);
+				const passwordHash = await hash(data.adminPassword);
 				await tx.insert(staffUsers).values({
 					tenantId: newTenant.id,
 					branchId: null,
@@ -188,7 +188,7 @@ var updateTenantLimitsServerFn = createServerFn({ method: "POST" }).validator((d
 			if (!current) throw new Error("Tenant not found");
 			const activeBranches = await tx.select({ count: sql`count(*)::int` }).from(branches).where(eq(branches.tenantId, data.id));
 			if (activeBranches[0].count > data.outletLimit) throw new Error(`Outlet limit cannot be less than current usage (${activeBranches[0].count})`);
-			const { tills } = await import("./db-D6V11D2M.mjs").then((n) => n.w);
+			const { tills } = await import("./db-DPJpDhh1.mjs").then((n) => n.w);
 			const activeTills = await tx.select({ count: sql`count(*)::int` }).from(tills).where(eq(tills.tenantId, data.id));
 			if (activeTills[0].count > data.tillLimit) throw new Error(`Till limit cannot be less than current usage (${activeTills[0].count})`);
 			const uaeDateStr = (/* @__PURE__ */ new Date()).toLocaleString("en-US", { timeZone: "Asia/Dubai" });
@@ -261,7 +261,7 @@ var createExistingTenantAdminServerFn_createServerFn_handler = createServerRpc({
 var createExistingTenantAdminServerFn = createServerFn({ method: "POST" }).validator((d) => d).handler(createExistingTenantAdminServerFn_createServerFn_handler, async ({ data }) => {
 	await ensureSuperAdmin();
 	try {
-		const passwordHash = await argon2.hash(data.password);
+		const passwordHash = await hash(data.password);
 		await db.transaction(async (tx) => {
 			const [newUser] = await tx.insert(staffUsers).values({
 				tenantId: data.tenantId,
@@ -315,7 +315,7 @@ var updateTenantAdminServerFn = createServerFn({ method: "POST" }).validator((d)
 				phone: data.phone,
 				address: data.address
 			};
-			if (data.password) updates.passwordHash = await argon2.hash(data.password);
+			if (data.password) updates.passwordHash = await hash(data.password);
 			await tx.update(staffUsers).set(updates).where(eq(staffUsers.id, data.id));
 			await logAuditAction({
 				action: "Update Tenant Admin",
