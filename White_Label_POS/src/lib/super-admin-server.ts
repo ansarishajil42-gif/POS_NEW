@@ -3,7 +3,7 @@ import { db } from "@/server/db";
 import { tenants, branches, tenantSettings, orders, platformSettings, staffUsers, auditLogs } from "@/server/db/schema";
 import { eq, and, sql, desc, gte, lte } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
-import * as argon2 from "argon2";
+import { hash, verify } from "@node-rs/argon2";
 import { logAuditAction } from "@/lib/audit-logger";
 import { z } from "zod";
 import { createBranchInternal } from "@/lib/branch-server-helpers";
@@ -96,7 +96,7 @@ export const createTenantServerFn = createServerFn({ method: "POST" })
                 });
                 
                 // Hash password
-                const passwordHash = await argon2.hash(data.adminPassword);
+                const passwordHash = await hash(data.adminPassword);
 
                 // Insert Head Office Admin (branchId: null)
                 await tx.insert(staffUsers).values({
@@ -270,7 +270,7 @@ export const createExistingTenantAdminServerFn = createServerFn({ method: "POST"
         await ensureSuperAdmin();
         
         try {
-            const passwordHash = await argon2.hash(data.password);
+            const passwordHash = await hash(data.password);
 
             await db.transaction(async (tx) => {
                 const [newUser] = await tx.insert(staffUsers).values({
@@ -324,7 +324,7 @@ export const updateTenantAdminServerFn = createServerFn({ method: "POST" })
                     address: data.address
                 };
                 if (data.password) {
-                    updates.passwordHash = await argon2.hash(data.password);
+                    updates.passwordHash = await hash(data.password);
                 }
 
                 await tx.update(staffUsers).set(updates).where(eq(staffUsers.id, data.id));

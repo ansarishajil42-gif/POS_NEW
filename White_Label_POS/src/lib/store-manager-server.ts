@@ -1,7 +1,7 @@
 
 import { createServerFn } from "@tanstack/react-start";
 import { getSessionServerFn } from "./auth-server";
-import * as argon2 from "argon2";
+import { hash, verify } from "@node-rs/argon2";
 import { db } from "../server/db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import {
@@ -489,7 +489,7 @@ export const resetCashierPinByManagerFn = createServerFn({ method: "POST" })
       throw new Error("Cashier user not found in this branch.");
     }
 
-    const hashed = await argon2.hash(data.newPin);
+    const hashed = await hash(data.newPin);
     await db.update(staffUsers).set({ pinHash: hashed }).where(eq(staffUsers.id, data.cashierId));
 
     return { success: true };

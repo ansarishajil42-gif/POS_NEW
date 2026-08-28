@@ -29,7 +29,7 @@ import {
 import { eq, and, sql, desc, inArray, ne, or, ilike, lte, gte } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
 import { logAuditAction } from "@/lib/audit-logger";
-import * as argon2 from "argon2";
+import { hash, verify } from "@node-rs/argon2";
 import { createBranchInternal } from "@/lib/branch-server-helpers";
 import { z } from "zod";
 
@@ -1302,10 +1302,10 @@ export const createStaffFn = createServerFn({ method: "POST" })
 
     if (data.role === "cashier") {
       if (!data.pin) throw new Error("PIN is required for Cashier on creation");
-      payload.pinHash = await argon2.hash(data.pin);
+      payload.pinHash = await hash(data.pin);
     } else {
       if (!data.password) throw new Error("Password is required on creation");
-      payload.passwordHash = await argon2.hash(data.password);
+      payload.passwordHash = await hash(data.password);
     }
 
     await db.insert(staffUsers).values(payload);
@@ -1371,17 +1371,17 @@ export const updateStaffFn = createServerFn({ method: "POST" })
     // Handle role transitions and credential preservation
     if (data.role === "cashier" && existingUser.role !== "cashier") {
       if (!data.pin) throw new Error("PIN is required when changing role to Cashier");
-      updates.pinHash = await argon2.hash(data.pin);
+      updates.pinHash = await hash(data.pin);
       updates.passwordHash = null;
     } else if (data.role !== "cashier" && existingUser.role === "cashier") {
       if (!data.password) throw new Error("Password is required when changing role from Cashier");
-      updates.passwordHash = await argon2.hash(data.password);
+      updates.passwordHash = await hash(data.password);
       updates.pinHash = null;
     } else {
       // Same role category, just update if provided
       if (data.password && data.role !== "cashier")
-        updates.passwordHash = await argon2.hash(data.password);
-      if (data.pin && data.role === "cashier") updates.pinHash = await argon2.hash(data.pin);
+        updates.passwordHash = await hash(data.password);
+      if (data.pin && data.role === "cashier") updates.pinHash = await hash(data.pin);
     }
 
     await db.update(staffUsers).set(updates).where(eq(staffUsers.id, data.id));
