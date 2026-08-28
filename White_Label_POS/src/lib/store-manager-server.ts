@@ -1,8 +1,8 @@
 
 import { createServerFn } from "@tanstack/react-start";
 import { getSessionServerFn } from "./auth-server";
-import { hash, verify } from "@node-rs/argon2";
 import { db } from "../server/db";
+import bcrypt from "bcryptjs";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import {
   branches,
@@ -489,7 +489,7 @@ export const resetCashierPinByManagerFn = createServerFn({ method: "POST" })
       throw new Error("Cashier user not found in this branch.");
     }
 
-    const hashed = await hash(data.newPin);
+    const hashed = await bcrypt.hash(data.newPin, 10);
     await db.update(staffUsers).set({ pinHash: hashed }).where(eq(staffUsers.id, data.cashierId));
 
     return { success: true };

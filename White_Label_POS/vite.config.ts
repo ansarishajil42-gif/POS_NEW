@@ -12,7 +12,7 @@ export default defineConfig({
         externals: {
             // Force Nitro/Vercel to treat these as external Node modules 
             // and include them in the final deployment bundle
-            external: ["@node-rs/argon2"]
+            external: []
 
         }
     },
