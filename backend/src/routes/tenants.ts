@@ -47,7 +47,7 @@ router.get("/stats/dashboard", async (req, res) => {
     const activeTenants = await db.select({ count: sql<number>`count(*)::int` }).from(tenants).where(eq(tenants.status, "Active"));
     const totalOutlets = await db.select({ count: sql<number>`count(*)::int` }).from(branches);
     const monthlyOrders = await db.select({ count: sql<number>`count(*)::int` }).from(orders).where(sql`date_trunc('month', ${orders.createdAt}) = date_trunc('month', current_date)`);
-    const activeTills = await db.select({ count: sql<number>`count(*)::int` }).from(shifts).where(eq(shifts.status, "Open"));
+    const activeTills = await db.select({ count: sql<number>`coalesce(sum(${branches.tillCount}), 0)::int` }).from(branches);
 
     res.json({
       activeTenants: activeTenants[0].count,
