@@ -108,6 +108,47 @@ router.patch("/platform-settings", async (req, res) => {
   }
 });
 
+// Get platform analytics (matches Web exactly)
+router.get("/analytics/platform", async (req, res) => {
+  try {
+    const allOrders = await db.select({
+      total: orders.total,
+      createdAt: orders.createdAt
+    }).from(orders);
+
+    let totalGmv = 0;
+    const salesByDate: Record<string, number> = {};
+
+    allOrders.forEach(o => {
+      totalGmv += Number(o.total);
+      const dateStr = new Date(o.createdAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+      salesByDate[dateStr] = (salesByDate[dateStr] || 0) + Number(o.total);
+    });
+
+    const platformSeries = Object.keys(salesByDate).length > 0
+      ? Object.entries(salesByDate).map(([date, sales]) => ({
+          t: date,
+          sales
+        }))
+      : [{ t: "Today", sales: 0 }];
+
+    // Raw query for audit logs since it's not exported in schema yet
+    const auditRes = await db.execute(sql`SELECT created_at as "createdAt", action, entity_type as "entityType" FROM audit_logs ORDER BY created_at DESC LIMIT 10`);
+    const systemLogs = auditRes.map((a: any) => {
+      return [new Date(a.createdAt).toLocaleTimeString(), "INFO", `${a.action}: ${a.entityType}`];
+    });
+
+    res.json({
+      totalGmv,
+      platformSeries,
+      systemLogs
+    });
+  } catch (error) {
+    console.error("Analytics fetch error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Get single tenant by ID
 router.get("/:id", async (req, res) => {
   const { id } = req.params;
