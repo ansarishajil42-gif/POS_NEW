@@ -112,7 +112,7 @@ interface RequestOptions extends RequestInit {
 }
 
 const fetchWithTimeout = async (url: string, options: RequestOptions = {}): Promise<Response> => {
-  const { timeout = 10000, ...fetchOptions } = options;
+  const { timeout = 30000, ...fetchOptions } = options;
 
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);

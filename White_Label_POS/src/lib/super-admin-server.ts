@@ -52,7 +52,7 @@ export const getTenantsServerFn = createServerFn({ method: "GET" })
             status: tenants.status,
             createdAt: tenants.createdAt,
             outlets: sql<number>`count(distinct ${branches.id})::int`,
-            tills: sql<number>`coalesce(sum(distinct ${branches.tillCount}), 0)::int`,
+            tills: sql<number>`coalesce((SELECT sum(till_count) FROM branches WHERE tenant_id = tenants.id), 0)::int`,
             monthlyOrders: sql<number>`count(distinct ${orders.id})::int`,
         })
         .from(tenants)

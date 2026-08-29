@@ -6,6 +6,7 @@ import { Badge, statusVariant } from '../ui/Badge';
 import { Button, Sheet, Field } from '../ui/Primitives';
 import { useAuth } from '../../lib/auth';
 import { useVendor } from '../../lib/VendorContext';
+import { formatCurrency } from '../../lib/utils';
 import { ShoppingCart, FileText, DollarSign, CheckCircle2, Download, AlertCircle } from 'lucide-react-native';
 
 export function VendorHome() {
@@ -39,10 +40,10 @@ export function VendorHome() {
         
         <View style={styles.statsGrid}>
           <View style={styles.halfCol}>
-            <StatCard label="Paid" value={`$${totalPaid.toLocaleString()}`} icon={<CheckCircle2 size={16} color="#39ff14" />} accent="brand" />
+            <StatCard label="Paid" value={formatCurrency(totalPaid)} icon={<CheckCircle2 size={16} color="#39ff14" />} accent="brand" />
           </View>
           <View style={styles.halfCol}>
-            <StatCard label="Outstanding" value={`$${totalPending.toLocaleString()}`} icon={<DollarSign size={16} color="#d97706" />} accent="amber" />
+            <StatCard label="Outstanding" value={formatCurrency(totalPending)} icon={<DollarSign size={16} color="#d97706" />} accent="amber" />
           </View>
           <View style={styles.halfCol}>
             <StatCard label="New Orders" value={String(newOrdersCount)} icon={<AlertCircle size={16} color="#0284c7" />} accent="sky" />
@@ -97,7 +98,7 @@ export function VendorOrders() {
                   <Text style={styles.productMeta}>{o.from} · {o.date}</Text>
                 </View>
                 <View style={styles.productPriceCol}>
-                  <Text style={styles.productPrice}>${o.total.toLocaleString()}</Text>
+                  <Text style={styles.productPrice}>{formatCurrency(o.total)}</Text>
                   <Badge variant={statusVariant(o.status)}>{o.status}</Badge>
                 </View>
               </View>
@@ -162,7 +163,7 @@ export function VendorInvoices() {
                   <Text style={styles.productMeta}>{i.to} · {i.date}</Text>
                 </View>
                 <View style={styles.productPriceCol}>
-                  <Text style={styles.productPrice}>${i.total.toLocaleString()}</Text>
+                  <Text style={styles.productPrice}>{formatCurrency(i.total)}</Text>
                   <Badge variant={statusVariant(i.status)}>{i.status}</Badge>
                 </View>
               </View>
@@ -208,7 +209,7 @@ export function VendorInvoices() {
                     style={[styles.pickerItem, poRef === po.number && styles.pickerItemActive]}
                   >
                     <Text style={[styles.pickerItemText, poRef === po.number && styles.pickerItemTextActive]}>
-                      {po.number} (${po.total.toLocaleString()})
+                      {po.number} ({formatCurrency(po.total)})
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -221,7 +222,7 @@ export function VendorInvoices() {
 
           <Field label="Invoice Amount">
             <View style={styles.methodInputWrapper}>
-              <Text style={styles.currencyPrefix}>$</Text>
+              <Text style={styles.currencyPrefix}>AED</Text>
               <TextInput
                 value={amount}
                 onChangeText={setAmount}

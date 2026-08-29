@@ -874,12 +874,15 @@ export function HeadOfficePurchasing() {
               {poItems.map((item, index) => {
                 const prod = products.find(p => p.id === item.productId);
                 return (
-                  <View key={index} style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                  <View key={index} style={{ flexDirection: 'row', gap: 8, marginBottom: 8, alignItems: 'center' }}>
                     <View style={{ flex: 2 }}>
                       <Text style={{ fontSize: 12, color: '#64748b' }}>{prod?.name}</Text>
                     </View>
                     <TextInput style={[styles.input, { flex: 1, paddingVertical: 4 }]} value={item.qty} onChangeText={t => { const newItems = [...poItems]; newItems[index].qty = t; setPoItems(newItems); }} placeholder="Qty" keyboardType="numeric" />
                     <TextInput style={[styles.input, { flex: 1, paddingVertical: 4 }]} value={item.unitPrice} onChangeText={t => { const newItems = [...poItems]; newItems[index].unitPrice = t; setPoItems(newItems); }} placeholder="Price" keyboardType="numeric" />
+                    <TouchableOpacity onPress={() => { const newItems = [...poItems]; newItems.splice(index, 1); setPoItems(newItems); }} style={{ padding: 4 }}>
+                      <Trash2 size={16} color="#ef4444" />
+                    </TouchableOpacity>
                   </View>
                 );
               })}

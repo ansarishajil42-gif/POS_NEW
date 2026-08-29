@@ -65,7 +65,7 @@ const roleTabs: Record<string, Tab[]> = {
     { key: 'home', label: 'Home', icon: 'home' },
     { key: 'tenants', label: 'Tenants', icon: 'building' },
     { key: 'analytics', label: 'Analytics', icon: 'chart' },
-    { key: 'settings', label: 'Settings', icon: 'settings' },
+    { key: 'settings', label: 'Tax & Currency', icon: 'wallet' },
   ],
   'head-office': [
     { key: 'home', label: 'Home', icon: 'home' },

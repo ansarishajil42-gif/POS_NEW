@@ -84,26 +84,22 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
   const submit = async () => {
     if (!selected) return;
     
-    if (selected === 'super-admin') {
-      setIsLoading(true);
-      try {
-        const { apiClient, storage } = require('../lib/apiClient');
-        const res = await apiClient.post('/auth/login', { email, password });
-        if (res.token) {
-          await storage.setToken(res.token);
-        }
-        if (res.user) {
-          await storage.setUser(res.user);
-        }
-        signIn(selected, res.user);
-      } catch (err: any) {
-        console.error('Login error:', err);
-        alert(err.message || 'Login failed');
-      } finally {
-        setIsLoading(false);
+    setIsLoading(true);
+    try {
+      const { apiClient, storage } = require('../lib/apiClient');
+      const res = await apiClient.post('/auth/login', { email, password });
+      if (res.token) {
+        await storage.setToken(res.token);
       }
-    } else {
-      signIn(selected);
+      if (res.user) {
+        await storage.setUser(res.user);
+      }
+      signIn(selected, res.user);
+    } catch (err: any) {
+      console.error('Login error:', err);
+      alert(err.message || 'Login failed');
+    } finally {
+      setIsLoading(false);
     }
   };
 

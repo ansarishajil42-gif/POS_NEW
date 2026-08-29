@@ -6,6 +6,7 @@ import { Badge, statusVariant } from '../ui/Badge';
 import { Button, Sheet, Field } from '../ui/Primitives';
 import { useAuth } from '../../lib/auth';
 import { useInventoryManager, FEFOBatch, StockTransfer, InventoryProduct } from '../../lib/InventoryManagerContext';
+import { formatCurrency } from '../../lib/utils';
 import {
   Boxes,
   AlertTriangle,
@@ -164,7 +165,7 @@ export function InventoryBatches() {
       return;
     }
     updateClearancePrice(selectedBatch.id, price);
-    Alert.alert('Clearance Price Set', `Override price set to $${price.toFixed(2)} for ${selectedBatch.product}.`);
+    Alert.alert('Clearance Price Set', `Override price set to ${formatCurrency(price)} for ${selectedBatch.product}.`);
     setClearanceVal('');
     setSelectedBatch(null);
     setClearanceOpen(false);

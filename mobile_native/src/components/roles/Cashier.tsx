@@ -4,6 +4,7 @@ import { AppHeader, ScreenBody } from '../Shell';
 import { Card, StatCard } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { Button, Sheet, Field } from '../ui/Primitives';
+import { formatCurrency } from '../../lib/utils';
 import { tillQuickProducts } from '../../lib/mockData';
 import { useAuth } from '../../lib/auth';
 import { useCashier } from '../../lib/CashierContext';
@@ -173,10 +174,10 @@ function SplitPayment({ open, onClose, total }: { open: boolean; onClose: () => 
         <View style={styles.sheetFooter}>
           <View style={styles.remainingRow}>
             <Text style={styles.remainingLabel}>Remaining balance</Text>
-            <Text style={[styles.remainingVal, remaining > 0 ? styles.colorWarn : styles.colorSuccess]}>${remaining.toFixed(2)}</Text>
+            <Text style={[styles.remainingVal, remaining > 0 ? styles.colorWarn : styles.colorSuccess]}>{formatCurrency(remaining)}</Text>
           </View>
           <Button full disabled={remaining > 0} onClick={handleSettle}>
-            {remaining > 0 ? `$${remaining.toFixed(2)} remaining` : 'Complete & Settle'}
+            {remaining > 0 ? `${formatCurrency(remaining)} remaining` : 'Complete & Settle'}
           </Button>
         </View>
       }
@@ -239,7 +240,7 @@ export function CashierShift() {
     recordCashDrop(amt);
     setLocalDrop('');
     setOpenDropSheet(false);
-    Alert.alert('Drop Recorded', `Cash drop of $${amt.toFixed(2)} successfully logged.`);
+    Alert.alert('Drop Recorded', `Cash drop of ${formatCurrency(amt)} successfully logged.`);
   };
 
   const handleAdjustFloat = () => {
@@ -251,13 +252,13 @@ export function CashierShift() {
     adjustFloat(amt);
     setLocalFloat('');
     setOpenFloatSheet(false);
-    Alert.alert('Float Adjusted', `Opening float adjusted to $${amt.toFixed(2)}.`);
+    Alert.alert('Float Adjusted', `Opening float adjusted to ${formatCurrency(amt)}.`);
   };
 
   const handlePrintX = () => {
     Alert.alert(
       'X Report (Mid-Shift)',
-      `Snapshot at: ${new Date().toLocaleTimeString()}\n\nExpected Cash: $${expectedDrawer.toFixed(2)}\nCash Sales: $${cashSales.toFixed(2)}\nCard Sales: $${cardSales.toFixed(2)}\n\nSnapshot dispatched to thermal POS printer.`
+      `Snapshot at: ${new Date().toLocaleTimeString()}\n\nExpected Cash: ${formatCurrency(expectedDrawer)}\nCash Sales: ${formatCurrency(cashSales)}\nCard Sales: ${formatCurrency(cardSales)}\n\nSnapshot dispatched to thermal POS printer.`
     );
   };
 
@@ -294,11 +295,11 @@ export function CashierShift() {
 
         <View style={styles.shiftListDetails}>
           {[
-            ['Opening float', `$${openingFloat.toFixed(2)}`],
-            ['Cash sales', `$${cashSales.toFixed(2)}`],
-            ['Card sales', `$${cardSales.toFixed(2)}`],
-            ['Cash drops', `$${cashDrops.toFixed(2)}`],
-            ['Expected drawer', `$${expectedDrawer.toFixed(2)}`],
+            ['Opening float', formatCurrency(openingFloat)],
+            ['Cash sales', formatCurrency(cashSales)],
+            ['Card sales', formatCurrency(cardSales)],
+            ['Cash drops', formatCurrency(cashDrops)],
+            ['Expected drawer', formatCurrency(expectedDrawer)],
           ].map(([k, v]) => (
             <View key={k} style={styles.shiftDetailRow}>
               <Text style={styles.shiftDetailLabel}>{k}</Text>
@@ -423,7 +424,7 @@ export function CashierHistory() {
         <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
           <View style={[styles.listContainer, { marginBottom: 24 }]}>
             {filtered.map((t) => (
-              <Card key={t.id} onClick={() => Alert.alert('Receipt Details', `Receipt: ${t.receipt}\nTotal: $${t.total.toFixed(2)}\nItems: ${t.items}\nMethod: ${t.method}`)}>
+              <Card key={t.id} onClick={() => Alert.alert('Receipt Details', `Receipt: ${t.receipt}\nTotal: ${formatCurrency(t.total)}\nItems: ${t.items}\nMethod: ${t.method}`)}>
                 <View style={styles.cardHeaderRow}>
                   <View>
                     <Text style={styles.productName}>{t.receipt}</Text>

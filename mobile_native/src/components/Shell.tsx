@@ -264,7 +264,7 @@ const styles = StyleSheet.create({
   screenBodyContent: {
     paddingHorizontal: 16,
     paddingTop: 16,
-    paddingBottom: 32,
+    paddingBottom: 100,
   },
   safeContainer: {
     flex: 1,

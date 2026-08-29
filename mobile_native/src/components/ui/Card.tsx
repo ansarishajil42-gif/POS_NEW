@@ -62,7 +62,7 @@ export function StatCard({
         )}
       </View>
       <View style={styles.valueRow}>
-        <Text style={styles.statValue}>{value}</Text>
+        <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
         {trend && (
           <Text style={[styles.trend, trend.dir === 'up' ? styles.trendUp : styles.trendDown]}>
             {trend.dir === 'up' ? '▲' : '▼'} {trend.value}

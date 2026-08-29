@@ -4,10 +4,13 @@ import { AppHeader, ScreenBody, ScreenHeader } from '../Shell';
 import { Card, StatCard } from '../ui/Card';
 import { Badge, statusVariant } from '../ui/Badge';
 import { Button, Sheet } from '../ui/Primitives';
+import { Toast, type ToastType } from '../ui/Toast';
 import { useAuth } from '../../lib/auth';
 import { useSuperAdmin, Tenant, Branch } from '../../lib/SuperAdminContext';
-import { networkSales, apiTraffic, systemLogs } from '../../lib/mockData';
-import Svg, { Path, Rect, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
+import { apiClient as api } from '../../lib/apiClient';
+import { formatCurrency } from '../../lib/utils';
+import { apiTraffic } from '../../lib/mockData';
+import Svg, { Path, Rect, Circle } from 'react-native-svg';
 import {
   Building2,
   Trello,
@@ -20,16 +23,37 @@ import {
   Coins,
   Trash2,
   ArrowUpCircle,
-  Ban
+  Ban,
+  Store,
+  ShoppingCart
 } from 'lucide-react-native';
+
+// Rotating avatar accent colors for the tenant showcase cards
+const TENANT_AVATAR_COLORS = ['#39ff14', '#0284c7', '#f97316', '#8b5cf6'];
+
+// Per-plan badge styling for the tenant showcase cards
+const TENANT_PLAN_BADGE_STYLES: Record<string, { bg: string; text: string }> = {
+  Starter: { bg: '#f1f5f9', text: '#64748b' },
+  Growth: { bg: 'rgba(2, 132, 199, 0.12)', text: '#0284c7' },
+  Enterprise: { bg: 'rgba(234, 179, 8, 0.16)', text: '#a16207' },
+};
 
 export function SuperAdminHome() {
   const { branch } = useAuth();
-  const { tenants } = useSuperAdmin();
+  const { platformStats, tenants, branches } = useSuperAdmin();
+  const [currentPage, setCurrentPage] = useState(0);
+  const itemsPerPage = 4;
 
-  const activeTenants = tenants.filter((t) => t.status === 'active' || t.status === 'trial').length;
-  const totalTills = tenants.reduce((a, t) => a + (t.tills || 0), 0);
-  const mrr = tenants.reduce((a, t) => a + (t.mrr || 0), 0);
+  const activeTenantsCount = platformStats?.activeTenants ?? 0;
+  const outletsCount = platformStats?.outlets ?? 0;
+  const monthlyOrders = platformStats?.monthlyOrders ?? 0;
+  const activeTillsCount = platformStats?.activeTills ?? 0;
+
+  const activeTenantsList = tenants.filter((t) => t.status === 'active' || t.status === 'Active');
+  const totalPages = Math.ceil(activeTenantsList.length / itemsPerPage);
+  const currentTenants = activeTenantsList.slice(currentPage * itemsPerPage, (currentPage + 1) * itemsPerPage);
+
+  console.log("SuperAdminHome rendering with platformStats:", platformStats);
 
   return (
     <View style={styles.flex1}>
@@ -37,90 +61,106 @@ export function SuperAdminHome() {
       <ScreenBody>
         <View style={styles.statsGrid}>
           <View style={styles.halfCol}>
-            <StatCard label="Total Tenants" value={String(tenants.length)} sub={`${activeTenants} active`} icon={<Building2 size={16} color="#39ff14" />} accent="brand" />
+            <StatCard label="Active Tenants" value={String(activeTenantsCount)} icon={<Building2 size={16} color="#39ff14" />} accent="brand" />
           </View>
           <View style={styles.halfCol}>
-            <StatCard label="Active Tills" value={String(totalTills)} sub="network-wide" icon={<Trello size={16} color="#0284c7" />} accent="sky" trend={{ dir: 'up', value: '4.2%' }} />
+            <StatCard label="Outlets on Platform" value={String(outletsCount)} icon={<Store size={16} color="#0284c7" />} accent="sky" />
           </View>
           <View style={styles.halfCol}>
-            <StatCard label="MRR" value={`$${(mrr / 1000).toFixed(1)}k`} sub="monthly recurring" icon={<DollarSign size={16} color="#39ff14" />} accent="brand" trend={{ dir: 'up', value: '8.1%' }} />
+            <StatCard label="Monthly Orders" value={String(monthlyOrders)} icon={<ShoppingCart size={16} color="#39ff14" />} accent="brand" />
           </View>
           <View style={styles.halfCol}>
-            <StatCard label="System Status" value="Healthy" sub="all regions ok" icon={<Activity size={16} color="#39ff14" />} accent="brand" />
+            <StatCard label="Active Tills" value={String(activeTillsCount)} icon={<Trello size={16} color="#0284c7" />} accent="sky" />
           </View>
         </View>
 
-        {/* Network Sales Area Chart */}
-        <Card style={styles.chartCard}>
-          <View style={styles.chartHeader}>
-            <Text style={styles.chartCardTitle}>Network Sales</Text>
-            <Badge variant="success" dot>Live</Badge>
+        {/* Active Tenants Showcase */}
+        <View style={styles.showcaseSection}>
+          <View style={styles.showcaseHeader}>
+            <Text style={styles.showcaseTitle}>Active tenants</Text>
+            <Text style={styles.showcaseSubtitle}>
+              {activeTenantsList.length} {activeTenantsList.length === 1 ? 'business' : 'businesses'} growing with you
+            </Text>
           </View>
-          <View style={styles.svgWrapper}>
-            <Svg width="100%" height={120} viewBox="0 0 340 120" preserveAspectRatio="none">
-              <Defs>
-                <LinearGradient id="gsa1" x1="0" y1="0" x2="0" y2="1">
-                  <Stop offset="0" stopColor="#39ff14" stopOpacity={0.25} />
-                  <Stop offset="1" stopColor="#39ff14" stopOpacity={0} />
-                </LinearGradient>
-              </Defs>
-              {/* Shaded Area */}
-              <Path
-                d="M0,100 Q50,70 100,80 T200,40 T300,20 T340,50 L340,120 L0,120 Z"
-                fill="url(#gsa1)"
-              />
-              {/* Spline line */}
-              <Path
-                d="M0,100 Q50,70 100,80 T200,40 T300,20 T340,50"
-                fill="none"
-                stroke="#39ff14"
-                strokeWidth="2.5"
-              />
-            </Svg>
-          </View>
-          <View style={styles.chartLabels}>
-            <Text style={styles.chartLabelText}>Mon</Text>
-            <Text style={styles.chartLabelText}>Wed</Text>
-            <Text style={styles.chartLabelText}>Fri</Text>
-            <Text style={styles.chartLabelText}>Sun</Text>
-          </View>
-        </Card>
 
-        {/* Plan Mix and Regions Grid */}
-        <View style={styles.statsGrid}>
-          <View style={styles.halfCol}>
-            <Card style={styles.flex1}>
-              <Text style={styles.subCardTitle}>Plan Mix</Text>
-              <View style={styles.planMixList}>
-                {['Enterprise', 'Growth', 'Starter'].map((p) => {
-                  const count = tenants.filter((t) => t.plan === p).length;
-                  const pct = tenants.length > 0 ? (count / tenants.length) * 100 : 0;
+          {activeTenantsList.length === 0 ? (
+            <View style={styles.showcaseEmptyState}>
+              <View style={styles.showcaseEmptyIconWrap}>
+                <Store size={22} color="#94a3b8" />
+              </View>
+              <Text style={styles.showcaseEmptyTitle}>No active tenants yet</Text>
+              <Text style={styles.showcaseEmptyText}>Create your first one to see it showcased here.</Text>
+            </View>
+          ) : (
+            <View>
+              <View style={styles.showcaseGrid}>
+                {currentTenants.map((t, idx) => {
+                  const initial = (t.name?.trim()?.charAt(0) || '?').toUpperCase();
+                  // Consistent colors based on tenant ID to avoid jumping on pagination
+                  const colorIdx = t.id ? t.id.charCodeAt(0) % TENANT_AVATAR_COLORS.length : idx % TENANT_AVATAR_COLORS.length;
+                  const avatarColor = TENANT_AVATAR_COLORS[colorIdx];
+                  const planStyle = TENANT_PLAN_BADGE_STYLES[t.plan] ?? TENANT_PLAN_BADGE_STYLES.Starter;
+                  const branchCount = branches.filter((b) => b.tenantId === t.id).length;
+                  const isPremiumPlan = t.plan === 'Enterprise';
+
                   return (
-                    <View key={p} style={styles.planMixRow}>
-                      <View style={styles.planMixInfo}>
-                        <Text style={styles.planNameText}>{p}</Text>
-                        <Text style={styles.planCountText}>{count}</Text>
+                    <View
+                      key={t.id}
+                      style={[styles.tenantShowcaseCard, isPremiumPlan && styles.tenantShowcaseCardPremium, styles.showcaseCardGridItem]}
+                    >
+                      <View style={styles.tenantShowcaseTop}>
+                        <View style={[styles.tenantAvatar, { backgroundColor: avatarColor }]}>
+                          <Text style={styles.tenantAvatarText}>{initial}</Text>
+                        </View>
+                        <View style={styles.tenantStatusDotWrap}>
+                          <View style={styles.tenantStatusDot} />
+                        </View>
                       </View>
-                      <View style={styles.progressBg}>
-                        <View style={[styles.progressFill, { width: `${pct}%` }]} />
+
+                      <Text style={styles.tenantShowcaseName} numberOfLines={1}>{t.name}</Text>
+
+                      <View style={[styles.planBadge, { backgroundColor: planStyle.bg }]}>
+                        <Text style={[styles.planBadgeText, { color: planStyle.text }]}>{t.plan}</Text>
+                      </View>
+
+                      <View style={styles.tenantShowcaseFooter}>
+                        <Building2 size={11} color="#94a3b8" />
+                        <Text style={styles.tenantShowcaseFooterText}>
+                          {branchCount} {branchCount === 1 ? 'branch' : 'branches'}
+                        </Text>
                       </View>
                     </View>
                   );
                 })}
               </View>
-            </Card>
-          </View>
-          <View style={styles.halfCol}>
-            <Card style={styles.flex1}>
-              <Text style={styles.subCardTitle}>Regions</Text>
-              <View style={styles.regionsList}>
-                <View style={styles.regionRow}><Text style={styles.regionText}>UAE</Text><Badge variant="brand">3</Badge></View>
-                <View style={styles.regionRow}><Text style={styles.regionText}>KSA</Text><Badge variant="info">1</Badge></View>
-                <View style={styles.regionRow}><Text style={styles.regionText}>Qatar</Text><Badge variant="info">1</Badge></View>
-                <View style={styles.regionRow}><Text style={styles.regionText}>Bahrain</Text><Badge variant="warn">1</Badge></View>
-              </View>
-            </Card>
-          </View>
+
+              {totalPages > 1 && (
+                <View style={styles.paginationContainer}>
+                  <TouchableOpacity
+                    style={[styles.paginationBtn, currentPage === 0 && styles.paginationBtnDisabled]}
+                    onPress={() => setCurrentPage(prev => Math.max(0, prev - 1))}
+                    disabled={currentPage === 0}
+                  >
+                    <Text style={[styles.paginationBtnText, currentPage === 0 && styles.paginationBtnTextDisabled]}>Prev</Text>
+                  </TouchableOpacity>
+
+                  <View style={styles.paginationDots}>
+                    {Array.from({ length: totalPages }).map((_, idx) => (
+                      <View key={idx} style={[styles.paginationDot, currentPage === idx && styles.paginationDotActive]} />
+                    ))}
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.paginationBtn, currentPage === totalPages - 1 && styles.paginationBtnDisabled]}
+                    onPress={() => setCurrentPage(prev => Math.min(totalPages - 1, prev + 1))}
+                    disabled={currentPage === totalPages - 1}
+                  >
+                    <Text style={[styles.paginationBtnText, currentPage === totalPages - 1 && styles.paginationBtnTextDisabled]}>Next</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          )}
         </View>
       </ScreenBody>
     </View>
@@ -130,6 +170,10 @@ export function SuperAdminHome() {
 export function SuperAdminTenants({ onOpen }: { onOpen: (id: string) => void }) {
   const { branch } = useAuth();
   const { tenants, branches, createTenant, addBranch, vatRate, inclusive } = useSuperAdmin();
+
+  // Toast state
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
 
   // Dialog/Sheet states
   const [createOpen, setCreateOpen] = useState(false);
@@ -150,7 +194,7 @@ export function SuperAdminTenants({ onOpen }: { onOpen: (id: string) => void }) 
 
   const handleCreateTenant = () => {
     if (!tenantName.trim()) {
-      Alert.alert('Error', 'Please enter a chain name');
+      showToast('Please enter a chain name', 'error');
       return;
     }
     createTenant(
@@ -159,7 +203,7 @@ export function SuperAdminTenants({ onOpen }: { onOpen: (id: string) => void }) 
       parseInt(tillLimit) || 6,
       trn || '100000000000003'
     );
-    Alert.alert('Success', `Tenant "${tenantName}" provisioned successfully`);
+    showToast(`Tenant "${tenantName}" provisioned successfully`, 'success');
     setTenantName('');
     setOutletLimit('2');
     setTillLimit('6');
@@ -169,23 +213,23 @@ export function SuperAdminTenants({ onOpen }: { onOpen: (id: string) => void }) 
 
   const handleAddBranchGlobal = () => {
     if (!selectedTenantId) {
-      Alert.alert('Error', 'Please select a tenant');
+      showToast('Please select a tenant', 'error');
       return;
     }
     if (!branchName.trim() || !branchLocation.trim()) {
-      Alert.alert('Error', 'Please enter branch name and location');
+      showToast('Please enter branch name and location', 'error');
       return;
     }
     try {
       addBranch(selectedTenantId, branchName, branchLocation, branchStatus);
-      Alert.alert('Success', `Branch "${branchName}" added successfully`);
+      showToast(`Branch "${branchName}" added successfully`, 'success');
       setBranchName('');
       setBranchLocation('');
       setBranchStatus('Active');
       setSelectedTenantId('');
       setAddBranchOpen(false);
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      showToast(e.message, 'error');
     }
   };
 
@@ -241,7 +285,7 @@ export function SuperAdminTenants({ onOpen }: { onOpen: (id: string) => void }) 
                   <Text style={styles.metricLabel}>Branches</Text>
                 </View>
                 <View style={styles.metricColumn}><Text style={styles.metricValue}>{t.tills}</Text><Text style={styles.metricLabel}>Tills</Text></View>
-                <View style={styles.metricColumn}><Text style={styles.metricValue}>${t.mrr}</Text><Text style={styles.metricLabel}>MRR</Text></View>
+                <View style={styles.metricColumn}><Text style={styles.metricValue}>N/A</Text><Text style={styles.metricLabel}>MRR</Text></View>
               </View>
 
               <View style={styles.cardActionsRow}>
@@ -404,13 +448,15 @@ export function SuperAdminTenants({ onOpen }: { onOpen: (id: string) => void }) 
         <ManageBranchesSheet
           tenantId={manageBranchesTenantId}
           onClose={() => setManageBranchesTenantId(null)}
+          showToast={showToast}
         />
       )}
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
 
-function ManageBranchesSheet({ tenantId, onClose }: { tenantId: string; onClose: () => void }) {
+function ManageBranchesSheet({ tenantId, onClose, showToast }: { tenantId: string; onClose: () => void; showToast: (msg: string, type: ToastType) => void }) {
   const { tenants, branches, addBranch, deleteBranch } = useSuperAdmin();
   const t = tenants.find((x) => x.id === tenantId);
 
@@ -423,16 +469,16 @@ function ManageBranchesSheet({ tenantId, onClose }: { tenantId: string; onClose:
 
   const handleAdd = () => {
     if (!bName.trim() || !bLoc.trim()) {
-      Alert.alert('Error', 'Please enter branch name and location');
+      showToast('Please enter branch name and location', 'error');
       return;
     }
     try {
       addBranch(tenantId, bName, bLoc, 'Active');
-      Alert.alert('Success', `Branch "${bName}" added successfully.`);
+      showToast(`Branch "${bName}" added successfully.`, 'success');
       setBName('');
       setBLoc('');
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      showToast(e.message, 'error');
     }
   };
 
@@ -445,9 +491,14 @@ function ManageBranchesSheet({ tenantId, onClose }: { tenantId: string; onClose:
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => {
-            deleteBranch(branch.id);
-            Alert.alert('Deleted', `Branch ${branch.name} has been removed.`);
+          onPress: async () => {
+            try {
+              await deleteBranch(branch.id);
+              showToast(`Branch ${branch.name} has been removed.`, 'success');
+            } catch (err: any) {
+              const msg = err.response?.data?.error || err.message || 'Failed to delete branch';
+              showToast(msg, 'error');
+            }
           },
         },
       ]
@@ -520,25 +571,92 @@ function ManageBranchesSheet({ tenantId, onClose }: { tenantId: string; onClose:
 
 export function TenantDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const { branch } = useAuth();
-  const { tenants, branches, upgradeTenant, toggleTenantStatus } = useSuperAdmin();
+  const { tenants, branches, upgradeTenant, downgradeTenant, deleteTenant, toggleTenantStatus } = useSuperAdmin();
   const t = tenants.find((x) => x.id === id);
   const [action, setAction] = useState<string | null>(null);
 
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
+  // Admin Profile States
+  const [adminData, setAdminData] = useState<any>(null);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminForm, setAdminForm] = useState({ name: '', email: '', phone: '', address: '', password: '' });
+
+  React.useEffect(() => {
+    if (action === 'admin_profile') {
+      setAdminLoading(true);
+      api.get(`/tenants/${id}/admin`)
+        .then((res: any) => {
+          if (res && res.id) {
+            setAdminData(res);
+            setAdminForm({ name: res.name || '', email: res.email || '', phone: res.phone || '', address: res.address || '', password: '' });
+          } else {
+            setAdminData(null);
+            setAdminForm({ name: '', email: '', phone: '', address: '', password: '' });
+          }
+        })
+        .catch(() => {
+          setAdminData(null);
+          setAdminForm({ name: '', email: '', phone: '', address: '', password: '' });
+        })
+        .finally(() => setAdminLoading(false));
+    }
+  }, [action, id]);
+
+  const handleAdminSave = async () => {
+    try {
+      if (adminData) {
+        await api.patch(`/tenants/${id}/admin`, {
+          name: adminForm.name,
+          email: adminForm.email,
+          phone: adminForm.phone,
+          address: adminForm.address
+        });
+        showToast('Admin updated successfully', 'success');
+      } else {
+        await api.post(`/tenants/${id}/admin`, adminForm);
+        showToast('Admin created successfully', 'success');
+      }
+      setAction(null);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to save admin', 'error');
+    }
+  };
+
   if (!t) return null;
 
-  const handleActionConfirm = () => {
+  const handleActionConfirm = async () => {
     if (action === 'suspend') {
       toggleTenantStatus(t.id);
-      Alert.alert('Status Updated', `${t.name} status changed to ${t.status === 'suspended' ? 'suspended' : 'active'}`);
+      showToast(`${t.name} status changed to ${t.status === 'suspended' ? 'active' : 'suspended'}`, 'success');
     } else if (action === 'upgrade') {
       if (t.plan === 'Enterprise') {
-        Alert.alert('Max Plan', 'Tenant is already on the highest plan (Enterprise)');
+        showToast('Tenant is already on the highest plan', 'info');
       } else {
         upgradeTenant(t.id);
-        Alert.alert('Upgraded', `${t.name} upgraded successfully`);
+        showToast(`${t.name} upgraded successfully`, 'success');
       }
+    } else if (action === 'downgrade') {
+      if (t.plan === 'Starter') {
+        showToast('Tenant is already on the lowest plan', 'info');
+      } else {
+        downgradeTenant(t.id);
+        showToast(`${t.name} downgraded successfully`, 'success');
+      }
+    } else if (action === 'delete') {
+      try {
+        await deleteTenant(t.id);
+        showToast(`${t.name} deleted successfully`, 'success');
+        onBack();
+        return;
+      } catch (err: any) {
+        showToast(err.message || 'Error deleting tenant', 'error');
+      }
+    } else if (action === 'admin_profile') {
+      // Handled by custom modal layout below
     } else if (action === 'impersonate') {
-      Alert.alert('Impersonation', `Signing in as admin of ${t.name}...`);
+      showToast(`Signing in as admin of ${t.name}...`, 'info');
     }
     setAction(null);
   };
@@ -566,7 +684,7 @@ export function TenantDetail({ id, onBack }: { id: string; onBack: () => void })
             <StatCard label="Tills" value={String(t.tills)} icon={<Trello size={14} color="#0284c7" />} accent="sky" />
           </View>
           <View style={styles.thirdCol}>
-            <StatCard label="MRR" value={`$${t.mrr}`} icon={<DollarSign size={14} color="#39ff14" />} accent="brand" />
+            <StatCard label="MRR" value="Coming Soon" icon={<Info size={14} color="#475569" />} accent="ink" />
           </View>
         </View>
 
@@ -583,36 +701,138 @@ export function TenantDetail({ id, onBack }: { id: string; onBack: () => void })
 
         <View style={styles.actionsGrid}>
           <Button variant="secondary" onClick={() => setAction('upgrade')} style={styles.actionBtn} disabled={t.plan === 'Enterprise'}>Upgrade Plan</Button>
-          <Button variant="secondary" onClick={() => setAction('configure')} style={styles.actionBtn}>Configure</Button>
-          <Button variant="danger" onClick={() => setAction('suspend')} style={styles.actionBtn}>{t.status === 'suspended' ? 'Reactivate' : 'Suspend'}</Button>
+          <Button variant="secondary" onClick={() => setAction('downgrade')} style={styles.actionBtn} disabled={t.plan === 'Starter'}>Downgrade Plan</Button>
+          <Button variant="ghost" onClick={() => setAction('admin_profile')} style={styles.actionBtn}>Admin Profile</Button>
           <Button variant="ghost" onClick={() => setAction('impersonate')} style={styles.actionBtn}>Impersonate</Button>
+          <Button variant="danger" onClick={() => setAction('suspend')} style={styles.actionBtn}>{t.status === 'suspended' ? 'Reactivate' : 'Suspend'}</Button>
+          <Button variant="danger" onClick={() => setAction('delete')} style={styles.actionBtn}>Delete Tenant</Button>
         </View>
       </ScreenBody>
 
       <Sheet
         open={!!action}
         onClose={() => setAction(null)}
-        title="Confirm action"
+        title={action === 'admin_profile' ? "Admin Profile" : "Confirm action"}
         footer={
-          <View style={styles.sheetFooterBtnRow}>
-            <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => setAction(null)}>Cancel</Button>
-            <Button variant={action === 'suspend' ? 'danger' : 'primary'} style={styles.sheetFooterBtn} onClick={handleActionConfirm}>Confirm</Button>
-          </View>
+          action === 'admin_profile' ? (
+            <View style={styles.sheetFooterBtnRow}>
+              <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => setAction(null)}>Cancel</Button>
+              <Button variant="primary" style={styles.sheetFooterBtn} onClick={handleAdminSave}>
+                {adminData ? 'Save Changes' : 'Set Up Admin'}
+              </Button>
+            </View>
+          ) : (
+            <View style={styles.sheetFooterBtnRow}>
+              <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => setAction(null)}>Cancel</Button>
+              <Button variant={action === 'suspend' || action === 'delete' ? 'danger' : 'primary'} style={styles.sheetFooterBtn} onClick={handleActionConfirm}>Confirm</Button>
+            </View>
+          )
         }
       >
-        <Text style={styles.confirmMsg}>
-          {action === 'suspend' && `This will toggle suspension of ${t.name}. All tills and branches will reflect this status.`}
-          {action === 'upgrade' && `This will upgrade ${t.name} to the next pricing tier.`}
-          {action === 'configure' && `Adjust tax templates, currency, and feature flags for ${t.name}. (Settings tab modifies these values platform-wide)`}
-          {action === 'impersonate' && `You will sign in as ${t.name}'s admin to view their workspace.`}
-        </Text>
+        {action === 'admin_profile' ? (
+          <View style={{ paddingTop: 10 }}>
+            {adminLoading ? (
+              <Text style={{ textAlign: 'center', padding: 20 }}>Loading...</Text>
+            ) : (
+              <>
+                {!adminData && (
+                  <Text style={{ marginBottom: 16, color: '#475569', fontSize: 14 }}>
+                    This tenant does not have a primary admin configured. Set one up below.
+                  </Text>
+                )}
+                <View style={{ gap: 12 }}>
+                  <View>
+                    <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 4, fontWeight: '500' }}>Full Name</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="e.g. John Doe"
+                      value={adminForm.name}
+                      onChangeText={t => setAdminForm({ ...adminForm, name: t })}
+                    />
+                  </View>
+                  <View>
+                    <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 4, fontWeight: '500' }}>Email</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="admin@example.com"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      value={adminForm.email}
+                      onChangeText={t => setAdminForm({ ...adminForm, email: t })}
+                    />
+                  </View>
+                  <View>
+                    <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 4, fontWeight: '500' }}>Phone</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="+1 234 567 8900"
+                      keyboardType="phone-pad"
+                      value={adminForm.phone}
+                      onChangeText={t => setAdminForm({ ...adminForm, phone: t })}
+                    />
+                  </View>
+                  <View>
+                    <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 4, fontWeight: '500' }}>Office Address</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="123 Business Blvd"
+                      value={adminForm.address}
+                      onChangeText={t => setAdminForm({ ...adminForm, address: t })}
+                    />
+                  </View>
+                  {!adminData && (
+                    <View>
+                      <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 4, fontWeight: '500' }}>Password</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Secure password"
+                        secureTextEntry
+                        value={adminForm.password}
+                        onChangeText={t => setAdminForm({ ...adminForm, password: t })}
+                      />
+                    </View>
+                  )}
+                </View>
+              </>
+            )}
+          </View>
+        ) : (
+          <Text style={styles.confirmMsg}>
+            {action === 'suspend' && `This will toggle suspension of ${t.name}. All tills and branches will reflect this status.`}
+            {action === 'upgrade' && `This will upgrade ${t.name} to the next pricing tier.`}
+            {action === 'downgrade' && `This will downgrade ${t.name} to the lower pricing tier.`}
+            {action === 'delete' && `Are you sure you want to permanently delete ${t.name}? This action cannot be undone.`}
+            {action === 'configure' && `Adjust tax templates, currency, and feature flags for ${t.name}. (Settings tab modifies these values platform-wide)`}
+            {action === 'impersonate' && `You will sign in as ${t.name}'s admin to view their workspace.`}
+          </Text>
+        )}
       </Sheet>
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
 
 export function SuperAdminAnalytics() {
   const { branch } = useAuth();
+  const { platformAnalytics } = useSuperAdmin();
+
+  const series = platformAnalytics?.platformSeries || [{ t: 'Today', sales: 0 }];
+  const logs = platformAnalytics?.systemLogs || [];
+
+  const maxSales = Math.max(...series.map((s) => Number(s.sales)), 1);
+  const width = 340;
+  const height = 120;
+  const padY = 20;
+
+  const points = series.map((s, i) => {
+    const x = series.length > 1 ? (i / (series.length - 1)) * width : width / 2;
+    const y = height - padY - (Number(s.sales) / maxSales) * (height - padY * 2);
+    return { x, y };
+  });
+
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
+  const areaPath = `${linePath} L${points[points.length - 1]?.x || width},${height} L${points[0]?.x || 0},${height} Z`;
+
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="SA" branch={branch} />
@@ -620,64 +840,39 @@ export function SuperAdminAnalytics() {
         <Text style={styles.analyticsTitle}>Platform Analytics</Text>
 
         <Card style={styles.chartCard}>
-          <Text style={styles.chartCardTitle}>Active Tills Over Time</Text>
+          <Text style={styles.chartCardTitle}>Network Sales Volume (AED 000s)</Text>
           <View style={styles.svgWrapper}>
             <Svg width="100%" height={120} viewBox="0 0 340 120" preserveAspectRatio="none">
               <Path d="M0,30 L340,30 M0,60 L340,60 M0,90 L340,90" fill="none" stroke="#f1f5f9" strokeWidth="1" />
-              <Path
-                d="M10,95 L65,85 L120,70 L175,55 L230,40 L285,30 L330,45"
-                fill="none"
-                stroke="#39ff14"
-                strokeWidth="2.5"
-              />
-              <Circle cx="10" cy="95" r="4" fill="#39ff14" />
-              <Circle cx="65" cy="85" r="4" fill="#39ff14" />
-              <Circle cx="120" cy="70" r="4" fill="#39ff14" />
-              <Circle cx="175" cy="55" r="4" fill="#39ff14" />
-              <Circle cx="230" cy="40" r="4" fill="#39ff14" />
-              <Circle cx="285" cy="30" r="4" fill="#39ff14" />
-              <Circle cx="330" cy="45" r="4" fill="#39ff14" />
+              {series.length > 0 && (
+                <>
+                  <Path d={areaPath} fill="rgba(57, 255, 20, 0.1)" stroke="none" />
+                  <Path d={linePath} fill="none" stroke="#39ff14" strokeWidth="2.5" />
+                  {points.map((p, i) => (
+                    <Circle key={i} cx={p.x} cy={p.y} r="4" fill="#39ff14" />
+                  ))}
+                </>
+              )}
             </Svg>
           </View>
           <View style={styles.chartLabels}>
-            <Text style={styles.chartLabelText}>Mon</Text>
-            <Text style={styles.chartLabelText}>Wed</Text>
-            <Text style={styles.chartLabelText}>Fri</Text>
-            <Text style={styles.chartLabelText}>Sun</Text>
-          </View>
-        </Card>
-
-        <Card style={styles.chartCard}>
-          <Text style={styles.chartCardTitle}>API Traffic (req/min)</Text>
-          <View style={styles.svgWrapper}>
-            <Svg width="100%" height={120} viewBox="0 0 340 120" preserveAspectRatio="none">
-              <Path d="M0,35 L340,35 M0,70 L340,70 M0,105 L340,105" fill="none" stroke="#f1f5f9" strokeWidth="1" />
-              <Rect x="20" y="85" width="22" height="35" rx="3" fill="#39ff14" />
-              <Rect x="75" y="95" width="22" height="25" rx="3" fill="#39ff14" />
-              <Rect x="130" y="45" width="22" height="75" rx="3" fill="#39ff14" />
-              <Rect x="185" y="25" width="22" height="95" rx="3" fill="#39ff14" />
-              <Rect x="240" y="15" width="22" height="105" rx="3" fill="#39ff14" />
-              <Rect x="295" y="55" width="22" height="65" rx="3" fill="#39ff14" />
-            </Svg>
-          </View>
-          <View style={styles.chartLabels}>
-            <Text style={styles.chartLabelText}>00</Text>
-            <Text style={styles.chartLabelText}>04</Text>
-            <Text style={styles.chartLabelText}>08</Text>
-            <Text style={styles.chartLabelText}>12</Text>
-            <Text style={styles.chartLabelText}>16</Text>
-            <Text style={styles.chartLabelText}>20</Text>
+            {series.map((s, i) => (
+              <Text key={i} style={styles.chartLabelText}>{s.t}</Text>
+            ))}
           </View>
         </Card>
 
         <Card style={styles.logsCard}>
-          <Text style={styles.chartCardTitle}>System Logs</Text>
+          <Text style={styles.chartCardTitle}>System Log</Text>
           <View style={styles.logsList}>
-            {systemLogs.map((l) => (
-              <View key={l.id} style={styles.logRow}>
-                <View style={styles.logMetaBox}>
-                  <Text style={styles.logMsg}>{l.msg}</Text>
-                  <Text style={styles.logTime}>{l.time}</Text>
+            {logs.length === 0 ? (
+              <Text style={styles.logMsg}>No recent activity</Text>
+            ) : logs.map((l, idx) => (
+              <View key={idx} style={styles.logRow}>
+                <View style={[styles.logMetaBox, { flexDirection: 'row', gap: 8, flexWrap: 'wrap' }]}>
+                  <Text style={styles.logTime}>{l[0]}</Text>
+                  <Text style={[styles.logMsg, l[1] === 'WARN' ? {color: '#f59e0b', fontWeight: 'bold'} : {color: '#39ff14', fontWeight: 'bold'}]}>{l[1]}</Text>
+                  <Text style={styles.logMsg}>{l[2]}</Text>
                 </View>
               </View>
             ))}
@@ -695,9 +890,12 @@ export function SuperAdminSettings() {
   // Local state for vat input to allow editing before save
   const [localVat, setLocalVat] = useState(vatRate);
 
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
   const handleSaveTaxTemplate = () => {
     updateVatRate(localVat);
-    Alert.alert('Success', 'Global tax template saved successfully.');
+    showToast('Global tax template saved successfully.', 'success');
   };
 
   return (
@@ -770,7 +968,7 @@ export function SuperAdminSettings() {
             <DetailRow label="Fiscal calendar" value="January – December" />
             <DetailRow label="Timezone" value="Asia/Dubai (GMT+4)" />
             <DetailRow label="Data residency" value="UAE region" />
-            
+
             <View style={styles.gmvContainer}>
               <Coins size={16} color="#16a34a" style={{ marginRight: 8 }} />
               <Text style={styles.gmvText}>Platform-wide GMV this month: 48.6M AED</Text>
@@ -778,33 +976,9 @@ export function SuperAdminSettings() {
           </View>
         </Card>
 
-        {/* Platform Configuration (toggles) */}
-        <Card style={styles.paddedCard}>
-          <Text style={styles.chartCardTitle}>Platform Configuration</Text>
-          <View style={styles.togglesList}>
-            <ToggleRow
-              label="Allow tenant self-signup"
-              on={platformConfig.selfSignup}
-              onChange={(val) => updatePlatformConfig('selfSignup', val)}
-            />
-            <ToggleRow
-              label="Enforce 2FA for all admins"
-              on={platformConfig.enforce2FA}
-              onChange={(val) => updatePlatformConfig('enforce2FA', val)}
-            />
-            <ToggleRow
-              label="Auto-suspend on payment failure"
-              on={platformConfig.autoSuspend}
-              onChange={(val) => updatePlatformConfig('autoSuspend', val)}
-            />
-            <ToggleRow
-              label="Beta features"
-              on={platformConfig.betaFeatures}
-              onChange={(val) => updatePlatformConfig('betaFeatures', val)}
-            />
-          </View>
-        </Card>
+
       </ScreenBody>
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
@@ -936,6 +1110,188 @@ const styles = StyleSheet.create({
     color: '#475569',
     fontWeight: '500',
   },
+  // Active Tenants Showcase (Home)
+  showcaseSection: {
+    marginTop: 6,
+    marginBottom: 6,
+  },
+  showcaseHeader: {
+    marginBottom: 12,
+    paddingHorizontal: 2,
+  },
+  showcaseTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#0f172a',
+  },
+  showcaseSubtitle: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  showcaseScrollContent: {
+    paddingRight: 4,
+    paddingLeft: 2,
+    gap: 12,
+  },
+  tenantShowcaseCard: {
+    width: 168,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  showcaseGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    justifyContent: 'space-between',
+    paddingHorizontal: 2,
+  },
+  showcaseCardGridItem: {
+    width: '48%',
+    marginBottom: 4,
+  },
+  paginationContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 16,
+    paddingHorizontal: 8,
+    marginBottom: 8,
+  },
+  paginationBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: '#0f172a',
+  },
+  paginationBtnDisabled: {
+    backgroundColor: '#f1f5f9',
+  },
+  paginationBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  paginationBtnTextDisabled: {
+    color: '#94a3b8',
+  },
+  paginationDots: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+  },
+  paginationDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#cbd5e1',
+  },
+  paginationDotActive: {
+    width: 20,
+    backgroundColor: '#39ff14',
+  },
+  tenantShowcaseCardPremium: {
+    borderColor: 'rgba(234, 179, 8, 0.35)',
+    backgroundColor: 'rgba(234, 179, 8, 0.05)',
+  },
+  tenantShowcaseTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 10,
+  },
+  tenantAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tenantAvatarText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  tenantStatusDotWrap: {
+    paddingTop: 2,
+  },
+  tenantStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#22c55e',
+  },
+  tenantShowcaseName: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  planBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 20,
+    marginBottom: 10,
+  },
+  planBadgeText: {
+    fontSize: 9,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  tenantShowcaseFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    paddingTop: 8,
+  },
+  tenantShowcaseFooterText: {
+    fontSize: 10,
+    color: '#94a3b8',
+    fontWeight: '500',
+  },
+  showcaseEmptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 28,
+    paddingHorizontal: 16,
+    backgroundColor: '#f8fafc',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderStyle: 'dashed',
+  },
+  showcaseEmptyIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  showcaseEmptyTitle: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#334155',
+    marginBottom: 4,
+  },
+  showcaseEmptyText: {
+    fontSize: 11,
+    color: '#94a3b8',
+    textAlign: 'center',
+  },
   // Tenants Listing
   listHeader: {
     flexDirection: 'row',
@@ -1052,6 +1408,22 @@ const styles = StyleSheet.create({
   actionBtn: {
     width: '50%',
     padding: 4,
+  },
+  sheetText: {
+    fontSize: 14,
+    color: '#475569',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  input: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#0f172a',
   },
   confirmMsg: {
     fontSize: 12,
