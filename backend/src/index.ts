@@ -9,6 +9,7 @@ import branchesRouter from "./routes/branches.js";
 import productsRouter from "./routes/products.js";
 import ordersRouter from "./routes/orders.js";
 import vendorsRouter from "./routes/vendors.js";
+import purchasingRouter from "./routes/purchasing.js";
 import usersRouter from "./routes/users.js";
 
 const app = express();
@@ -46,6 +47,7 @@ app.use("/api/branches", branchesRouter);
 app.use("/api/products", productsRouter);
 app.use("/api/orders", ordersRouter);
 app.use("/api/vendors", vendorsRouter);
+app.use("/api/purchasing", purchasingRouter);
 app.use("/api/users", usersRouter);
 
 // Error handling middleware
