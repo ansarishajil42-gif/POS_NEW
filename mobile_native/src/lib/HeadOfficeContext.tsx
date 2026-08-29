@@ -111,7 +111,7 @@ interface HeadOfficeContextProps {
   fetchBatches: () => Promise<void>;
   purchases: PurchaseItem[];
   fetchPurchasing: () => Promise<void>;
-  createPurchaseOrder: (vendorId: string, items: any[], total: number) => Promise<void>;
+  createPurchaseOrder: (vendorId: string, branchId: string, items: any[], total: number) => Promise<void>;
   recordGRN: (poId: string, items: any[]) => Promise<void>;
   convertToInvoice: (grnId: string) => Promise<void>;
   vendors: Vendor[];
@@ -354,8 +354,8 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
     fetchPurchasing();
   }, [user?.tenantId]);
 
-  const createPurchaseOrder = async (vendorId: string, items: any[], total: number) => {
-    await apiClient.post('/purchasing/pos', { vendorId, items, total });
+  const createPurchaseOrder = async (vendorId: string, branchId: string, items: any[], total: number) => {
+    await apiClient.post('/purchasing/pos', { vendorId, branchId, items, total });
     await fetchPurchasing();
   };
 

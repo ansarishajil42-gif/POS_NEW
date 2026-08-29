@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput } from 'react-native';
+import { View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { AppHeader, ScreenBody, ScreenHeader } from '../Shell';
 import { Card, StatCard } from '../ui/Card';
 import { Badge, statusVariant } from '../ui/Badge';
 import { Button, Sheet, Field } from '../ui/Primitives';
-import { purchaseOrders, grns, vendors } from '../../lib/mockData';
+import { purchaseOrders, grns, vendors as mockVendors } from '../../lib/mockData';
 import { useAuth } from '../../lib/auth';
+import { useHeadOffice } from '../../lib/HeadOfficeContext';
 import { ShoppingCart, CheckCircle2, AlertTriangle, Truck, Plus } from 'lucide-react-native';
 
 export function PurchasingHome() {
   const { branch } = useAuth();
+  const { vendors } = useHeadOffice();
   const openPOs = purchaseOrders.filter((p) => p.status === 'open' || p.status === 'sent').length;
   const pendingGRNs = grns.filter((g) => g.status === 'pending').length;
   const variances = grns.filter((g) => g.variance > 0).length;
@@ -74,12 +76,27 @@ export function PurchasingPOs({ onNew }: { onNew: () => void }) {
 
 export function NewPOScreen({ onBack }: { onBack: () => void }) {
   const { branch } = useAuth();
-  const [vendor, setVendor] = useState(vendors[0].name);
+  const { vendors, branches, createPurchaseOrder } = useHeadOffice();
+  const [selectedVendorId, setSelectedVendorId] = useState('');
+  const [selectedBranchId, setSelectedBranchId] = useState('');
   const [lines, setLines] = useState([
     { name: 'Basmati Rice 5kg', qty: 20, price: 48 },
     { name: 'Olive Oil 750ml', qty: 15, price: 39 }
   ]);
   const total = lines.reduce((a, l) => a + l.qty * l.price, 0);
+
+  const handleCreatePO = async () => {
+    if (!selectedVendorId || !selectedBranchId) {
+      Alert.alert('Validation Error', 'Please select vendor and branch');
+      return;
+    }
+    try {
+      await createPurchaseOrder(selectedVendorId, selectedBranchId, lines, total);
+      onBack();
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to create PO');
+    }
+  };
 
   return (
     <View style={styles.flex1}>
@@ -87,8 +104,42 @@ export function NewPOScreen({ onBack }: { onBack: () => void }) {
       <ScreenHeader title="New Purchase Order" onBack={onBack} />
       <ScreenBody>
         <Card>
-          <Field label="Vendor">
-            <View style={styles.fakeSelect}><Text style={styles.fakeSelectText}>{vendor}</Text></View>
+          <Field label="Vendor (Required)">
+            <View style={styles.pickerScrollContainer}>
+              <ScrollView style={styles.pickerScroll} nestedScrollEnabled>
+                {vendors.map((v) => (
+                  <TouchableOpacity
+                    key={v.id}
+                    style={[styles.pickerItem, selectedVendorId === v.id && styles.pickerItemActive]}
+                    onPress={() => setSelectedVendorId(v.id)}
+                  >
+                    <Text style={[styles.pickerItemText, selectedVendorId === v.id && styles.pickerItemTextActive]}>
+                      {v.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </Field>
+        </Card>
+
+        <Card style={styles.marginT}>
+          <Field label="Branch (Required)">
+            <View style={styles.pickerScrollContainer}>
+              <ScrollView style={styles.pickerScroll} nestedScrollEnabled>
+                {branches.map((b) => (
+                  <TouchableOpacity
+                    key={b.id}
+                    style={[styles.pickerItem, selectedBranchId === b.id && styles.pickerItemActive]}
+                    onPress={() => setSelectedBranchId(b.id)}
+                  >
+                    <Text style={[styles.pickerItemText, selectedBranchId === b.id && styles.pickerItemTextActive]}>
+                      {b.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
           </Field>
         </Card>
         
@@ -112,7 +163,7 @@ export function NewPOScreen({ onBack }: { onBack: () => void }) {
           <Text style={styles.totalLabel}>Total</Text>
           <Text style={styles.totalAmount}>${total}</Text>
         </Card>
-        <Button full style={styles.marginT}>Create PO</Button>
+        <Button full style={styles.marginT} onClick={handleCreatePO}>Create PO</Button>
       </ScreenBody>
     </View>
   );
@@ -154,7 +205,8 @@ export function PurchasingGRNs() {
 
 export function PurchasingVendors() {
   const { branch } = useAuth();
-  const totalPayable = vendors.reduce((a, v) => a + v.payable, 0);
+  const { vendors } = useHeadOffice();
+  const totalPayable = vendors.reduce((a, v: any) => a + (v.payable || 0), 0);
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="PO" branch={branch} />
@@ -168,7 +220,7 @@ export function PurchasingVendors() {
         
         <Text style={styles.mainTitle}>Vendors</Text>
         <View style={styles.listContainer}>
-          {vendors.map((v) => (
+          {vendors.map((v: any) => (
             <Card key={v.id}>
               <View style={styles.cardHeaderRow}>
                 <View style={styles.vendorRowLeft}>
@@ -177,12 +229,12 @@ export function PurchasingVendors() {
                   </View>
                   <View>
                     <Text style={styles.productName}>{v.name}</Text>
-                    <Text style={styles.productMeta}>{v.category} · {v.orders} orders</Text>
+                    <Text style={styles.productMeta}>{v.category || 'Vendor'} · {v.orders || 0} orders</Text>
                   </View>
                 </View>
                 <View style={styles.productPriceCol}>
-                  <Text style={styles.productPrice}>${v.payable.toLocaleString()}</Text>
-                  <Badge variant={statusVariant(v.status)}>{v.status}</Badge>
+                  <Text style={styles.productPrice}>${(v.payable || 0).toLocaleString()}</Text>
+                  <Badge variant={statusVariant(v.status || 'Active')}>{v.status || 'Active'}</Badge>
                 </View>
               </View>
             </Card>
@@ -339,5 +391,32 @@ const styles = StyleSheet.create({
     backgroundColor: '#f1f5f9',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  pickerScrollContainer: {
+    maxHeight: 150,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    marginTop: 4,
+    backgroundColor: '#fff',
+  },
+  pickerScroll: {
+    padding: 4,
+  },
+  pickerItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  pickerItemActive: {
+    backgroundColor: '#f1f5f9',
+  },
+  pickerItemText: {
+    fontSize: 13,
+    color: '#334155',
+  },
+  pickerItemTextActive: {
+    fontWeight: 'bold',
+    color: '#0f172a',
   },
 });
