@@ -615,6 +615,8 @@ export function HeadOfficePurchasing() {
   const [poOpen, setPoOpen] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState('');
   const [selectedBranchId, setSelectedBranchId] = useState('');
+  const [vendorSearch, setVendorSearch] = useState('');
+  const [branchSearch, setBranchSearch] = useState('');
   const [poItems, setPoItems] = useState<{ productId: string, qty: string, unitPrice: string }[]>([]);
 
   // GRN Form
@@ -919,23 +921,51 @@ export function HeadOfficePurchasing() {
           </View>
           <ScrollView style={styles.modalBody}>
             <Field label="Vendor">
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row', marginBottom: 16 }}>
-                {vendors.map(v => (
-                  <TouchableOpacity key={v.id} onPress={() => setSelectedVendorId(v.id)} style={{ padding: 12, backgroundColor: selectedVendorId === v.id ? '#39ff14' : '#f1f5f9', borderRadius: 8, marginRight: 8 }}>
-                    <Text style={{ fontWeight: 'bold' }}>{v.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+              <TextInput 
+                style={[styles.input, { marginBottom: 8 }]}
+                placeholder="Search vendor..."
+                value={vendorSearch}
+                onChangeText={setVendorSearch}
+              />
+              <View style={{ maxHeight: 150, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
+                <ScrollView nestedScrollEnabled>
+                  {vendors.filter(v => v.name.toLowerCase().includes(vendorSearch.toLowerCase())).map(v => (
+                    <TouchableOpacity 
+                      key={v.id} 
+                      onPress={() => setSelectedVendorId(v.id)} 
+                      style={{ padding: 12, backgroundColor: selectedVendorId === v.id ? '#39ff14' : '#fff', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                      <Text style={{ fontWeight: selectedVendorId === v.id ? 'bold' : 'normal', color: '#0f172a' }}>{v.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  {vendors.filter(v => v.name.toLowerCase().includes(vendorSearch.toLowerCase())).length === 0 && (
+                    <Text style={{ padding: 12, color: '#64748b' }}>No vendors found</Text>
+                  )}
+                </ScrollView>
+              </View>
             </Field>
 
             <Field label="Branch">
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row', marginBottom: 16 }}>
-                {branches.map(b => (
-                  <TouchableOpacity key={b.id} onPress={() => setSelectedBranchId(b.id)} style={{ padding: 12, backgroundColor: selectedBranchId === b.id ? '#39ff14' : '#f1f5f9', borderRadius: 8, marginRight: 8 }}>
-                    <Text style={{ fontWeight: 'bold' }}>{b.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+              <TextInput 
+                style={[styles.input, { marginBottom: 8 }]}
+                placeholder="Search branch..."
+                value={branchSearch}
+                onChangeText={setBranchSearch}
+              />
+              <View style={{ maxHeight: 150, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
+                <ScrollView nestedScrollEnabled>
+                  {branches.filter(b => b.name.toLowerCase().includes(branchSearch.toLowerCase())).map(b => (
+                    <TouchableOpacity 
+                      key={b.id} 
+                      onPress={() => setSelectedBranchId(b.id)} 
+                      style={{ padding: 12, backgroundColor: selectedBranchId === b.id ? '#39ff14' : '#fff', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                      <Text style={{ fontWeight: selectedBranchId === b.id ? 'bold' : 'normal', color: '#0f172a' }}>{b.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  {branches.filter(b => b.name.toLowerCase().includes(branchSearch.toLowerCase())).length === 0 && (
+                    <Text style={{ padding: 12, color: '#64748b' }}>No branches found</Text>
+                  )}
+                </ScrollView>
+              </View>
             </Field>
 
             <Field label="Items">
