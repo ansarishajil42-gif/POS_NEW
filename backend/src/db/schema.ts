@@ -74,6 +74,29 @@ export const products = pgTable("products", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const productBarcodes = pgTable("product_barcodes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  productId: uuid("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+  barcode: text("barcode").notNull(),
+});
+
+export const productVariants = pgTable("product_variants", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  productId: uuid("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+  variantName: text("variant_name").notNull(),
+  variantValue: text("variant_value").notNull(),
+  sku: text("sku"),
+  priceAdjustment: decimal("price_adjustment", { precision: 10, scale: 2 }).default("0.00").notNull(),
+});
+
+export const unitConversions = pgTable("unit_conversions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  productId: uuid("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+  fromUnit: text("from_unit").notNull(),
+  toUnit: text("to_unit").notNull(),
+  conversionFactor: decimal("conversion_factor", { precision: 10, scale: 4 }).notNull(),
+});
+
 // 5. stock_levels
 export const stockLevels = pgTable("stock_levels", {
   id: uuid("id").primaryKey().defaultRandom(),
