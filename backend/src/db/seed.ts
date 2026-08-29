@@ -1,10 +1,10 @@
 import { db } from "./index.js";
 import * as schema from "./schema.js";
-import { hash as argon2Hash } from "@node-rs/argon2";
+import bcrypt from "bcryptjs";
 import "dotenv/config";
 
 async function hash(password: string) {
-  return await argon2Hash(password);
+  return await bcrypt.hash(password, 10);
 }
 
 async function main() {

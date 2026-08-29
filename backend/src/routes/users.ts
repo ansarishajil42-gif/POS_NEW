@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "../db/index.js";
 import { staffUsers } from "../db/schema.js";
 import { eq, and } from "drizzle-orm";
-import { hash } from "@node-rs/argon2";
+import bcrypt from "bcryptjs";
 
 const router = Router();
 
@@ -32,8 +32,8 @@ router.get("/", async (req, res) => {
         isActive: staffUsers.isActive,
         createdAt: staffUsers.createdAt,
       })
-      .from(staffUsers)
-      .where(and(...conditions));
+        .from(staffUsers)
+        .where(and(...conditions));
     } else {
       result = await db.select({
         id: staffUsers.id,
@@ -44,7 +44,7 @@ router.get("/", async (req, res) => {
         isActive: staffUsers.isActive,
         createdAt: staffUsers.createdAt,
       })
-      .from(staffUsers);
+        .from(staffUsers);
     }
     res.json(result);
   } catch (error) {
@@ -66,11 +66,11 @@ router.post("/", async (req, res) => {
     let pinHash = null;
 
     if (password) {
-      passwordHash = await hash(password);
+      passwordHash = await bcrypt.hash(password, 10);
     }
 
     if (pin) {
-      pinHash = await hash(pin);
+      pinHash = await bcrypt.hash(pin, 10);
     }
 
     const newUser = await db.insert(staffUsers).values({
@@ -107,11 +107,11 @@ router.patch("/:id", async (req, res) => {
     let pinHash = undefined;
 
     if (password) {
-      passwordHash = await hash(password);
+      passwordHash = await bcrypt.hash(password, 10);
     }
 
     if (pin) {
-      pinHash = await hash(pin);
+      pinHash = await bcrypt.hash(pin, 10);
     }
 
     const updated = await db.update(staffUsers)

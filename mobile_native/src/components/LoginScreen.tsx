@@ -24,8 +24,8 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 export function LoginScreen({ onBack }: { onBack?: () => void }) {
   const { signIn } = useAuth();
   const [selected, setSelected] = useState<Role | null>(null);
-  const [email, setEmail] = useState('superadmin@cloudynationpos.com');
-  const [password, setPassword] = useState('superadmin@cloudynationpos.com');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   // Chevron rotation animation
