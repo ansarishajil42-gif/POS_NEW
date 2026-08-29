@@ -631,6 +631,16 @@ export function HeadOfficePurchasing() {
   const [editVendor, setEditVendor] = useState<any | null>(null);
   const [vendorForm, setVendorForm] = useState({ name: '', email: '', trn: '' });
 
+  const [grnNumber, setGrnNumber] = useState('');
+  
+  const [convertInvoiceOpen, setConvertInvoiceOpen] = useState(false);
+  const [activeConvertItem, setActiveConvertItem] = useState<any>(null);
+  const [invoiceForm, setInvoiceForm] = useState({ invoiceNumber: '', dueDate: '' });
+
+  // Invoice Details
+  const [invoiceDetailOpen, setInvoiceDetailOpen] = useState(false);
+  const [invoiceDetail, setInvoiceDetail] = useState<any>(null);
+
   const stepPurchases = purchases.filter((p) => p.stage.toLowerCase() === step);
   const totalPayable = purchases.filter((p) => p.stage === 'Invoice').reduce((s, p) => s + p.value, 0);
 
@@ -662,8 +672,19 @@ export function HeadOfficePurchasing() {
     }
   };
 
+  const handleInvoiceClick = async (inv: any) => {
+    try {
+      const res = await apiClient.get(`/purchasing/invoices/${inv.id}`);
+      setInvoiceDetail(res);
+      setInvoiceDetailOpen(true);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to load invoice details', 'error');
+    }
+  };
+
   const openRecordGRN = (po: any) => {
     setActivePo(po);
+    setGrnNumber('');
     const initialItems = po.po.items.map((i: any) => ({
       productId: i.productId,
       productName: i.product.name,
@@ -679,8 +700,12 @@ export function HeadOfficePurchasing() {
 
   const submitGRN = async () => {
     if (!activePo) return;
+    if (!grnNumber) {
+      showToast('Supplier GRN Number / Invoice Reference is required', 'error');
+      return;
+    }
     try {
-      await recordGRN(activePo.po.id, grnItems);
+      await recordGRN(activePo.po.id, grnNumber, grnItems);
       showToast('GRN recorded successfully', 'success');
       setGrnOpen(false);
     } catch (e: any) {
@@ -688,12 +713,28 @@ export function HeadOfficePurchasing() {
     }
   };
 
-  const handleConvertInvoice = async (item: any) => {
+  const openConvertInvoice = (item: any) => {
+    setActiveConvertItem(item);
+    setInvoiceForm({ invoiceNumber: '', dueDate: '' });
+    setConvertInvoiceOpen(true);
+  };
+
+  const submitConvertInvoice = async () => {
+    if (!activeConvertItem) return;
+    if (!invoiceForm.invoiceNumber) {
+      showToast('Invoice Number is required', 'error');
+      return;
+    }
+    if (!invoiceForm.dueDate) {
+      showToast('Due Date is required', 'error');
+      return;
+    }
     try {
-      await convertToInvoice(item.grn.id);
-      showToast('Converted to Invoice', 'success');
+      await convertToInvoice(activeConvertItem.grn.id, invoiceForm.invoiceNumber, invoiceForm.dueDate, activeConvertItem.value);
+      showToast('Converted to Invoice successfully', 'success');
+      setConvertInvoiceOpen(false);
     } catch (e: any) {
-      showToast(e.message || 'Failed to convert', 'error');
+      showToast(e.message || 'Failed to convert to invoice', 'error');
     }
   };
 
@@ -840,7 +881,7 @@ export function HeadOfficePurchasing() {
                     <View style={[styles.productPriceCol, { minWidth: 100 }]}>
                       <Text style={styles.productPrice}>{formatCurrency(g.value)}</Text>
                       {g.grn?.purchaseOrder?.status === 'GRN' ? (
-                        <Button variant="secondary" style={styles.miniBtn} onClick={() => handleConvertInvoice(g)}>
+                        <Button variant="secondary" style={styles.miniBtn} onClick={() => openConvertInvoice(g)}>
                           Convert to Invoice
                         </Button>
                       ) : (
@@ -868,20 +909,22 @@ export function HeadOfficePurchasing() {
               </Card>
               <View style={styles.marginT}>
                 {stepPurchases.map((inv) => (
-                  <Card key={inv.id} style={{ marginBottom: 8 }}>
-                    <View style={styles.cardHeaderRow}>
-                      <View>
-                        <Text style={styles.productName}>{inv.id}</Text>
-                        <Text style={styles.productMeta}>{inv.vendor} · {inv.date}</Text>
+                  <TouchableOpacity key={inv.id} onPress={() => handleInvoiceClick(inv)} activeOpacity={0.7}>
+                    <Card style={{ marginBottom: 8 }}>
+                      <View style={styles.cardHeaderRow}>
+                        <View>
+                          <Text style={styles.productName}>{inv.invoice?.invoiceNumber || inv.id}</Text>
+                          <Text style={styles.productMeta}>{inv.vendor} · {inv.date}</Text>
+                        </View>
+                        <View style={styles.productPriceCol}>
+                          <Text style={styles.productPrice}>{formatCurrency(inv.value)}</Text>
+                          <Button variant="secondary" style={styles.miniBtn} onClick={() => handleSettleInvoice(inv)}>
+                            Settle AP
+                          </Button>
+                        </View>
                       </View>
-                      <View style={styles.productPriceCol}>
-                        <Text style={styles.productPrice}>{formatCurrency(inv.value)}</Text>
-                        <Button variant="secondary" style={styles.miniBtn} onClick={() => handleSettleInvoice(inv)}>
-                          Settle AP
-                        </Button>
-                      </View>
-                    </View>
-                  </Card>
+                    </Card>
+                  </TouchableOpacity>
                 ))}
               </View>
             </View>
@@ -917,6 +960,89 @@ export function HeadOfficePurchasing() {
         )}
 
       </ScreenBody>
+
+      {/* Invoice Details Modal */}
+      <Modal visible={invoiceDetailOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setInvoiceDetailOpen(false)}>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Invoice Details</Text>
+            <TouchableOpacity onPress={() => setInvoiceDetailOpen(false)} style={styles.closeBtn}>
+              <X size={24} color="#64748b" />
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.modalBody}>
+            {invoiceDetail ? (
+              <View style={{ paddingBottom: 40 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#e2e8f0', paddingBottom: 16, marginBottom: 16 }}>
+                  <View>
+                    <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#0f172a' }}>{invoiceDetail.tenantName}</Text>
+                    {!!invoiceDetail.tenantTrn && <Text style={{ fontSize: 12, color: '#64748b' }}>TRN: {invoiceDetail.tenantTrn}</Text>}
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>Branch: {invoiceDetail.branchName}</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#0f172a' }}>INVOICE</Text>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>Ref: {invoiceDetail.invoiceNumber}</Text>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>Date: {invoiceDetail.createdAt ? invoiceDetail.createdAt.split("T")[0] : ""}</Text>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>Due: {invoiceDetail.dueDate ? invoiceDetail.dueDate.split("T")[0] : ""}</Text>
+                  </View>
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24 }}>
+                  <View style={{ flex: 1, paddingRight: 8 }}>
+                    <Text style={{ fontWeight: 'bold', color: '#0f172a', marginBottom: 4 }}>Supplier Details:</Text>
+                    <Text style={{ fontWeight: '600', color: '#0f172a' }}>{invoiceDetail.vendorName}</Text>
+                    {!!invoiceDetail.vendorTrn && <Text style={{ fontSize: 12, color: '#64748b' }}>TRN: {invoiceDetail.vendorTrn}</Text>}
+                    {!!invoiceDetail.vendorContact && <Text style={{ fontSize: 12, color: '#64748b' }}>Contact: {invoiceDetail.vendorContact}</Text>}
+                    {!!invoiceDetail.vendorEmail && <Text style={{ fontSize: 12, color: '#64748b' }}>Email: {invoiceDetail.vendorEmail}</Text>}
+                  </View>
+                  <View style={{ flex: 1, paddingLeft: 8 }}>
+                    <Text style={{ fontWeight: 'bold', color: '#0f172a', marginBottom: 4 }}>References:</Text>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>PO: <Text style={{ fontWeight: 'bold', color: '#0f172a' }}>{invoiceDetail.poNumber}</Text></Text>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>GRN: <Text style={{ fontWeight: 'bold', color: '#0f172a' }}>{invoiceDetail.grnNumber}</Text></Text>
+                    <View style={{ marginTop: 8, alignSelf: 'flex-start' }}>
+                      <Badge variant={statusVariant(invoiceDetail.status)} text={invoiceDetail.status.toUpperCase()} />
+                    </View>
+                  </View>
+                </View>
+
+                <View style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', backgroundColor: '#f8fafc', padding: 8, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}>
+                    <Text style={{ flex: 2, fontWeight: 'bold', fontSize: 12, color: '#64748b' }}>Product</Text>
+                    <Text style={{ flex: 1, fontWeight: 'bold', fontSize: 12, color: '#64748b', textAlign: 'right' }}>Rec. Qty</Text>
+                    <Text style={{ flex: 1, fontWeight: 'bold', fontSize: 12, color: '#64748b', textAlign: 'right' }}>Unit Price</Text>
+                    <Text style={{ flex: 1, fontWeight: 'bold', fontSize: 12, color: '#64748b', textAlign: 'right' }}>Subtotal</Text>
+                  </View>
+                  {(invoiceDetail.items || []).length === 0 && (
+                    <Text style={{ padding: 16, textAlign: 'center', color: '#64748b' }}>No products found</Text>
+                  )}
+                  {(invoiceDetail.items || []).map((item: any) => (
+                    <View key={item.productId} style={{ flexDirection: 'row', padding: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                      <Text style={{ flex: 2, fontWeight: '600', fontSize: 12, color: '#0f172a' }}>{item.name}</Text>
+                      <Text style={{ flex: 1, fontSize: 12, color: '#0f172a', textAlign: 'right' }}>{item.receivedQty} pcs</Text>
+                      <Text style={{ flex: 1, fontSize: 12, color: '#0f172a', textAlign: 'right' }}>{formatCurrency(item.unitPrice)}</Text>
+                      <Text style={{ flex: 1, fontWeight: '600', fontSize: 12, color: '#0f172a', textAlign: 'right' }}>{formatCurrency(item.subtotal)}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                <View style={{ alignItems: 'flex-end', borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 16 }}>
+                  <Text style={{ fontSize: 14, color: '#64748b', marginBottom: 4 }}>Subtotal: {formatCurrency(invoiceDetail.subtotal)}</Text>
+                  <Text style={{ fontSize: 14, color: '#64748b', marginBottom: 8 }}>VAT ({invoiceDetail.vatRate}% {invoiceDetail.vatInclusive ? 'Incl.' : 'Excl.'}): {formatCurrency(invoiceDetail.vat)}</Text>
+                  <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#0f172a' }}>Total: {formatCurrency(invoiceDetail.total)}</Text>
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 24 }}>
+                  <Button variant="outline" onClick={() => showToast('PDF Download coming soon', 'success')}>Download PDF</Button>
+                  <Button variant="outline" onClick={() => showToast('Printing coming soon', 'success')}>Print Invoice</Button>
+                  <Button variant="primary" onClick={() => setInvoiceDetailOpen(false)}>Close</Button>
+                </View>
+              </View>
+            ) : (
+              <Text style={{ padding: 24, textAlign: 'center', color: '#64748b' }}>Loading details...</Text>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* PO Modal */}
       <Modal visible={poOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setPoOpen(false)}>
@@ -1033,31 +1159,139 @@ export function HeadOfficePurchasing() {
       <Modal visible={grnOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setGrnOpen(false)}>
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Record GRN</Text>
+            <View>
+              <Text style={styles.modalTitle}>Record Goods Received (GRN)</Text>
+              <Text style={{ fontSize: 14, color: '#64748b', marginTop: 4 }}>Record actual quantities received against PO.</Text>
+            </View>
             <TouchableOpacity onPress={() => setGrnOpen(false)} style={styles.closeBtn}>
               <X size={24} color="#64748b" />
             </TouchableOpacity>
           </View>
           <ScrollView style={styles.modalBody}>
-            {grnItems.map((item, index) => (
-              <Card key={index} style={{ marginBottom: 12 }}>
-                <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>{item.productName} (Ordered: {item.orderedQty})</Text>
-                <Field label="Received Qty">
-                  <TextInput style={styles.input} value={item.receivedQty} onChangeText={t => { const newItems = [...grnItems]; newItems[index].receivedQty = t; setGrnItems(newItems); }} keyboardType="numeric" />
-                </Field>
-                {item.isBatchTracked && parseInt(item.receivedQty) > 0 && (
+            <View style={{ flexDirection: 'row', gap: 16, marginBottom: 16 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#0f172a', marginBottom: 6 }}>Supplier GRN Number / Invoice Reference *</Text>
+                <TextInput style={styles.input} placeholder="e.g. GRN-9912" value={grnNumber} onChangeText={setGrnNumber} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#0f172a', marginBottom: 6 }}>Delivery Branch</Text>
+                <TextInput style={[styles.input, { backgroundColor: '#f1f5f9', color: '#94a3b8' }]} value={activePo?.po?.branch?.name || branch?.name || 'Head Office'} editable={false} />
+              </View>
+            </View>
+
+            <View style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
+              <View style={{ flexDirection: 'row', backgroundColor: '#f8fafc', padding: 8, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}>
+                <Text style={{ flex: 2, fontWeight: 'bold', fontSize: 12, color: '#64748b' }}>PRODUCT</Text>
+                <Text style={{ flex: 1, fontWeight: 'bold', fontSize: 12, color: '#64748b', textAlign: 'center' }}>ORDERED QTY</Text>
+                <Text style={{ flex: 1, fontWeight: 'bold', fontSize: 12, color: '#64748b', textAlign: 'center' }}>RECEIVED QTY</Text>
+                <Text style={{ flex: 2, fontWeight: 'bold', fontSize: 12, color: '#64748b' }}>BATCH INFO (REQUIRED IF BATCH-TRACKED)</Text>
+              </View>
+              {grnItems.map((item, index) => (
+                <View key={item.productId} style={{ flexDirection: 'row', padding: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', alignItems: 'center' }}>
+                  <Text style={{ flex: 2, fontWeight: '600', fontSize: 14, color: '#0f172a' }}>{item.productName}</Text>
+                  <Text style={{ flex: 1, fontSize: 14, color: '#0f172a', textAlign: 'center' }}>{item.orderedQty}</Text>
+                  <View style={{ flex: 1, paddingHorizontal: 4 }}>
+                    <TextInput style={[styles.input, { textAlign: 'center', height: 36, paddingVertical: 0 }]} value={item.receivedQty} onChangeText={t => { const newItems = [...grnItems]; newItems[index].receivedQty = t; setGrnItems(newItems); }} keyboardType="numeric" />
+                  </View>
+                  <View style={{ flex: 2, paddingLeft: 8 }}>
+                    {item.isBatchTracked && parseInt(item.receivedQty || '0') > 0 ? (
+                      <View style={{ gap: 4 }}>
+                        <TextInput style={[styles.input, { height: 32, paddingVertical: 0, fontSize: 12 }]} placeholder="Batch Number" value={item.batchNumber} onChangeText={t => { const newItems = [...grnItems]; newItems[index].batchNumber = t; setGrnItems(newItems); }} />
+                        <TextInput style={[styles.input, { height: 32, paddingVertical: 0, fontSize: 12 }]} placeholder="Expiry (YYYY-MM-DD)" value={item.expiryDate} onChangeText={t => { const newItems = [...grnItems]; newItems[index].expiryDate = t; setGrnItems(newItems); }} />
+                      </View>
+                    ) : (
+                      <Text style={{ fontSize: 12, color: '#94a3b8' }}>No tracking required</Text>
+                    )}
+                  </View>
+                </View>
+              ))}
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 16, marginBottom: 40 }}>
+              <Button variant="outline" onClick={() => setGrnOpen(false)}>Cancel</Button>
+              <Button variant="primary" onClick={submitGRN}>Receive & Save GRN</Button>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Convert to Invoice Modal */}
+      <Modal visible={convertInvoiceOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setConvertInvoiceOpen(false)}>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <View>
+              <Text style={styles.modalTitle}>Convert to Invoice</Text>
+              <Text style={{ fontSize: 14, color: '#64748b', marginTop: 4 }}>Create a vendor invoice against GRN from {activeConvertItem?.vendor}.</Text>
+            </View>
+            <TouchableOpacity onPress={() => setConvertInvoiceOpen(false)} style={styles.closeBtn}>
+              <X size={24} color="#64748b" />
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.modalBody}>
+            <View style={{ flexDirection: 'row', gap: 16, marginBottom: 16 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#0f172a', marginBottom: 6 }}>Invoice Number / Reference *</Text>
+                <TextInput style={styles.input} placeholder="e.g. INV-10294" value={invoiceForm.invoiceNumber} onChangeText={t => setInvoiceForm({...invoiceForm, invoiceNumber: t})} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#0f172a', marginBottom: 6 }}>Due Date *</Text>
+                <TextInput style={styles.input} placeholder="YYYY-MM-DD" value={invoiceForm.dueDate} onChangeText={t => setInvoiceForm({...invoiceForm, dueDate: t})} />
+              </View>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 16, marginBottom: 16 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#0f172a', marginBottom: 6 }}>Vendor</Text>
+                <TextInput style={[styles.input, { backgroundColor: '#f1f5f9', color: '#94a3b8' }]} value={activeConvertItem?.vendor || ''} editable={false} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: '500', color: '#0f172a', marginBottom: 6 }}>Delivery Branch</Text>
+                <TextInput style={[styles.input, { backgroundColor: '#f1f5f9', color: '#94a3b8' }]} value={activeConvertItem?.grn?.purchaseOrder?.branch?.name || branch?.name || 'Head Office'} editable={false} />
+              </View>
+            </View>
+
+            <View style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
+              <View style={{ flexDirection: 'row', backgroundColor: '#f8fafc', padding: 8, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}>
+                <Text style={{ flex: 2, fontWeight: 'bold', fontSize: 12, color: '#64748b' }}>PRODUCT</Text>
+                <Text style={{ flex: 1, fontWeight: 'bold', fontSize: 12, color: '#64748b', textAlign: 'right' }}>RECEIVED QTY</Text>
+                <Text style={{ flex: 1, fontWeight: 'bold', fontSize: 12, color: '#64748b', textAlign: 'right' }}>UNIT PRICE</Text>
+                <Text style={{ flex: 1, fontWeight: 'bold', fontSize: 12, color: '#64748b', textAlign: 'right' }}>SUBTOTAL</Text>
+              </View>
+              {activeConvertItem?.grn?.items?.map((item: any) => {
+                const poItem = activeConvertItem.grn.purchaseOrder?.items?.find((i: any) => i.productId === item.productId);
+                const unitPrice = parseFloat(poItem?.unitPrice || 0);
+                const subtotal = item.receivedQty * unitPrice;
+                return (
+                  <View key={item.id || item.productId} style={{ flexDirection: 'row', padding: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', alignItems: 'center' }}>
+                    <Text style={{ flex: 2, fontWeight: '600', fontSize: 14, color: '#0f172a' }}>{item.product?.name}</Text>
+                    <Text style={{ flex: 1, fontSize: 14, color: '#0f172a', textAlign: 'right' }}>{item.receivedQty} pcs</Text>
+                    <Text style={{ flex: 1, fontSize: 14, color: '#0f172a', textAlign: 'right' }}>{formatCurrency(unitPrice)}</Text>
+                    <Text style={{ flex: 1, fontWeight: '600', fontSize: 14, color: '#0f172a', textAlign: 'right' }}>{formatCurrency(subtotal)}</Text>
+                  </View>
+                );
+              })}
+            </View>
+
+            <View style={{ alignItems: 'flex-end', paddingBottom: 16 }}>
+              {(() => {
+                let subtotalSum = 0;
+                activeConvertItem?.grn?.items?.forEach((item: any) => {
+                  const poItem = activeConvertItem.grn.purchaseOrder?.items?.find((i: any) => i.productId === item.productId);
+                  subtotalSum += item.receivedQty * parseFloat(poItem?.unitPrice || 0);
+                });
+                const total = subtotalSum; 
+                const actualVat = total - (total / 1.05);
+                return (
                   <>
-                    <Field label="Batch Number">
-                      <TextInput style={styles.input} value={item.batchNumber} onChangeText={t => { const newItems = [...grnItems]; newItems[index].batchNumber = t; setGrnItems(newItems); }} />
-                    </Field>
-                    <Field label="Expiry Date (YYYY-MM-DD)">
-                      <TextInput style={styles.input} value={item.expiryDate} onChangeText={t => { const newItems = [...grnItems]; newItems[index].expiryDate = t; setGrnItems(newItems); }} />
-                    </Field>
+                    <Text style={{ fontSize: 14, color: '#0f172a', marginBottom: 4 }}>Subtotal: {formatCurrency(total)}</Text>
+                    <Text style={{ fontSize: 14, color: '#0f172a', marginBottom: 8 }}>VAT (5% Included): {formatCurrency(actualVat)}</Text>
+                    <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#0f172a' }}>Total: {formatCurrency(total)}</Text>
                   </>
-                )}
-              </Card>
-            ))}
-            <Button variant="primary" onClick={submitGRN} style={{ marginTop: 16, marginBottom: 40 }}>Submit GRN</Button>
+                );
+              })()}
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 8, marginBottom: 40 }}>
+              <Button variant="outline" onClick={() => setConvertInvoiceOpen(false)}>Cancel</Button>
+              <Button variant="primary" onClick={submitConvertInvoice}>Convert to Invoice</Button>
+            </View>
           </ScrollView>
         </View>
       </Modal>

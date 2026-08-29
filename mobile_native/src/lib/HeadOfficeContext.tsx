@@ -20,6 +20,7 @@ export interface PurchaseItem {
   date: string;
   po?: any;
   grn?: any;
+  invoice?: any;
 }
 
 export interface Vendor {
@@ -337,7 +338,7 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       }));
       invs.forEach(i => items.push({
         id: i.id, stage: 'Invoice', vendor: i.vendor?.name || 'Unknown', value: parseFloat(i.total),
-        date: i.createdAt.split('T')[0]
+        date: i.createdAt.split('T')[0], invoice: i
       }));
 
       setPurchases(items);
@@ -359,13 +360,13 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
     await fetchPurchasing();
   };
 
-  const recordGRN = async (poId: string, items: any[]) => {
-    await apiClient.post(`/purchasing/pos/${poId}/grn`, { items });
+  const recordGRN = async (poId: string, grnNumber: string, items: any[]) => {
+    await apiClient.post(`/purchasing/pos/${poId}/grn`, { items, grnNumber });
     await fetchPurchasing();
   };
 
-  const convertToInvoice = async (grnId: string) => {
-    await apiClient.post(`/purchasing/grns/${grnId}/invoice`, {});
+  const convertToInvoice = async (grnId: string, invoiceNumber: string, dueDate: string, total: number) => {
+    await apiClient.post(`/purchasing/grns/${grnId}/invoice`, { invoiceNumber, dueDate, total });
     await fetchPurchasing();
   };
 

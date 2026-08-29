@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "../db/index.js";
 import { 
   branches, purchaseOrders, purchaseOrderItems, grn, grnItems, vendorInvoices, 
-  vendors, products, batches, stockLevels 
+  vendors, products, batches, stockLevels, tenants, tenantSettings 
 } from "../db/schema.js";
 import { eq, and, desc } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth.js";
@@ -128,15 +128,18 @@ router.get("/grns", async (req, res) => {
 router.post("/pos/:id/grn", async (req, res) => {
   const tenantId = (req as any).user.tenantId;
   const poId = req.params.id;
-  const { items } = req.body; // array of { productId, receivedQty, batchNumber, expiryDate }
+  const { items, grnNumber } = req.body; // array of { productId, receivedQty, batchNumber, expiryDate }
 
   try {
+    if (!grnNumber) {
+      return res.status(400).json({ error: "Supplier GRN Number is required" });
+    }
     const po = await db.query.purchaseOrders.findFirst({
       where: and(eq(purchaseOrders.id, poId), eq(purchaseOrders.tenantId, tenantId)),
       with: { items: { with: { product: true } } }
     });
     if (!po) return res.status(404).json({ error: "PO not found" });
-    if (po.status !== "Ordered" && po.status !== "Draft") {
+    if (po.status !== "Ordered" && po.status !== "Draft" && po.status !== "Sent" && po.status !== "Approved") {
       return res.status(400).json({ error: "PO cannot be received in current state" });
     }
 
@@ -182,7 +185,7 @@ router.post("/pos/:id/grn", async (req, res) => {
       branchId: po.branchId || defaultBranchId,
       purchaseOrderId: po.id,
       vendorId: po.vendorId,
-      grnNumber: `GRN-${Math.floor(10000 + Math.random() * 90000)}`,
+      grnNumber: grnNumber,
       status: hasVariance ? "variance" : "received",
     }).returning();
 
@@ -210,12 +213,112 @@ router.get("/invoices", async (req, res) => {
   try {
     const invoices = await db.query.vendorInvoices.findMany({
       where: eq(vendorInvoices.tenantId, tenantId),
-      with: { vendor: true, purchaseOrder: true },
+      with: { 
+        vendor: true, 
+        purchaseOrder: {
+          with: {
+            items: {
+              with: { product: true }
+            },
+            branch: true
+          }
+        } 
+      },
       orderBy: [desc(vendorInvoices.createdAt)],
     });
     res.json(invoices);
   } catch (err) {
     console.error("Fetch invoices error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.get("/invoices/:id", async (req, res) => {
+  const tenantId = (req as any).user.tenantId;
+  const invoiceId = req.params.id;
+  try {
+    const invoice = await db.query.vendorInvoices.findFirst({
+      where: and(eq(vendorInvoices.tenantId, tenantId), eq(vendorInvoices.id, invoiceId)),
+      with: {
+        vendor: true,
+        purchaseOrder: {
+          with: {
+            branch: true,
+            items: { with: { product: true } },
+          },
+        },
+      },
+    });
+    
+    if (!invoice) return res.status(404).json({ error: "Invoice not found" });
+
+    const po = invoice.purchaseOrder;
+    if (!po) return res.status(404).json({ error: "PO not found for invoice" });
+
+    const poGrn = await db.query.grn.findFirst({
+      where: and(eq(grn.purchaseOrderId, po.id), eq(grn.tenantId, tenantId)),
+      with: { items: { with: { product: true } } },
+    });
+    
+    if (!poGrn) return res.status(404).json({ error: "GRN not found for invoice" });
+
+    const tenantInfo = await db.query.tenants.findFirst({ where: eq(tenants.id, tenantId) });
+    const settings = await db.query.tenantSettings.findFirst({ where: eq(tenantSettings.tenantId, tenantId) });
+
+    const vatRate = settings ? Number(settings.vatRate) : 5.0;
+    const vatInclusive = settings ? settings.vatInclusive : true;
+    const currency = settings ? settings.currency : "AED";
+
+    const poItemsMap = new Map(po.items.map((i) => [i.productId, Number(i.unitPrice)]));
+
+    const items = poGrn.items.map((i) => {
+      const unitPrice = poItemsMap.get(i.productId) || 0;
+      const subtotal = i.receivedQty * unitPrice;
+      return {
+        productId: i.productId,
+        name: i.product?.name || "Unknown Product",
+        receivedQty: i.receivedQty,
+        unitPrice,
+        subtotal,
+      };
+    });
+
+    const subtotal = items.reduce((sum, i) => sum + i.subtotal, 0);
+    const total = Number(invoice.total);
+    let vat = 0;
+    if (vatInclusive) {
+      vat = subtotal - subtotal / (1 + vatRate / 100);
+    } else {
+      vat = total - subtotal;
+    }
+
+    res.json({
+      id: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      createdAt: invoice.createdAt.toISOString(),
+      dueDate: invoice.dueDate.toISOString(),
+      status: invoice.status,
+      total,
+      subtotal,
+      vat,
+      vatRate,
+      vatInclusive,
+      currency,
+      tenantName: tenantInfo ? tenantInfo.name : "Tenant",
+      tenantTrn: settings ? settings.taxRegistrationNumber : null,
+      vendorName: invoice.vendor?.name || "Unknown Vendor",
+      vendorContact: invoice.vendor?.contact || null,
+      vendorPhone: invoice.vendor?.phone || null,
+      vendorEmail: invoice.vendor?.email || null,
+      vendorAddress: invoice.vendor?.address || null,
+      vendorTrn: invoice.vendor?.trn || null,
+      branchName: po.branch?.name || "HQ",
+      poNumber: po.id.split("-")[0]?.toUpperCase() || "",
+      grnNumber: poGrn.grnNumber,
+      items
+    });
+  } catch (err) {
+    console.error("Fetch invoice detail error:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
