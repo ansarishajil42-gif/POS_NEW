@@ -374,9 +374,9 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       prev.map((r) =>
         r.role === roleName
           ? {
-              ...r,
-              perms: r.perms.map((p) => (p.name === permissionName ? { ...p, enabled: !p.enabled } : p)),
-            }
+            ...r,
+            perms: r.perms.map((p) => (p.name === permissionName ? { ...p, enabled: !p.enabled } : p)),
+          }
           : r
       )
     );
