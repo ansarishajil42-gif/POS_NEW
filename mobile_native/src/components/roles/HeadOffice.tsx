@@ -12,6 +12,7 @@ import {
   products,
   customerHistory
 } from '../../lib/mockData';
+import { apiClient } from '../../lib/apiClient';
 import {
   Store,
   Package,
