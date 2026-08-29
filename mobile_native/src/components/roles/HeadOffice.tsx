@@ -4,6 +4,7 @@ import { AppHeader, ScreenBody, ScreenHeader } from '../Shell';
 import { Card, StatCard } from '../ui/Card';
 import { Badge, statusVariant } from '../ui/Badge';
 import { Button, Sheet, Field } from '../ui/Primitives';
+import { Toast, type ToastType } from '../ui/Toast';
 import { formatCurrency } from '../../lib/utils';
 import { useAuth } from '../../lib/auth';
 import { useHeadOffice, PurchaseItem, RoleConfig, Customer, Promotion } from '../../lib/HeadOfficeContext';
@@ -41,7 +42,7 @@ export function HeadOfficeHome() {
 
   const totalSales = branches.reduce((a, b) => a + b.salesToday, 0);
   const totalAlerts = branches.reduce((a, b) => a + b.stockAlerts, 0);
-  
+
   // Dynamic totals based on HeadOfficeContext
   const openPoValue = purchases.filter(p => p.stage === 'PO').reduce((s, p) => s + p.value, 0);
   const totalTills = branches.reduce((a, b) => a + b.tills, 0);
@@ -76,7 +77,7 @@ export function HeadOfficeHome() {
             <StatCard label="Active Branches" value={String(branches.length)} icon={<Store size={16} color="#475569" />} accent="ink" />
           </View>
         </View>
-        
+
         <Text style={styles.sectionTitle}>Branch Overview</Text>
         <View style={styles.branchesList}>
           {branches.map((b) => (
@@ -125,8 +126,8 @@ export function HeadOfficeOutlets({ onOpen }: { onOpen: (id: string) => void }) 
   const handleDelete = (id: string, name: string) => {
     Alert.alert('Delete Branch', `Are you sure you want to delete ${name}?`, [
       { text: 'Cancel', style: 'cancel' },
-      { 
-        text: 'Delete', 
+      {
+        text: 'Delete',
         style: 'destructive',
         onPress: async () => {
           try {
@@ -274,10 +275,10 @@ export function HeadOfficeCatalog({ onOpenProduct }: { onOpenProduct: (id: strin
   const { products, addProduct, updateProduct, deleteProduct, batches } = useHeadOffice();
   const [tab, setTab] = useState<'catalog' | 'batches'>('catalog');
   const [q, setQ] = useState('');
-  
+
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any>(null);
-  
+
   const [formData, setFormData] = useState({
     name: '',
     barcode: '',
@@ -321,8 +322,8 @@ export function HeadOfficeCatalog({ onOpenProduct }: { onOpenProduct: (id: strin
   const handleDelete = (id: string, name: string) => {
     Alert.alert('Delete Product', `Are you sure you want to delete ${name}?`, [
       { text: 'Cancel', style: 'cancel' },
-      { 
-        text: 'Delete', 
+      {
+        text: 'Delete',
         style: 'destructive',
         onPress: async () => {
           try {
@@ -359,7 +360,7 @@ export function HeadOfficeCatalog({ onOpenProduct }: { onOpenProduct: (id: strin
             Add Product
           </Button>
         </View>
-        
+
         <View style={styles.tabButtonsRow}>
           <TouchableOpacity onPress={() => setTab('catalog')} style={[styles.tabBtn, tab === 'catalog' && styles.tabBtnActive]}>
             <Text style={[styles.tabBtnText, tab === 'catalog' && styles.tabBtnTextActive]}>Catalog</Text>
@@ -530,7 +531,7 @@ export function ProductDetail({ id, onBack }: { id: string; onBack: () => void }
   const { products } = useHeadOffice();
   const p = products.find((x) => x.id === id);
   if (!p) return null;
-  
+
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="HO" branch={branch} />
@@ -556,7 +557,7 @@ export function ProductDetail({ id, onBack }: { id: string; onBack: () => void }
             {p.isBatchTracked && <Badge variant="brand">Batch Tracked</Badge>}
           </View>
         </Card>
-        
+
         <Card style={styles.marginT}>
           <Text style={styles.cardTitle}>Details</Text>
           <View style={styles.inventoryList}>
@@ -570,7 +571,7 @@ export function ProductDetail({ id, onBack }: { id: string; onBack: () => void }
           <Card style={styles.marginT}>
             <Text style={styles.cardTitle}>Alternate Barcodes</Text>
             <View style={styles.inventoryList}>
-              {p.barcodes.map((b, i) => <DetailRow key={i} label={`Barcode ${i+1}`} value={b} />)}
+              {p.barcodes.map((b, i) => <DetailRow key={i} label={`Barcode ${i + 1}`} value={b} />)}
             </View>
           </Card>
         )}
@@ -603,14 +604,18 @@ export function ProductDetail({ id, onBack }: { id: string; onBack: () => void }
 
 export function HeadOfficePurchasing() {
   const { branch } = useAuth();
-  const { purchases, vendors, products, createPurchaseOrder, recordGRN, convertToInvoice, addVendor } = useHeadOffice();
+  const { purchases, vendors, products, branches, createPurchaseOrder, recordGRN, convertToInvoice, addVendor, updateVendor, deleteVendor } = useHeadOffice();
+
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
 
   const [step, setStep] = useState<'po' | 'grn' | 'invoice' | 'vendors'>('po');
-  
+
   // PO Form
   const [poOpen, setPoOpen] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState('');
-  const [poItems, setPoItems] = useState<{productId: string, qty: string, unitPrice: string}[]>([]);
+  const [selectedBranchId, setSelectedBranchId] = useState('');
+  const [poItems, setPoItems] = useState<{ productId: string, qty: string, unitPrice: string }[]>([]);
 
   // GRN Form
   const [grnOpen, setGrnOpen] = useState(false);
@@ -619,21 +624,22 @@ export function HeadOfficePurchasing() {
 
   // Vendor Form
   const [vendorOpen, setVendorOpen] = useState(false);
+  const [editVendor, setEditVendor] = useState<any | null>(null);
   const [vendorForm, setVendorForm] = useState({ name: '', email: '', trn: '' });
 
   const stepPurchases = purchases.filter((p) => p.stage.toLowerCase() === step);
   const totalPayable = purchases.filter((p) => p.stage === 'Invoice').reduce((s, p) => s + p.value, 0);
 
   const handleCreatePO = async () => {
-    if (!selectedVendorId) {
-      Alert.alert('Error', 'Please select a vendor');
+    if (!selectedVendorId || !selectedBranchId) {
+      showToast('Please select vendor and branch', 'error');
       return;
     }
     if (poItems.length === 0) {
-      Alert.alert('Error', 'Please add at least one item');
+      showToast('Please add at least one item', 'error');
       return;
     }
-    
+
     let total = 0;
     const items = poItems.map(i => {
       const q = parseInt(i.qty) || 0;
@@ -643,12 +649,12 @@ export function HeadOfficePurchasing() {
     });
 
     try {
-      await createPurchaseOrder(selectedVendorId, items, total);
-      Alert.alert('Success', 'Purchase Order created');
+      await createPurchaseOrder(selectedVendorId, selectedBranchId, items, total);
+      showToast('Purchase Order created successfully', 'success');
       setPoOpen(false);
       setPoItems([]);
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to create PO');
+      showToast(e.message || 'Failed to create PO', 'error');
     }
   };
 
@@ -671,34 +677,70 @@ export function HeadOfficePurchasing() {
     if (!activePo) return;
     try {
       await recordGRN(activePo.po.id, grnItems);
-      Alert.alert('Success', 'GRN recorded');
+      showToast('GRN recorded successfully', 'success');
       setGrnOpen(false);
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to record GRN');
+      showToast(e.message || 'Failed to record GRN', 'error');
     }
   };
 
   const handleConvertInvoice = async (item: any) => {
     try {
       await convertToInvoice(item.grn.id);
-      Alert.alert('Success', 'Converted to Invoice');
+      showToast('Converted to Invoice', 'success');
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to convert');
+      showToast(e.message || 'Failed to convert', 'error');
     }
+  };
+
+  const handleEditVendorClick = (v: any) => {
+    setVendorForm({ name: v.name || '', email: v.email || '', trn: v.trn || '' });
+    setEditVendor(v);
+    setVendorOpen(true);
+  };
+
+  const handleDeleteVendorClick = (v: any) => {
+    const isLinked = purchases.some((p) => p.vendor === v.name || (p as any).vendorId === v.id);
+    if (isLinked) {
+      showToast('Yeh vendor delete nahi ho sakta kyunke iske records maujood hain', 'error');
+      return;
+    }
+
+    Alert.alert('Delete Vendor', `Are you sure you want to delete ${v.name}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteVendor(v.id);
+            showToast('Vendor deleted successfully', 'success');
+          } catch (err: any) {
+            showToast(err.message || 'Failed to delete vendor', 'error');
+          }
+        },
+      },
+    ]);
   };
 
   const submitVendor = async () => {
     if (!vendorForm.name) {
-      Alert.alert('Error', 'Name is required');
+      showToast('Name is required', 'error');
       return;
     }
     try {
-      await addVendor(vendorForm);
-      Alert.alert('Success', 'Vendor added');
+      if (editVendor) {
+        await updateVendor(editVendor.id, vendorForm);
+        showToast('Vendor updated successfully', 'success');
+      } else {
+        await addVendor(vendorForm);
+        showToast('Vendor added successfully', 'success');
+      }
       setVendorForm({ name: '', email: '', trn: '' });
+      setEditVendor(null);
       setVendorOpen(false);
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to add vendor');
+      showToast(e.message || 'Failed to save vendor', 'error');
     }
   };
 
@@ -715,7 +757,11 @@ export function HeadOfficePurchasing() {
             </Button>
           )}
           {step === 'vendors' && (
-            <Button variant="primary" onClick={() => setVendorOpen(true)}>
+            <Button variant="primary" onClick={() => {
+              setEditVendor(null);
+              setVendorForm({ name: '', email: '', trn: '' });
+              setVendorOpen(true);
+            }}>
               <Plus size={16} color="#0f172a" style={{ marginRight: 8 }} />
               Add Vendor
             </Button>
@@ -790,7 +836,7 @@ export function HeadOfficePurchasing() {
                           Convert to Invoice
                         </Button>
                       ) : (
-                         <Badge variant="neutral">Invoiced</Badge>
+                        <Badge variant="neutral">Invoiced</Badge>
                       )}
                     </View>
                   </View>
@@ -837,8 +883,20 @@ export function HeadOfficePurchasing() {
             <View style={styles.listContainer}>
               {vendors.map((v) => (
                 <Card key={v.id} style={{ marginBottom: 8 }}>
-                  <Text style={styles.productName}>{v.name}</Text>
-                  <Text style={styles.productMeta}>{v.email || 'No email'} · {v.trn ? `TRN: ${v.trn}` : 'No TRN'}</Text>
+                  <View style={styles.cardHeaderRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.productName}>{v.name}</Text>
+                      <Text style={styles.productMeta}>{v.email || 'No email'} · {v.trn ? `TRN: ${v.trn}` : 'No TRN'}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 12 }}>
+                      <TouchableOpacity onPress={() => handleEditVendorClick(v)} style={{ padding: 4 }}>
+                        <Edit2 size={16} color="#64748b" />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => handleDeleteVendorClick(v)} style={{ padding: 4 }}>
+                        <Trash2 size={16} color="#ef4444" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
                 </Card>
               ))}
               {vendors.length === 0 && (
@@ -870,6 +928,16 @@ export function HeadOfficePurchasing() {
               </ScrollView>
             </Field>
 
+            <Field label="Branch">
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row', marginBottom: 16 }}>
+                {branches.map(b => (
+                  <TouchableOpacity key={b.id} onPress={() => setSelectedBranchId(b.id)} style={{ padding: 12, backgroundColor: selectedBranchId === b.id ? '#39ff14' : '#f1f5f9', borderRadius: 8, marginRight: 8 }}>
+                    <Text style={{ fontWeight: 'bold' }}>{b.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </Field>
+
             <Field label="Items">
               {poItems.map((item, index) => {
                 const prod = products.find(p => p.id === item.productId);
@@ -886,7 +954,7 @@ export function HeadOfficePurchasing() {
                   </View>
                 );
               })}
-              
+
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row', marginTop: 8 }}>
                 {products.map(p => (
                   <TouchableOpacity key={p.id} onPress={() => setPoItems([...poItems, { productId: p.id, qty: '1', unitPrice: String(p.cost) }])} style={{ padding: 8, backgroundColor: '#f1f5f9', borderRadius: 8, marginRight: 8 }}>
@@ -934,30 +1002,31 @@ export function HeadOfficePurchasing() {
         </View>
       </Modal>
 
-      {/* Add Vendor Modal */}
+      {/* Add/Edit Vendor Modal */}
       <Modal visible={vendorOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setVendorOpen(false)}>
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Add Vendor</Text>
+            <Text style={styles.modalTitle}>{editVendor ? 'Edit Vendor' : 'Add Vendor'}</Text>
             <TouchableOpacity onPress={() => setVendorOpen(false)} style={styles.closeBtn}>
               <X size={24} color="#64748b" />
             </TouchableOpacity>
           </View>
           <View style={styles.modalBody}>
             <Field label="Vendor Name">
-              <TextInput style={styles.input} value={vendorForm.name} onChangeText={t => setVendorForm({...vendorForm, name: t})} />
+              <TextInput style={styles.input} value={vendorForm.name} onChangeText={t => setVendorForm({ ...vendorForm, name: t })} />
             </Field>
             <Field label="Email">
-              <TextInput style={styles.input} value={vendorForm.email} onChangeText={t => setVendorForm({...vendorForm, email: t})} />
+              <TextInput style={styles.input} value={vendorForm.email} onChangeText={t => setVendorForm({ ...vendorForm, email: t })} />
             </Field>
             <Field label="TRN">
-              <TextInput style={styles.input} value={vendorForm.trn} onChangeText={t => setVendorForm({...vendorForm, trn: t})} />
+              <TextInput style={styles.input} value={vendorForm.trn} onChangeText={t => setVendorForm({ ...vendorForm, trn: t })} />
             </Field>
-            <Button variant="primary" onClick={submitVendor} style={{ marginTop: 24 }}>Add Vendor</Button>
+            <Button variant="primary" onClick={submitVendor} style={{ marginTop: 24 }}>{editVendor ? 'Save Changes' : 'Add Vendor'}</Button>
           </View>
         </View>
       </Modal>
 
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
@@ -1139,7 +1208,7 @@ export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => 
       <AppHeader roleLabel="HO" branch={branch} />
       <ScreenBody>
         <Text style={styles.mainTitle}>Customer Loyalty</Text>
-        
+
         {/* Point-Redemption Policies Card */}
         <Card style={styles.marginT}>
           <Text style={styles.cardTitle}>Point-Redemption Policies</Text>
@@ -1793,7 +1862,7 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     fontWeight: 'bold',
   },
-  
+
   // Sheet forms buttons
   sheetFooterBtnRow: {
     flexDirection: 'row',
