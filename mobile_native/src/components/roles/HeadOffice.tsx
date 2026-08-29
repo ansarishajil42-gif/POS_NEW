@@ -1032,8 +1032,8 @@ export function HeadOfficePurchasing() {
                 </View>
 
                 <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 24 }}>
-                  <Button variant="outline" onClick={() => showToast('PDF Download coming soon', 'success')}>Download PDF</Button>
-                  <Button variant="outline" onClick={() => showToast('Printing coming soon', 'success')}>Print Invoice</Button>
+                  <Button variant="secondary" onClick={() => showToast('PDF Download coming soon', 'success')}>Download PDF</Button>
+                  <Button variant="secondary" onClick={() => showToast('Printing coming soon', 'success')}>Print Invoice</Button>
                   <Button variant="primary" onClick={() => setInvoiceDetailOpen(false)}>Close</Button>
                 </View>
               </View>
@@ -1207,7 +1207,7 @@ export function HeadOfficePurchasing() {
               ))}
             </View>
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 16, marginBottom: 40 }}>
-              <Button variant="outline" onClick={() => setGrnOpen(false)}>Cancel</Button>
+              <Button variant="secondary" onClick={() => setGrnOpen(false)}>Cancel</Button>
               <Button variant="primary" onClick={submitGRN}>Receive & Save GRN</Button>
             </View>
           </ScrollView>
@@ -1289,7 +1289,7 @@ export function HeadOfficePurchasing() {
               })()}
             </View>
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 8, marginBottom: 40 }}>
-              <Button variant="outline" onClick={() => setConvertInvoiceOpen(false)}>Cancel</Button>
+              <Button variant="secondary" onClick={() => setConvertInvoiceOpen(false)}>Cancel</Button>
               <Button variant="primary" onClick={submitConvertInvoice}>Convert to Invoice</Button>
             </View>
           </ScrollView>
