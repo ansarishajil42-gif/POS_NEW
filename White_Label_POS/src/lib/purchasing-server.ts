@@ -746,10 +746,10 @@ export const recordGRNServerFn = createServerFn({ method: "POST" })
 
       if (!po.branchId) throw new Error("PO has no branch association");
 
-      const actualPoItems = await tx
-        .select()
-        .from(purchaseOrderItems)
-        .where(eq(purchaseOrderItems.purchaseOrderId, po.id));
+      const actualPoItems = await tx.query.purchaseOrderItems.findMany({
+        where: eq(purchaseOrderItems.purchaseOrderId, po.id),
+        with: { product: true }
+      });
       if (actualPoItems.length !== data.items.length)
         throw new Error(
           "All items from the original PO must be included in the GRN. Partial item sets are not allowed.",
@@ -758,27 +758,30 @@ export const recordGRNServerFn = createServerFn({ method: "POST" })
       const actualItemMap = new Map(actualPoItems.map((i) => [i.productId, i]));
 
       for (const item of data.items) {
-        if (!item.batchNumber || item.batchNumber.trim() === "") throw new Error(`Batch number is required for product ${item.productId}`);
-        if (!item.expiryDate) throw new Error(`Expiry date is required for batch ${item.batchNumber}`);
-
-        if (item.manufacturingDate && new Date(item.expiryDate) <= new Date(item.manufacturingDate)) {
-           throw new Error(`Expiry date must be after manufacturing date for batch ${item.batchNumber}`);
-        }
-        
-        if (new Date(item.expiryDate) <= new Date()) {
-           throw new Error(`Expiry date must be in the future for batch ${item.batchNumber}`);
-        }
-
-        const duplicateBatch = await tx.select().from(batches).where(and(
-           eq(batches.tenantId, tenantId),
-           eq(batches.branchId, po.branchId),
-           eq(batches.productId, item.productId),
-           eq(batches.batchNumber, item.batchNumber)
-        )).limit(1);
-        if (duplicateBatch.length > 0) throw new Error(`Duplicate batch number ${item.batchNumber} found for this product.`);
-
         const poItem = actualItemMap.get(item.productId);
         if (!poItem) throw new Error(`Product ${item.productId} was not part of the original PO`);
+        
+        if (poItem.product?.isBatchTracked && item.receivedQty > 0) {
+          if (!item.batchNumber || item.batchNumber.trim() === "") throw new Error(`Batch number is required for product ${item.productId}`);
+          if (!item.expiryDate) throw new Error(`Expiry date is required for batch ${item.batchNumber}`);
+
+          if (item.manufacturingDate && new Date(item.expiryDate) <= new Date(item.manufacturingDate)) {
+             throw new Error(`Expiry date must be after manufacturing date for batch ${item.batchNumber}`);
+          }
+          
+          if (new Date(item.expiryDate) <= new Date()) {
+             throw new Error(`Expiry date must be in the future for batch ${item.batchNumber}`);
+          }
+
+          const duplicateBatch = await tx.select().from(batches).where(and(
+             eq(batches.tenantId, tenantId),
+             eq(batches.branchId, po.branchId),
+             eq(batches.productId, item.productId),
+             eq(batches.batchNumber, item.batchNumber)
+          )).limit(1);
+          if (duplicateBatch.length > 0) throw new Error(`Duplicate batch number ${item.batchNumber} found for this product.`);
+        }
+
         if (item.receivedQty > poItem.qty)
           throw new Error(
             `Cannot receive more than ordered. Ordered: ${poItem.qty}, Received: ${item.receivedQty}`,
