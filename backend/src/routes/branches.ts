@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
-import { branches, staffUsers, orders, shifts } from "../db/schema.js";
-import { eq, sql } from "drizzle-orm";
+import { branches, staffUsers, orders, shifts, stockLevels } from "../db/schema.js";
+import { eq, sql, inArray } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
@@ -25,7 +25,46 @@ router.get("/", requireAuth, async (req: AuthRequest, res) => {
       }
       result = await db.select().from(branches).where(eq(branches.tenantId, user.tenantId));
     }
-    res.json(result);
+
+    const branchIds = result.map((b: any) => b.id);
+    let finalResult = result as any[];
+
+    if (branchIds.length > 0) {
+      // 1. Staff Count
+      const staffCounts = await db
+        .select({ branchId: staffUsers.branchId, count: sql<number>`count(${staffUsers.id})` })
+        .from(staffUsers)
+        .where(inArray(staffUsers.branchId, branchIds))
+        .groupBy(staffUsers.branchId);
+
+      // 2. Stock Alerts Count
+      const alerts = await db
+        .select({ branchId: stockLevels.branchId, count: sql<number>`count(${stockLevels.id})` })
+        .from(stockLevels)
+        .where(sql`${stockLevels.branchId} IN ${branchIds} AND ${stockLevels.stock} <= ${stockLevels.reorderLevel}`)
+        .groupBy(stockLevels.branchId);
+
+      // 3. Sales Today
+      const sales = await db
+        .select({ branchId: orders.branchId, total: sql<number>`sum(${orders.total})` })
+        .from(orders)
+        .where(sql`${orders.branchId} IN ${branchIds} AND date(${orders.createdAt}) = current_date`)
+        .groupBy(orders.branchId);
+
+      finalResult = result.map((b: any) => {
+        const staff = staffCounts.find((s) => s.branchId === b.id)?.count || 0;
+        const stockAlerts = alerts.find((a) => a.branchId === b.id)?.count || 0;
+        const salesToday = sales.find((s) => s.branchId === b.id)?.total || 0;
+        return { 
+          ...b, 
+          staffCount: Number(staff), 
+          stockAlerts: Number(stockAlerts), 
+          salesToday: Number(salesToday) 
+        };
+      });
+    }
+
+    res.json(finalResult);
   } catch (error) {
     console.error("Fetch branches error:", error);
     res.status(500).json({ error: "Internal server error" });
