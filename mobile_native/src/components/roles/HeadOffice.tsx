@@ -695,6 +695,10 @@ export function HeadOfficePurchasing() {
     }
   };
 
+  const handleSettleInvoice = (inv: any) => {
+    showToast(`Invoice ${inv.id} marked as settled`, 'success');
+  };
+
   const handleEditVendorClick = (v: any) => {
     setVendorForm({ name: v.name || '', email: v.email || '', trn: v.trn || '' });
     setEditVendor(v);
@@ -870,7 +874,9 @@ export function HeadOfficePurchasing() {
                       </View>
                       <View style={styles.productPriceCol}>
                         <Text style={styles.productPrice}>{formatCurrency(inv.value)}</Text>
-                        <Badge variant="neutral">Open AP</Badge>
+                        <Button variant="secondary" style={styles.miniBtn} onClick={() => handleSettleInvoice(inv)}>
+                          Settle AP
+                        </Button>
                       </View>
                     </View>
                   </Card>
