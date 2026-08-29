@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { eq, and, sql } from "drizzle-orm";
-import { tenants, branches, staffUsers, orders, shifts } from "../db/schema.js";
+import { tenants, branches, staffUsers, orders, shifts, platformSettings } from "../db/schema.js";
 import bcrypt from "bcryptjs";
 
 const router = Router();
@@ -57,6 +57,53 @@ router.get("/stats/dashboard", async (req, res) => {
     });
   } catch (error) {
     console.error("Dashboard stats error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Get platform settings
+router.get("/platform-settings", async (req, res) => {
+  try {
+    let settings = await db.select().from(platformSettings).limit(1);
+    if (settings.length === 0) {
+      const inserted = await db.insert(platformSettings).values({}).returning();
+      settings = inserted;
+    }
+    res.json(settings[0]);
+  } catch (error) {
+    console.error("Fetch platform settings error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Update platform settings
+router.patch("/platform-settings", async (req, res) => {
+  try {
+    const { vatRate, vatInclusive, currency } = req.body;
+    let settings = await db.select().from(platformSettings).limit(1);
+    
+    if (settings.length === 0) {
+      await db.insert(platformSettings).values({
+        vatRate: vatRate ?? "5.00",
+        vatInclusive: vatInclusive ?? true,
+        currency: currency ?? "AED"
+      });
+    } else {
+      const updates: any = {};
+      if (vatRate !== undefined) updates.vatRate = vatRate;
+      if (vatInclusive !== undefined) updates.vatInclusive = vatInclusive;
+      if (currency !== undefined) updates.currency = currency;
+      
+      if (Object.keys(updates).length > 0) {
+        updates.updatedAt = new Date();
+        await db.update(platformSettings).set(updates).where(eq(platformSettings.id, settings[0].id));
+      }
+    }
+    
+    const updatedSettings = await db.select().from(platformSettings).limit(1);
+    res.json(updatedSettings[0]);
+  } catch (error) {
+    console.error("Update platform settings error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

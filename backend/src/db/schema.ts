@@ -395,3 +395,14 @@ export const shiftsRelations = relations(shifts, ({ one }) => ({
 export const orderPaymentsRelations = relations(orderPayments, ({ one }) => ({
   order: one(orders, { fields: [orderPayments.orderId], references: [orders.id] }),
 }));
+
+// 18. platform_settings
+export const platformSettings = pgTable("platform_settings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  currency: text("currency").notNull().default("AED"),
+  timezone: text("timezone").notNull().default("Asia/Dubai"),
+  dateFormat: text("date_format").notNull().default("DD/MM/YYYY"),
+  vatRate: decimal("vat_rate", { precision: 5, scale: 2 }).notNull().default("5.00"),
+  vatInclusive: boolean("vat_inclusive").notNull().default(true),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
