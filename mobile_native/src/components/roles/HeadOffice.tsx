@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Alert, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Alert, Modal, Keyboard } from 'react-native';
 import { AppHeader, ScreenBody, ScreenHeader } from '../Shell';
 import { Card, StatCard } from '../ui/Card';
 import { Badge, statusVariant } from '../ui/Badge';
@@ -617,6 +617,8 @@ export function HeadOfficePurchasing() {
   const [selectedBranchId, setSelectedBranchId] = useState('');
   const [vendorSearch, setVendorSearch] = useState('');
   const [branchSearch, setBranchSearch] = useState('');
+  const [vendorDropdownOpen, setVendorDropdownOpen] = useState(false);
+  const [branchDropdownOpen, setBranchDropdownOpen] = useState(false);
   const [poItems, setPoItems] = useState<{ productId: string, qty: string, unitPrice: string }[]>([]);
 
   // GRN Form
@@ -931,23 +933,34 @@ export function HeadOfficePurchasing() {
                 style={[styles.input, { marginBottom: 8 }]}
                 placeholder="Search vendor..."
                 value={vendorSearch}
-                onChangeText={setVendorSearch}
+                onFocus={() => setVendorDropdownOpen(true)}
+                onChangeText={(text) => {
+                  setVendorSearch(text);
+                  setVendorDropdownOpen(true);
+                }}
               />
-              <View style={{ maxHeight: 150, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
-                <ScrollView nestedScrollEnabled>
-                  {vendors.filter(v => v.name.toLowerCase().includes(vendorSearch.toLowerCase())).map(v => (
-                    <TouchableOpacity 
-                      key={v.id} 
-                      onPress={() => setSelectedVendorId(v.id)} 
-                      style={{ padding: 12, backgroundColor: selectedVendorId === v.id ? '#39ff14' : '#fff', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
-                      <Text style={{ fontWeight: selectedVendorId === v.id ? 'bold' : 'normal', color: '#0f172a' }}>{v.name}</Text>
-                    </TouchableOpacity>
-                  ))}
-                  {vendors.filter(v => v.name.toLowerCase().includes(vendorSearch.toLowerCase())).length === 0 && (
-                    <Text style={{ padding: 12, color: '#64748b' }}>No vendors found</Text>
-                  )}
-                </ScrollView>
-              </View>
+              {vendorDropdownOpen && (
+                <View style={{ maxHeight: 150, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
+                  <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                    {vendors.filter(v => v.name.toLowerCase().includes(vendorSearch.toLowerCase())).map(v => (
+                      <TouchableOpacity 
+                        key={v.id} 
+                        onPress={() => {
+                          setSelectedVendorId(v.id);
+                          setVendorSearch(v.name);
+                          setVendorDropdownOpen(false);
+                          Keyboard.dismiss();
+                        }} 
+                        style={{ padding: 12, backgroundColor: selectedVendorId === v.id ? '#39ff14' : '#fff', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                        <Text style={{ fontWeight: selectedVendorId === v.id ? 'bold' : 'normal', color: '#0f172a' }}>{v.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                    {vendors.filter(v => v.name.toLowerCase().includes(vendorSearch.toLowerCase())).length === 0 && (
+                      <Text style={{ padding: 12, color: '#64748b' }}>No vendors found</Text>
+                    )}
+                  </ScrollView>
+                </View>
+              )}
             </Field>
 
             <Field label="Branch">
@@ -955,23 +968,34 @@ export function HeadOfficePurchasing() {
                 style={[styles.input, { marginBottom: 8 }]}
                 placeholder="Search branch..."
                 value={branchSearch}
-                onChangeText={setBranchSearch}
+                onFocus={() => setBranchDropdownOpen(true)}
+                onChangeText={(text) => {
+                  setBranchSearch(text);
+                  setBranchDropdownOpen(true);
+                }}
               />
-              <View style={{ maxHeight: 150, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
-                <ScrollView nestedScrollEnabled>
-                  {branches.filter(b => b.name.toLowerCase().includes(branchSearch.toLowerCase())).map(b => (
-                    <TouchableOpacity 
-                      key={b.id} 
-                      onPress={() => setSelectedBranchId(b.id)} 
-                      style={{ padding: 12, backgroundColor: selectedBranchId === b.id ? '#39ff14' : '#fff', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
-                      <Text style={{ fontWeight: selectedBranchId === b.id ? 'bold' : 'normal', color: '#0f172a' }}>{b.name}</Text>
-                    </TouchableOpacity>
-                  ))}
-                  {branches.filter(b => b.name.toLowerCase().includes(branchSearch.toLowerCase())).length === 0 && (
-                    <Text style={{ padding: 12, color: '#64748b' }}>No branches found</Text>
-                  )}
-                </ScrollView>
-              </View>
+              {branchDropdownOpen && (
+                <View style={{ maxHeight: 150, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
+                  <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                    {branches.filter(b => b.name.toLowerCase().includes(branchSearch.toLowerCase())).map(b => (
+                      <TouchableOpacity 
+                        key={b.id} 
+                        onPress={() => {
+                          setSelectedBranchId(b.id);
+                          setBranchSearch(b.name);
+                          setBranchDropdownOpen(false);
+                          Keyboard.dismiss();
+                        }} 
+                        style={{ padding: 12, backgroundColor: selectedBranchId === b.id ? '#39ff14' : '#fff', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                        <Text style={{ fontWeight: selectedBranchId === b.id ? 'bold' : 'normal', color: '#0f172a' }}>{b.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                    {branches.filter(b => b.name.toLowerCase().includes(branchSearch.toLowerCase())).length === 0 && (
+                      <Text style={{ padding: 12, color: '#64748b' }}>No branches found</Text>
+                    )}
+                  </ScrollView>
+                </View>
+              )}
             </Field>
 
             <Field label="Items">
