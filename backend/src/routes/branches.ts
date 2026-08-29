@@ -2,18 +2,28 @@ import { Router } from "express";
 import { db } from "../db/index.js";
 import { branches, staffUsers, orders, shifts } from "../db/schema.js";
 import { eq, sql } from "drizzle-orm";
+import { requireAuth, AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
 
 // Get branches (optionally filtered by tenantId)
-router.get("/", async (req, res) => {
-  const { tenantId } = req.query;
+router.get("/", requireAuth, async (req: AuthRequest, res) => {
+  const queryTenantId = req.query.tenantId as string;
+  const user = req.user!;
+
   try {
     let result;
-    if (tenantId) {
-      result = await db.select().from(branches).where(eq(branches.tenantId, tenantId as string));
+    if (user.role === "super_admin") {
+      if (queryTenantId) {
+        result = await db.select().from(branches).where(eq(branches.tenantId, queryTenantId));
+      } else {
+        result = await db.select().from(branches);
+      }
     } else {
-      result = await db.select().from(branches);
+      if (!user.tenantId) {
+        return res.status(403).json({ error: "Forbidden: No tenant associated with this user" });
+      }
+      result = await db.select().from(branches).where(eq(branches.tenantId, user.tenantId));
     }
     res.json(result);
   } catch (error) {
@@ -23,8 +33,15 @@ router.get("/", async (req, res) => {
 });
 
 // Create branch
-router.post("/", async (req, res) => {
-  const { tenantId, name, address, tillCount } = req.body;
+router.post("/", requireAuth, async (req: AuthRequest, res) => {
+  let { tenantId, name, address, tillCount } = req.body;
+  const user = req.user!;
+
+  if (user.role !== "super_admin") {
+    if (!user.tenantId) return res.status(403).json({ error: "Forbidden" });
+    tenantId = user.tenantId; // force current user's tenant
+  }
+
   if (!tenantId || !name) {
     return res.status(400).json({ error: "Tenant ID and name are required" });
   }
@@ -44,10 +61,20 @@ router.post("/", async (req, res) => {
 });
 
 // Edit branch
-router.patch("/:id", async (req, res) => {
+router.patch("/:id", requireAuth, async (req: AuthRequest, res) => {
   const { id } = req.params;
   const { name, address, tillCount, status } = req.body;
+  const user = req.user!;
+  
   try {
+    // Verify ownership
+    if (user.role !== "super_admin") {
+      const existing = await db.select().from(branches).where(eq(branches.id, id));
+      if (!existing.length || existing[0].tenantId !== user.tenantId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+    }
+
     const updated = await db.update(branches)
       .set({
         ...(name && { name }),
@@ -68,9 +95,19 @@ router.patch("/:id", async (req, res) => {
 });
 
 // Delete branch
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireAuth, async (req: AuthRequest, res) => {
   const { id } = req.params;
+  const user = req.user!;
+  
   try {
+    // Verify ownership
+    if (user.role !== "super_admin") {
+      const existing = await db.select().from(branches).where(eq(branches.id, id));
+      if (!existing.length || existing[0].tenantId !== user.tenantId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+    }
+
     // Safety checks
     const branchStaff = await db.select({ count: sql<number>`count(*)::int` }).from(staffUsers).where(eq(staffUsers.branchId, id));
     if (branchStaff[0].count > 0) {

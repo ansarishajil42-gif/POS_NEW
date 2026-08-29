@@ -11,7 +11,7 @@ if (!databaseUrl) {
 }
 
 // Setup database connection
-const queryClient = postgres(databaseUrl);
+const queryClient = postgres(databaseUrl, { ssl: 'require' });
 export const db = drizzle(queryClient, { schema });
 
 // Helper to set RLS context for a query session (if RLS is implemented on DB level)

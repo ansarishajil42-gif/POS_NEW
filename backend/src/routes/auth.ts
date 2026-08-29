@@ -3,6 +3,9 @@ import { db } from "../db/index.js";
 import { staffUsers, tenants, branches } from "../db/schema.js";
 import { eq, and } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+
+const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key-12345";
 
 const router = Router();
 
@@ -49,6 +52,14 @@ router.post("/login", async (req, res) => {
       });
     }
 
+    const payload = {
+      id: user.id,
+      role: user.role,
+      tenantId: user.tenantId,
+      branchId: user.branchId,
+    };
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "24h" });
+
     res.json({
       message: "Login successful",
       user: {
@@ -60,7 +71,7 @@ router.post("/login", async (req, res) => {
         tenant: tenantInfo,
         branch: branchInfo,
       },
-      token: "mock-jwt-token-for-" + user.id,
+      token,
     });
   } catch (error) {
     console.error("Auth error:", error);
@@ -113,6 +124,14 @@ router.post("/pin-login", async (req, res) => {
       where: eq(branches.id, branchId),
     });
 
+    const payload = {
+      id: authenticatedUser.id,
+      role: authenticatedUser.role,
+      tenantId: authenticatedUser.tenantId,
+      branchId: authenticatedUser.branchId,
+    };
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "24h" });
+
     res.json({
       message: "PIN authentication successful",
       user: {
@@ -124,7 +143,7 @@ router.post("/pin-login", async (req, res) => {
         tenant: tenantInfo,
         branch: branchInfo,
       },
-      token: "mock-jwt-token-for-" + authenticatedUser.id,
+      token,
     });
   } catch (error) {
     console.error("PIN Auth error:", error);
