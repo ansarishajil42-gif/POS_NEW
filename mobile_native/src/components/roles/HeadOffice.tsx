@@ -738,9 +738,7 @@ export function HeadOfficePurchasing() {
     }
   };
 
-  const handleSettleInvoice = (inv: any) => {
-    showToast(`Invoice ${inv.id} marked as settled`, 'success');
-  };
+
 
   const handleEditVendorClick = (v: any) => {
     setVendorForm({ name: v.name || '', email: v.email || '', trn: v.trn || '' });
@@ -918,8 +916,8 @@ export function HeadOfficePurchasing() {
                         </View>
                         <View style={styles.productPriceCol}>
                           <Text style={styles.productPrice}>{formatCurrency(inv.value)}</Text>
-                          <Button variant="secondary" style={styles.miniBtn} onClick={() => handleSettleInvoice(inv)}>
-                            Settle AP
+                          <Button variant="secondary" style={styles.miniBtn} onClick={() => handleInvoiceClick(inv)}>
+                            View Details
                           </Button>
                         </View>
                       </View>
