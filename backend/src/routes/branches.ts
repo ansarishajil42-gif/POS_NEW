@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
-import { branches } from "../db/schema.js";
-import { eq } from "drizzle-orm";
+import { branches, staffUsers, orders, shifts } from "../db/schema.js";
+import { eq, sql } from "drizzle-orm";
 
 const router = Router();
 
@@ -63,6 +63,37 @@ router.patch("/:id", async (req, res) => {
     res.json(updated[0]);
   } catch (error) {
     console.error("Update branch error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Delete branch
+router.delete("/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    // Safety checks
+    const branchStaff = await db.select({ count: sql<number>`count(*)::int` }).from(staffUsers).where(eq(staffUsers.branchId, id));
+    if (branchStaff[0].count > 0) {
+      return res.status(400).json({ error: "Branch cannot be deleted because it has assigned staff members." });
+    }
+    
+    const branchOrders = await db.select({ count: sql<number>`count(*)::int` }).from(orders).where(eq(orders.branchId, id));
+    if (branchOrders[0].count > 0) {
+      return res.status(400).json({ error: "Branch cannot be deleted because it has orders." });
+    }
+
+    const branchShifts = await db.select({ count: sql<number>`count(*)::int` }).from(shifts).where(eq(shifts.branchId, id));
+    if (branchShifts[0].count > 0) {
+      return res.status(400).json({ error: "Branch cannot be deleted because it has shift records." });
+    }
+
+    const deleted = await db.delete(branches).where(eq(branches.id, id)).returning();
+    if (deleted.length === 0) {
+      return res.status(404).json({ error: "Branch not found" });
+    }
+    res.json({ success: true, deleted: deleted[0] });
+  } catch (error) {
+    console.error("Delete branch error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
