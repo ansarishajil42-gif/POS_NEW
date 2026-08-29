@@ -29,6 +29,13 @@
       "when": 1787149168130,
       "tag": "0003_hot_molly_hayes",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787998490227,
+      "tag": "0004_chubby_storm",
+      "breakpoints": true
     }
   ]
 }
