@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
-import { tenants, branches, staffUsers } from "../db/schema.js";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
+import { tenants, branches, staffUsers, orders, shifts } from "../db/schema.js";
 import bcrypt from "bcryptjs";
 
 const router = Router();
@@ -37,6 +37,26 @@ router.get("/", async (req, res) => {
     res.json(enrichedTenants);
   } catch (error) {
     console.error("Fetch tenants error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Get dashboard stats
+router.get("/stats/dashboard", async (req, res) => {
+  try {
+    const activeTenants = await db.select({ count: sql<number>`count(*)::int` }).from(tenants).where(eq(tenants.status, "Active"));
+    const totalOutlets = await db.select({ count: sql<number>`count(*)::int` }).from(branches);
+    const monthlyOrders = await db.select({ count: sql<number>`count(*)::int` }).from(orders).where(sql`date_trunc('month', ${orders.createdAt}) = date_trunc('month', current_date)`);
+    const activeTills = await db.select({ count: sql<number>`count(*)::int` }).from(shifts).where(eq(shifts.status, "Open"));
+
+    res.json({
+      activeTenants: activeTenants[0].count,
+      outlets: totalOutlets[0].count,
+      monthlyOrders: monthlyOrders[0].count,
+      activeTills: activeTills[0].count,
+    });
+  } catch (error) {
+    console.error("Dashboard stats error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -149,8 +169,6 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-export default router;
-
 // Get tenant admin
 router.get("/:id/admin", async (req, res) => {
   const { id } = req.params;
@@ -232,3 +250,5 @@ router.patch("/:id/admin", async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+
+export default router;
