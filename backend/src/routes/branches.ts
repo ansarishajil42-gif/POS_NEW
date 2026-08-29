@@ -174,4 +174,69 @@ router.delete("/:id", requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
+// Get branch stock levels
+router.get("/:id/stock", requireAuth, async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const user = req.user!;
+  try {
+    // Verify ownership
+    if (user.role !== "super_admin") {
+      const existing = await db.select().from(branches).where(eq(branches.id, id));
+      if (!existing.length || existing[0].tenantId !== user.tenantId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+    }
+
+    // Join stock_levels with products to get product names and categories
+    const { products } = await import("../db/schema.js");
+    const stock = await db
+      .select({
+        id: stockLevels.id,
+        productId: stockLevels.productId,
+        productName: products.name,
+        category: products.category,
+        stock: stockLevels.stock,
+        reorderLevel: stockLevels.reorderLevel
+      })
+      .from(stockLevels)
+      .innerJoin(products, eq(stockLevels.productId, products.id))
+      .where(eq(stockLevels.branchId, id));
+
+    res.json(stock);
+  } catch (error) {
+    console.error("Fetch branch stock error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Get branch staff
+router.get("/:id/staff", requireAuth, async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const user = req.user!;
+  try {
+    // Verify ownership
+    if (user.role !== "super_admin") {
+      const existing = await db.select().from(branches).where(eq(branches.id, id));
+      if (!existing.length || existing[0].tenantId !== user.tenantId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+    }
+
+    const staff = await db
+      .select({
+        id: staffUsers.id,
+        name: staffUsers.name,
+        role: staffUsers.role,
+        isActive: staffUsers.isActive
+      })
+      .from(staffUsers)
+      .where(eq(staffUsers.branchId, id));
+
+    res.json(staff);
+  } catch (error) {
+    console.error("Fetch branch staff error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 export default router;
