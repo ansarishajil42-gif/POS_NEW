@@ -11,6 +11,7 @@ import ordersRouter from "./routes/orders.js";
 import vendorsRouter from "./routes/vendors.js";
 import purchasingRouter from "./routes/purchasing.js";
 import usersRouter from "./routes/users.js";
+import customersRouter from "./routes/customers.js";
 import { publicRouter as blogPublicRouter, adminRouter as blogAdminRouter } from "./routes/blog.js";
 
 const app = express();
@@ -50,6 +51,7 @@ app.use("/api/orders", ordersRouter);
 app.use("/api/vendors", vendorsRouter);
 app.use("/api/purchasing", purchasingRouter);
 app.use("/api/users", usersRouter);
+app.use("/api/customers", customersRouter);
 app.use("/api/blog", blogPublicRouter);
 app.use("/api/blog-admin", blogAdminRouter);
 

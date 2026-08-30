@@ -11,7 +11,6 @@ import { useAuth } from '../../lib/auth';
 import { useHeadOffice, PurchaseItem, RoleConfig, Customer, Promotion, permToKeyMap } from '../../lib/HeadOfficeContext';
 import {
   products,
-  customerHistory
 } from '../../lib/mockData';
 import { apiClient } from '../../lib/apiClient';
 import * as Print from 'expo-print';
@@ -2392,7 +2391,7 @@ export function VatScreen({ onBack }: { onBack: () => void }) {
 
 export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => void }) {
   const { branch } = useAuth();
-  const { customers, loyaltyPolicies, updateLoyaltyPolicies, issueVoucher } = useHeadOffice();
+  const { customers, loyaltyPolicies, updateLoyaltyPolicies, fetchCustomers, addCustomer } = useHeadOffice();
 
   const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
   const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
@@ -2402,18 +2401,47 @@ export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => 
   const [minRedeem, setMinRedeem] = useState(String(loyaltyPolicies.minPoints));
   const [redValue, setRedValue] = useState(String(loyaltyPolicies.redemptionValue));
 
-  const handleSavePolicies = () => {
-    updateLoyaltyPolicies({
-      pointsPerAed: parseInt(pointsSpent) || 10,
-      minPoints: parseInt(minRedeem) || 5000,
-      redemptionValue: parseInt(redValue) || 10,
-    });
-    showToast('Loyalty policies updated successfully.', 'success');
+  // Search & Create States
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [formData, setFormData] = useState({ name: '', phone: '', email: '' });
+
+  useEffect(() => {
+    fetchCustomers(searchQuery);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setPointsSpent(String(loyaltyPolicies.pointsPerAed));
+    setMinRedeem(String(loyaltyPolicies.minPoints));
+    setRedValue(String(loyaltyPolicies.redemptionValue));
+  }, [loyaltyPolicies]);
+
+  const handleSavePolicies = async () => {
+    try {
+      await updateLoyaltyPolicies({
+        pointsPerAed: parseInt(pointsSpent) || 10,
+        minPoints: parseInt(minRedeem) || 5000,
+        redemptionValue: parseFloat(redValue) || 0.01,
+      });
+      showToast('Loyalty policies updated successfully.', 'success');
+    } catch (err: any) {
+      showToast('Failed to update policies.', 'error');
+    }
   };
 
-  const handleIssueVoucher = (c: Customer) => {
-    issueVoucher(c.id);
-    showToast(`A voucher code has been dispatched to ${c.name}.`, 'success');
+  const handleSaveCustomer = async () => {
+    if (!formData.name.trim()) {
+      showToast('Name is required', 'error');
+      return;
+    }
+    try {
+      await addCustomer(formData.name, formData.email, formData.phone);
+      showToast('Customer created successfully.', 'success');
+      setFormData({ name: '', phone: '', email: '' });
+      setIsFormOpen(false);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to create customer', 'error');
+    }
   };
 
   return (
@@ -2444,8 +2472,19 @@ export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => 
           </View>
         </Card>
 
+        {/* Search & Actions Bar */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
+          <TextInput
+            style={[styles.textInput, { flex: 1, marginRight: 8, height: 40 }]}
+            placeholder="Search customers by name, phone or email..."
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          <Button onClick={() => setIsFormOpen(true)} style={{ height: 40, justifyContent: 'center' }}>Add Customer</Button>
+        </View>
+
         {/* Customer List Section */}
-        <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Loyalty Accounts ({customers.length})</Text>
+        <Text style={styles.sectionTitle}>Loyalty Accounts ({customers.length})</Text>
         <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false} nestedScrollEnabled>
           <View style={styles.listContainer}>
             {customers.map((c) => (
@@ -2453,26 +2492,14 @@ export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => 
                 <View style={styles.cardHeaderRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.productName}>{c.name}</Text>
-                    <Text style={styles.productMeta}>{c.phone}</Text>
-                    <Text style={styles.productMeta}>{c.visits} visits · {formatCurrency(c.spent)} spent</Text>
-                    {c.vouchersIssued > 0 && (
-                      <Badge variant="success" style={{ marginTop: 4, alignSelf: 'flex-start' }}>
-                        {c.vouchersIssued} Voucher{c.vouchersIssued > 1 ? 's' : ''} Issued
-                      </Badge>
-                    )}
+                    <Text style={styles.productMeta}>{c.phone || 'No Phone'}</Text>
+                    <Text style={styles.productMeta}>{c.email || 'No Email'}</Text>
                   </View>
                   <View style={[styles.productPriceCol, { minWidth: 100 }]}>
                     <Text style={styles.pointsText}>{c.points} pts</Text>
                     <Badge variant={c.tier === 'Platinum' ? 'brand' : c.tier === 'Gold' ? 'warn' : c.tier === 'Silver' ? 'info' : 'neutral'}>
                       {c.tier}
                     </Badge>
-                    <Button
-                      variant="secondary"
-                      style={{ marginTop: 6, paddingVertical: 4 }}
-                      onClick={() => handleIssueVoucher(c)}
-                    >
-                      Issue Voucher
-                    </Button>
                   </View>
                 </View>
               </Card>
@@ -2480,6 +2507,20 @@ export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => 
           </View>
         </ScrollView>
       </ScreenBody>
+      <Sheet open={isFormOpen} onClose={() => setIsFormOpen(false)} title="New Customer">
+        <View style={styles.formGroup}>
+          <Field label="Customer Name">
+            <TextInput style={styles.input} value={formData.name} onChangeText={t => setFormData({ ...formData, name: t })} placeholder="e.g. Ali Ahmed" />
+          </Field>
+          <Field label="Email Address">
+            <TextInput style={styles.input} value={formData.email} onChangeText={t => setFormData({ ...formData, email: t })} placeholder="e.g. ali@example.com" keyboardType="email-address" autoCapitalize="none" />
+          </Field>
+          <Field label="Phone Number">
+            <TextInput style={styles.input} value={formData.phone} onChangeText={t => setFormData({ ...formData, phone: t })} placeholder="e.g. +971 50 123 4567" keyboardType="phone-pad" />
+          </Field>
+          <Button full variant="primary" onClick={handleSaveCustomer} style={styles.marginT}>Create Customer</Button>
+        </View>
+      </Sheet>
       {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
@@ -2487,43 +2528,175 @@ export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => 
 
 export function CustomerDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const { branch } = useAuth();
-  const { customers } = useHeadOffice();
+  const { customers, fetchCustomerHistory, adjustCustomerPoints, adjustCustomerBalance } = useHeadOffice();
   const c = customers.find((x) => x.id === id);
 
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
+  const [history, setHistory] = useState<any[]>([]);
+  const [totalSpend, setTotalSpend] = useState(0);
+  const [orderCount, setOrderCount] = useState(0);
+
+  // Points Adjustment Modal States
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjustType, setAdjustType] = useState<'add' | 'deduct'>('add');
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustReason, setAdjustReason] = useState('');
+
+  // Store Credit Modal States
+  const [creditOpen, setCreditOpen] = useState(false);
+  const [creditType, setCreditType] = useState<'add' | 'deduct'>('add');
+  const [creditAmount, setCreditAmount] = useState('');
+  const [creditReason, setCreditReason] = useState('');
+
+  useEffect(() => {
+    if (id) {
+      fetchCustomerHistory(id).then((res) => {
+        setHistory(res.orders);
+        setTotalSpend(res.totalSpend);
+        setOrderCount(res.orderCount);
+      }).catch((err) => {
+        console.error('History load error:', err);
+      });
+    }
+  }, [id]);
+
   if (!c) return null;
+
+  const handleAdjustPoints = async () => {
+    const delta = Number(adjustAmount);
+    if (isNaN(delta) || delta <= 0) {
+      showToast('Please enter a valid positive number', 'error');
+      return;
+    }
+    if (!adjustReason.trim()) {
+      showToast('Reason is required', 'error');
+      return;
+    }
+    const finalDelta = adjustType === 'add' ? delta : -delta;
+    try {
+      await adjustCustomerPoints(c.id, finalDelta, adjustReason);
+      showToast('Points adjusted successfully.', 'success');
+      setAdjustOpen(false);
+      setAdjustAmount('');
+      setAdjustReason('');
+      
+      const res = await fetchCustomerHistory(c.id);
+      setHistory(res.orders);
+      setTotalSpend(res.totalSpend);
+      setOrderCount(res.orderCount);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to adjust points', 'error');
+    }
+  };
+
+  const handleAdjustCredit = async () => {
+    const delta = Number(creditAmount);
+    if (isNaN(delta) || delta <= 0) {
+      showToast('Please enter a valid positive number', 'error');
+      return;
+    }
+    if (!creditReason.trim()) {
+      showToast('Reason is required', 'error');
+      return;
+    }
+    const finalDelta = creditType === 'add' ? delta : -delta;
+    try {
+      await adjustCustomerBalance(c.id, finalDelta, creditReason);
+      showToast('Store credit adjusted successfully.', 'success');
+      setCreditOpen(false);
+      setCreditAmount('');
+      setCreditReason('');
+      
+      const res = await fetchCustomerHistory(c.id);
+      setHistory(res.orders);
+      setTotalSpend(res.totalSpend);
+      setOrderCount(res.orderCount);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to adjust credit', 'error');
+    }
+  };
 
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="HO" branch={branch} />
       <ScreenHeader title={c.name} subtitle={`${c.tier} · ${c.points} points`} onBack={onBack} />
       <ScreenBody>
-        <View style={styles.statsGrid}>
-          <View style={styles.thirdCol}>
-            <StatCard label="Points" value={String(c.points)} accent="brand" />
-          </View>
-          <View style={styles.thirdCol}>
-            <StatCard label="Visits" value={String(c.visits)} accent="sky" />
-          </View>
-          <View style={styles.thirdCol}>
-            <StatCard label="Spent" value={formatCurrency(c.spent)} />
-          </View>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginTop: 8 }}>
+          <View style={{ width: '48%', marginBottom: 8 }}><StatCard label="Points" value={String(c.points)} accent="brand" /></View>
+          <View style={{ width: '48%', marginBottom: 8 }}><StatCard label="Store Credit" value={formatCurrency(Number(c.storeCredit || 0))} accent="sky" /></View>
+          <View style={{ width: '48%' }}><StatCard label="Visits" value={String(orderCount)} accent="sky" /></View>
+          <View style={{ width: '48%' }}><StatCard label="Spent" value={formatCurrency(totalSpend)} /></View>
+        </View>
+
+        {/* Manual Adjustments Actions */}
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, marginBottom: 8 }}>
+          <Button style={{ flex: 1 }} variant="secondary" onClick={() => setAdjustOpen(true)}>Adjust Points</Button>
+          <Button style={{ flex: 1 }} variant="secondary" onClick={() => setCreditOpen(true)}>Adjust Credit</Button>
         </View>
 
         <Text style={styles.sectionTitle}>Purchase History</Text>
-        <View style={styles.listContainer}>
-          {customerHistory.map((h) => (
-            <Card key={h.id}>
-              <View style={styles.cardHeaderRow}>
-                <View>
-                  <Text style={styles.productName}>{h.date}</Text>
-                  <Text style={styles.productMeta}>{h.items} items</Text>
-                </View>
-                <Text style={styles.productPrice}>${h.total}</Text>
-              </View>
-            </Card>
-          ))}
-        </View>
+        <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+          <View style={styles.listContainer}>
+            {history.length === 0 ? (
+              <Text style={{ textAlign: 'center', color: '#666', marginTop: 12 }}>No purchase history recorded.</Text>
+            ) : (
+              history.map((h) => (
+                <Card key={h.id}>
+                  <View style={styles.cardHeaderRow}>
+                    <View>
+                      <Text style={styles.productName}>{new Date(h.createdAt).toLocaleDateString()}</Text>
+                      <Text style={styles.productMeta}>Source: {h.source || 'POS'} · Status: {h.status}</Text>
+                    </View>
+                    <Text style={styles.productPrice}>{formatCurrency(Number(h.total))}</Text>
+                  </View>
+                </Card>
+              ))
+            )}
+          </View>
+        </ScrollView>
       </ScreenBody>
+
+      {/* Adjust Points Sheet */}
+      <Sheet open={adjustOpen} onClose={() => setAdjustOpen(false)} title="Adjust Points">
+        <View style={styles.formGroup}>
+          <Field label="Action">
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <Button style={{ flex: 1 }} variant={adjustType === 'add' ? 'primary' : 'secondary'} onClick={() => setAdjustType('add')}>Add / Accrue (+)</Button>
+              <Button style={{ flex: 1 }} variant={adjustType === 'deduct' ? 'primary' : 'secondary'} onClick={() => setAdjustType('deduct')}>Deduct (-)</Button>
+            </View>
+          </Field>
+          <Field label="Points Amount">
+            <TextInput style={styles.input} keyboardType="numeric" value={adjustAmount} onChangeText={setAdjustAmount} placeholder="e.g. 50" />
+          </Field>
+          <Field label="Adjustment Reason">
+            <TextInput style={styles.input} value={adjustReason} onChangeText={setAdjustReason} placeholder="e.g. Goodwill gesture" />
+          </Field>
+          <Button full variant="primary" onClick={handleAdjustPoints} style={styles.marginT}>Save Adjustment</Button>
+        </View>
+      </Sheet>
+
+      {/* Adjust Store Credit Sheet */}
+      <Sheet open={creditOpen} onClose={() => setCreditOpen(false)} title="Adjust Store Credit">
+        <View style={styles.formGroup}>
+          <Field label="Action">
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <Button style={{ flex: 1 }} variant={creditType === 'add' ? 'primary' : 'secondary'} onClick={() => setCreditType('add')}>Add / Accrue (+)</Button>
+              <Button style={{ flex: 1 }} variant={creditType === 'deduct' ? 'primary' : 'secondary'} onClick={() => setCreditType('deduct')}>Deduct (-)</Button>
+            </View>
+          </Field>
+          <Field label="Credit Amount (AED)">
+            <TextInput style={styles.input} keyboardType="numeric" value={creditAmount} onChangeText={setCreditAmount} placeholder="e.g. 10.00" />
+          </Field>
+          <Field label="Adjustment Reason">
+            <TextInput style={styles.input} value={creditReason} onChangeText={setCreditReason} placeholder="e.g. Refund balance" />
+          </Field>
+          <Button full variant="primary" onClick={handleAdjustCredit} style={styles.marginT}>Save Adjustment</Button>
+        </View>
+      </Sheet>
+
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }

@@ -57,12 +57,15 @@ export interface LoyaltyPolicies {
 export interface Customer {
   id: string;
   name: string;
-  phone: string;
+  phone?: string;
+  email?: string;
   tier: 'Platinum' | 'Gold' | 'Silver' | 'Bronze';
   points: number;
-  visits: number;
-  spent: number;
-  vouchersIssued: number;
+  visits?: number;
+  spent?: number;
+  storeCredit?: string;
+  isActive?: boolean;
+  vouchersIssued?: number;
 }
 
 export interface Promotion {
@@ -136,7 +139,14 @@ interface HeadOfficeContextProps {
   loyaltyPolicies: LoyaltyPolicies;
   customers: Customer[];
   promotions: Promotion[];
-  updateLoyaltyPolicies: (policies: LoyaltyPolicies) => void;
+  fetchCustomers: (search?: string) => Promise<void>;
+  addCustomer: (name: string, email?: string, phone?: string) => Promise<void>;
+  updateCustomer: (id: string, name: string, email?: string, phone?: string, isActive?: boolean) => Promise<void>;
+  adjustCustomerPoints: (customerId: string, pointsDelta: number, reason: string) => Promise<void>;
+  adjustCustomerBalance: (customerId: string, amountDelta: number, reason: string) => Promise<void>;
+  fetchCustomerHistory: (customerId: string) => Promise<{ orders: any[]; totalSpend: number; orderCount: number }>;
+  fetchLoyaltySettings: () => Promise<void>;
+  updateLoyaltyPolicies: (policies: LoyaltyPolicies) => Promise<void>;
   issueVoucher: (customerId: string) => void;
   createCampaign: (name: string, type: string, target: string, value: string, startDate: string, endDate: string) => void;
   staffUsers: StaffUser[];
@@ -211,13 +221,6 @@ const initialRoles: RoleConfig[] = [
   },
 ];
 
-const initialCustomers: Customer[] = [
-  { id: 'c1', name: 'Fatima Al Mansoori', phone: '+971 50 123 4567', tier: 'Platinum', points: 18490, visits: 94, spent: 32400, vouchersIssued: 0 },
-  { id: 'c2', name: 'John Doe', phone: '+971 54 987 6543', tier: 'Gold', points: 8400, visits: 41, spent: 15100, vouchersIssued: 0 },
-  { id: 'c3', name: 'Saeed Al Kaabi', phone: '+971 52 444 8888', tier: 'Silver', points: 3100, visits: 18, spent: 5400, vouchersIssued: 0 },
-  { id: 'c4', name: 'Sarah Smith', phone: '+971 56 111 2222', tier: 'Bronze', points: 450, visits: 3, spent: 890, vouchersIssued: 0 },
-];
-
 const initialPromotions: Promotion[] = [
   { id: 'pr1', name: 'National Day Bundle', type: 'Bundle', target: 'Basic goods', value: 'Buy 2 Get 1', startDate: '2026-11-25', endDate: '2026-12-05', status: 'Scheduled' },
   { id: 'pr2', name: 'Dairy Clearance', type: 'Discount', target: 'Dairy near-expiry', value: '30% OFF', startDate: '2026-08-18', endDate: '2026-08-25', status: 'Active' },
@@ -235,7 +238,7 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
     minPoints: 5000,
     redemptionValue: 10,
   });
-  const [customers, setCustomers] = useState<Customer[]>(initialCustomers);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [promotions, setPromotions] = useState<Promotion[]>(initialPromotions);
 
   const fetchBranches = async () => {
@@ -494,6 +497,8 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       fetchPurchasing();
       fetchStaff();
       fetchRoles();
+      fetchCustomers();
+      fetchLoyaltySettings();
     }
   }, [user?.tenantId]);
 
@@ -514,13 +519,82 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
 
 
 
-  const updateLoyaltyPolicies = (policies: LoyaltyPolicies) => {
-    setLoyaltyPolicies(policies);
+  const fetchLoyaltySettings = async () => {
+    try {
+      const data = await apiClient.get('/tenants/settings') as any;
+      if (data) {
+        setLoyaltyPolicies({
+          pointsPerAed: Number(data.loyaltyPointsPerAed ?? 10),
+          minPoints: Number(data.loyaltyMinPointsToRedeem ?? 5000),
+          redemptionValue: Number(data.loyaltyRedemptionRate ?? 0.01),
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch loyalty settings:', err);
+    }
+  };
+
+  const updateLoyaltyPolicies = async (policies: LoyaltyPolicies) => {
+    try {
+      await apiClient.patch('/tenants/settings', {
+        loyaltyPointsPerAed: policies.pointsPerAed,
+        loyaltyMinPointsToRedeem: policies.minPoints,
+        loyaltyRedemptionRate: policies.redemptionValue,
+      });
+      setLoyaltyPolicies(policies);
+    } catch (err) {
+      console.error('Failed to update loyalty settings:', err);
+    }
+  };
+
+  const fetchCustomers = async (search = '') => {
+    try {
+      const res = await apiClient.get(`/customers?search=${encodeURIComponent(search)}`) as any;
+      if (res && res.success) {
+        setCustomers(res.customers || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch customers:', err);
+    }
+  };
+
+  const addCustomer = async (name: string, email?: string, phone?: string) => {
+    await apiClient.post('/customers', { name, email, phone });
+    await fetchCustomers();
+  };
+
+  const updateCustomer = async (id: string, name: string, email?: string, phone?: string, isActive?: boolean) => {
+    await apiClient.patch(`/customers/${id}`, { name, email, phone, isActive });
+    await fetchCustomers();
+  };
+
+  const adjustCustomerPoints = async (customerId: string, pointsDelta: number, reason: string) => {
+    await apiClient.post(`/customers/${customerId}/adjust-points`, { pointsDelta, reason });
+    await fetchCustomers();
+  };
+
+  const adjustCustomerBalance = async (customerId: string, amountDelta: number, reason: string) => {
+    await apiClient.post(`/customers/${customerId}/adjust-balance`, { amountDelta, reason });
+    await fetchCustomers();
+  };
+
+  const fetchCustomerHistory = async (customerId: string) => {
+    try {
+      const res = await apiClient.get(`/customers/${customerId}/history`) as any;
+      return {
+        orders: res.orders || [],
+        totalSpend: res.totalSpend || 0,
+        orderCount: res.orderCount || 0,
+      };
+    } catch (err) {
+      console.error('Failed to fetch customer history:', err);
+      return { orders: [], totalSpend: 0, orderCount: 0 };
+    }
   };
 
   const issueVoucher = (customerId: string) => {
     setCustomers((prev) =>
-      prev.map((c) => (c.id === customerId ? { ...c, vouchersIssued: c.vouchersIssued + 1 } : c))
+      prev.map((c) => (c.id === customerId ? { ...c, vouchersIssued: (c.vouchersIssued || 0) + 1 } : c))
     );
   };
 
@@ -611,10 +685,17 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       loyaltyPolicies,
       customers,
       promotions,
-      togglePermission,
+      fetchCustomers,
+      addCustomer,
+      updateCustomer,
+      adjustCustomerPoints,
+      adjustCustomerBalance,
+      fetchCustomerHistory,
+      fetchLoyaltySettings,
       updateLoyaltyPolicies,
       issueVoucher,
       createCampaign,
+      togglePermission,
       staffUsers,
       fetchStaff,
       addStaff,

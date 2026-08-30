@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, pgEnum, uuid, decimal, integer, boolean, unique } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, pgEnum, uuid, decimal, integer, boolean, unique, index, json } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
 export const roleEnum = pgEnum("role", [
@@ -28,6 +28,8 @@ export const tenantSettings = pgTable("tenant_settings", {
   vatRate: decimal("vat_rate", { precision: 5, scale: 2 }).notNull().default("5.00"),
   vatInclusive: boolean("vat_inclusive").notNull().default(true),
   loyaltyRedemptionRate: decimal("loyalty_redemption_rate", { precision: 5, scale: 2 }).notNull().default("0.01"), // e.g. 1 point = 0.01 currency
+  loyaltyPointsPerAed: integer("loyalty_points_per_aed").notNull().default(10),
+  loyaltyMinPointsToRedeem: integer("loyalty_min_points_to_redeem").notNull().default(5000),
   currency: text("currency").notNull().default("AED"),
   taxRegistrationNumber: text("trn"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -205,6 +207,8 @@ export const customers = pgTable("customers", {
   email: text("email"),
   points: integer("points").notNull().default(0),
   tier: text("tier").notNull().default("Bronze"), // Bronze, Silver, Gold, Platinum
+  storeCredit: decimal("store_credit", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -242,6 +246,7 @@ export const orders = pgTable("orders", {
   branchId: uuid("branch_id").notNull().references(() => branches.id),
   cashierId: uuid("cashier_id").references(() => staffUsers.id),
   tillId: text("till_id"),
+  customerId: uuid("customer_id").references(() => customers.id),
   source: text("source").default("POS"), // POS, talabat, careem, instashop
   subtotal: decimal("subtotal", { precision: 12, scale: 2 }).notNull(),
   vat: decimal("vat", { precision: 12, scale: 2 }).notNull(),
@@ -488,3 +493,21 @@ export const blogPosts = pgTable("blog_posts", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   publishedAt: timestamp("published_at"),
 });
+
+// 21. audit_logs
+export const auditLogs = pgTable("audit_logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id")
+    .notNull()
+    .references(() => tenants.id, { onDelete: "cascade" }),
+  branchId: uuid("branch_id").references(() => branches.id),
+  userId: uuid("user_id").references(() => staffUsers.id),
+  action: text("action").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  details: json("details"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  tenantIdx: index("audit_logs_tenant_idx").on(table.tenantId),
+  createdAtIdx: index("audit_logs_created_at_idx").on(table.createdAt),
+}));
