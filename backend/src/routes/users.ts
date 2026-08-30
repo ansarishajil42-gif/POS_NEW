@@ -10,6 +10,7 @@ const router = Router();
 // Get users (filtered by tenantId, branchId)
 router.get("/", async (req, res) => {
   const { tenantId, branchId, role } = req.query;
+  console.log("[Backend] GET /users query params:", { tenantId, branchId, role });
   try {
     let conditions = [];
     if (tenantId) {
@@ -49,6 +50,7 @@ router.get("/", async (req, res) => {
       })
         .from(staffUsers);
     }
+    console.log("[Backend] GET /users returning users count:", result.length);
     res.json(result);
   } catch (error) {
     console.error("Fetch users error:", error);
@@ -59,6 +61,7 @@ router.get("/", async (req, res) => {
 // Create user (hashing password or PIN)
 router.post("/", async (req, res) => {
   const { tenantId, branchId, name, email, password, pin, role } = req.body;
+  console.log("[Backend] POST /users payload:", { tenantId, branchId, name, email, role, passwordProvided: !!password, pinProvided: !!pin });
 
   if (!role) {
     return res.status(400).json({ error: "role is required" });
@@ -95,6 +98,7 @@ router.post("/", async (req, res) => {
       isActive: staffUsers.isActive,
     });
 
+    console.log("[Backend] POST /users created user:", newUser[0]);
     res.status(201).json(newUser[0]);
   } catch (error: any) {
     console.error("Create user error:", error);

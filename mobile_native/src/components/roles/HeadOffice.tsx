@@ -1596,6 +1596,9 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
   const [activeTab, setActiveTab] = useState<'directory' | 'roles'>('directory');
   const [selectedRoleName, setSelectedRoleName] = useState<string>('Branch Manager');
   
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
   const [staffModalOpen, setStaffModalOpen] = useState(false);
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
   const [branchPickerOpen, setBranchPickerOpen] = useState(false);
@@ -1641,20 +1644,20 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
 
   const handleSave = async () => {
     if (!staffForm.name || !staffForm.email || !staffForm.role) {
-      Alert.alert("Validation Error", "Name, Email and Role are required.");
+      showToast("Name, Email and Role are required.", "error");
       return;
     }
     if (!staffForm.branchId) {
-      Alert.alert("Validation Error", "Branch assignment is required.");
+      showToast("Branch assignment is required.", "error");
       return;
     }
     if (!staffForm.id) {
       if (staffForm.role === 'cashier' && !staffForm.pin) {
-        Alert.alert("Validation Error", "PIN is required for Cashier.");
+        showToast("PIN is required for Cashier.", "error");
         return;
       }
       if (staffForm.role !== 'cashier' && !staffForm.password) {
-        Alert.alert("Validation Error", "Password is required.");
+        showToast("Password is required.", "error");
         return;
       }
     }
@@ -1666,10 +1669,10 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
         await addStaff(staffForm);
       }
       setStaffModalOpen(false);
-      Alert.alert("Success", "Staff saved successfully.");
+      showToast("Staff saved successfully.", "success");
     } catch (err: any) {
       console.error("Save staff error details:", err);
-      Alert.alert("Save Failed", err.message || "An error occurred.");
+      showToast(err.message || "An error occurred.", "error");
     }
   };
 
@@ -1725,8 +1728,9 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
                             onPress: async () => {
                               try {
                                 await deleteStaff(u.id);
+                                showToast("Staff deleted successfully.", "success");
                               } catch (err: any) {
-                                Alert.alert("Delete Failed", err.message || "linked records maujood hain");
+                                showToast(err.message || "linked records maujood hain", "error");
                               }
                             }
                           }
@@ -1922,6 +1926,7 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
           </TouchableOpacity>
         ))}
       </Sheet>
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }

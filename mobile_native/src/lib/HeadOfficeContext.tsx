@@ -276,9 +276,14 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
   const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
 
   const fetchStaff = async () => {
-    if (!user?.tenantId) return;
+    if (!user?.tenantId) {
+      console.log("[Mobile fetchStaff] Skip fetch - user.tenantId is missing");
+      return;
+    }
     try {
+      console.log(`[Mobile fetchStaff] Fetching users for tenantId: ${user.tenantId}`);
       const data = await apiClient.get(`/users?tenantId=${user.tenantId}`) as StaffUser[];
+      console.log(`[Mobile fetchStaff] Fetched ${data.length} users successfully.`, JSON.stringify(data, null, 2));
       setStaffUsers(data);
     } catch (err) {
       console.error('Failed to fetch staff:', err);
@@ -286,8 +291,13 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
   };
 
   const addStaff = async (data: Partial<StaffUser>) => {
-    if (!user?.tenantId) return;
-    await apiClient.post('/users', { tenantId: user.tenantId, ...data });
+    if (!user?.tenantId) {
+      console.log("[Mobile addStaff] Skip add - user.tenantId is missing");
+      return;
+    }
+    console.log("[Mobile addStaff] Adding staff payload:", JSON.stringify({ tenantId: user.tenantId, ...data }, null, 2));
+    const response = await apiClient.post('/users', { tenantId: user.tenantId, ...data });
+    console.log("[Mobile addStaff] Server response:", JSON.stringify(response, null, 2));
     await fetchStaff();
   };
 
