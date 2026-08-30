@@ -2228,19 +2228,17 @@ export function VatScreen({ onBack }: { onBack: () => void }) {
     loadData();
   }, []);
 
-  const handleToggleInclusive = async () => {
+  const handleSaveSettings = async () => {
     try {
-      const nextInclusive = !inclusive;
-      setInclusive(nextInclusive);
       await updateVatSettings({
         vatRate,
-        vatInclusive: nextInclusive,
+        vatInclusive: inclusive,
         taxRegistrationNumber: trn,
       });
-      showToast(`VAT ${nextInclusive ? 'Inclusive' : 'Exclusive'} setting saved.`, 'success');
+      showToast("VAT settings saved", "success");
       loadData();
     } catch (err: any) {
-      showToast('Failed to update settings', 'error');
+      showToast("Failed to save settings", "error");
     }
   };
 
@@ -2271,82 +2269,120 @@ export function VatScreen({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const handleDownloadZReport = () => {
-    showToast('Audit-ready Z-Reports bundle has been generated.', 'success');
-  };
-
-  // Receipt calculations
-  const baseTotal = 86.50;
-  const rateVal = parseFloat(vatRate) / 100;
-  
-  let receiptSubtotal = 0;
-  let receiptVat = 0;
-  let receiptTotal = 0;
-
-  if (inclusive) {
-    receiptTotal = baseTotal;
-    receiptSubtotal = receiptTotal / (1 + rateVal);
-    receiptVat = receiptTotal - receiptSubtotal;
-  } else {
-    receiptSubtotal = baseTotal / (1 + 0.05); // Back to base subtotal for consistency
-    receiptVat = receiptSubtotal * rateVal;
-    receiptTotal = receiptSubtotal + receiptVat;
-  }
-
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="HO" branch={branch} />
-      <ScreenHeader title="VAT Compliance" subtitle="FTA-ready reports & configurations" onBack={onBack} />
+      <ScreenHeader title="VAT Compliance" subtitle="Configure and download compliance reports" onBack={onBack} />
       <ScreenBody>
         {loading ? (
           <Card style={{ padding: 40, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: '#64748b' }}>Loading VAT Compliance data...</Text>
+            <Text style={{ color: '#64748b' }}>Loading VAT configurations...</Text>
           </Card>
         ) : (
-          <>
-            <Card>
-              <View style={styles.cardHeaderRow}>
-                <Text style={styles.cardTitle}>Sample Tax Invoice</Text>
-                <TouchableOpacity onPress={handleToggleInclusive}>
-                  <Text style={styles.toggleTextAction}>{inclusive ? 'VAT Inclusive' : 'VAT Exclusive'}</Text>
-                </TouchableOpacity>
+          <Card>
+            <Text style={[styles.cardTitle, { marginBottom: 16 }]}>VAT configuration</Text>
+            
+            {/* Tax-inclusive shelf pricing toggle */}
+            <View style={{
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              backgroundColor: '#f8fafc',
+              padding: 16,
+              borderRadius: 12,
+              marginBottom: 16
+            }}>
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#0f172a' }}>
+                  {inclusive ? "Tax-inclusive" : "Tax-exclusive"} shelf pricing
+                </Text>
+                <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                  Applies to all outlets in this tenant.
+                </Text>
               </View>
-              <View style={styles.receiptContainer}>
-                <View style={styles.receiptLine}><Text style={styles.receiptLabel}>TRN</Text><Text style={styles.receiptVal}>{trn || 'Not Configured'}</Text></View>
-                <View style={styles.receiptLine}><Text style={styles.receiptLabel}>Invoice #</Text><Text style={styles.receiptVal}>RCP-50421</Text></View>
-                <View style={styles.receiptDivider} />
-                <View style={styles.receiptLine}><Text style={styles.receiptLabel}>Subtotal</Text><Text style={styles.receiptVal}>{currency} {receiptSubtotal.toFixed(2)}</Text></View>
-                <View style={styles.receiptLine}><Text style={styles.receiptLabel}>VAT ({vatRate}%)</Text><Text style={styles.receiptVal}>{currency} {receiptVat.toFixed(2)}</Text></View>
-                <View style={styles.receiptDivider} />
-                <View style={styles.receiptLine}><Text style={styles.receiptLabelBold}>Total ({inclusive ? 'VAT Incl.' : 'VAT Excl.'})</Text><Text style={styles.receiptValBold}>{currency} {receiptTotal.toFixed(2)}</Text></View>
-              </View>
-            </Card>
-
-            {/* Live FTA Card */}
-            <Card style={styles.marginT}>
-              <Text style={styles.cardTitle}>FTA Filing Summary (Q3 2026)</Text>
-              <View style={styles.inventoryList}>
-                <DetailRow label="Standard-rated supplies" value={`${currency} ${parseFloat(summary.salesExVat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
-                <DetailRow label="Output VAT" value={`${currency} ${parseFloat(summary.outputVat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
-                <DetailRow label="Input VAT" value={`${currency} ${parseFloat(summary.inputVat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
-                <DetailRow label="Net VAT payable" value={`${currency} ${parseFloat(summary.netVat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
-              </View>
-            </Card>
-
-            {/* Action Downloads Row */}
-            <View style={styles.actionsGrid}>
-              <View style={styles.halfCol}>
-                <Button variant="secondary" style={styles.actionBtn} onClick={handleDownloadZReport}>
-                  Download Z-Reports
-                </Button>
-              </View>
-              <View style={styles.halfCol}>
-                <Button variant="primary" style={styles.actionBtn} onClick={handleDownloadSummary}>
-                  Download FTA Summary
-                </Button>
-              </View>
+              <TouchableOpacity
+                onPress={() => setInclusive(!inclusive)}
+                style={[styles.switchTrack, inclusive ? styles.trackOn : styles.trackOff]}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.switchThumb, inclusive ? styles.thumbOn : styles.thumbOff]} />
+              </TouchableOpacity>
             </View>
-          </>
+
+            {/* Standard rate input */}
+            <View style={{
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              borderWidth: 1,
+              borderColor: '#e2e8f0',
+              borderRadius: 12,
+              paddingVertical: 12,
+              paddingHorizontal: 16,
+              marginBottom: 12
+            }}>
+              <Text style={{ color: '#64748b', fontSize: 14 }}>Standard rate (%)</Text>
+              <TextInput
+                style={{
+                  fontSize: 14,
+                  fontWeight: 'bold',
+                  color: '#0f172a',
+                  width: 80,
+                  textAlign: 'right',
+                  padding: 0
+                }}
+                keyboardType="numeric"
+                value={vatRate}
+                onChangeText={setVatRate}
+              />
+            </View>
+
+            {/* Output VAT read-only */}
+            <View style={{
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              borderWidth: 1,
+              borderColor: '#e2e8f0',
+              borderRadius: 12,
+              paddingVertical: 14,
+              paddingHorizontal: 16,
+              marginBottom: 12
+            }}>
+              <Text style={{ color: '#64748b', fontSize: 14 }}>Output VAT this period</Text>
+              <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#0f172a' }}>
+                {currency} {parseFloat(summary.outputVat).toFixed(2)}
+              </Text>
+            </View>
+
+            {/* Input VAT read-only */}
+            <View style={{
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              borderWidth: 1,
+              borderColor: '#e2e8f0',
+              borderRadius: 12,
+              paddingVertical: 14,
+              paddingHorizontal: 16,
+              marginBottom: 20
+            }}>
+              <Text style={{ color: '#64748b', fontSize: 14 }}>Input VAT this period</Text>
+              <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#0f172a' }}>
+                {currency} {parseFloat(summary.inputVat).toFixed(2)}
+              </Text>
+            </View>
+
+            {/* Action buttons inside the card */}
+            <View style={{ flexDirection: 'column', gap: 10 }}>
+              <Button variant="primary" onClick={handleSaveSettings}>
+                Save VAT settings
+              </Button>
+              <Button variant="secondary" onClick={handleDownloadSummary}>
+                Download FTA tax summary
+              </Button>
+            </View>
+          </Card>
         )}
       </ScreenBody>
       {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
