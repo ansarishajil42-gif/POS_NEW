@@ -1617,6 +1617,13 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
   const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
   const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
 
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery]);
+
   const [staffModalOpen, setStaffModalOpen] = useState(false);
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
   const [branchPickerOpen, setBranchPickerOpen] = useState(false);
@@ -1701,6 +1708,18 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
 
   const selectedRole = roles.find(r => r.role === selectedRoleName);
 
+  const filteredStaff = staffUsers
+    .filter((u: any) => u.role !== 'super_admin' && u.role !== 'head_office_admin')
+    .filter((u: any) => {
+      const q = searchQuery.toLowerCase().trim();
+      if (!q) return true;
+      const nameMatch = (u.name || '').toLowerCase().includes(q);
+      const emailMatch = (u.email || '').toLowerCase().includes(q);
+      return nameMatch || emailMatch;
+    });
+
+  const paginatedStaff = filteredStaff.slice(0, currentPage * 10);
+
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="HO" branch={branch} />
@@ -1718,47 +1737,67 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
 
         {activeTab === 'directory' ? (
           <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
-            {staffUsers
-              .filter((u: any) => u.role !== 'super_admin' && u.role !== 'head_office_admin')
-              .map((u: any) => (
-                <Card key={u.id} style={{ marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <View style={{ flex: 1, paddingRight: 8 }}>
-                    <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#0f172a' }}>{u.name || 'Unnamed'}</Text>
-                    <Text style={{ color: '#64748b', fontSize: 13 }}>{u.email}</Text>
-                    <Text style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>
-                      Role: {getRoleLabel(u.role)} • Branch: {branches.find(b => b.id === u.branchId)?.name || '-'}
-                    </Text>
-                    <View style={{ marginTop: 4, alignSelf: 'flex-start' }}>
-                      <Badge variant={u.isActive ? 'brand' : 'neutral'}>{u.isActive ? 'Active' : 'Inactive'}</Badge>
-                    </View>
+            <View style={styles.searchBar}>
+              <Search size={16} color="#94a3b8" />
+              <TextInput
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="Search staff by name or email..."
+                placeholderTextColor="#94a3b8"
+                style={styles.searchInput}
+              />
+            </View>
+
+            {paginatedStaff.map((u: any) => (
+              <Card key={u.id} style={{ marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#0f172a' }}>{u.name || 'Unnamed'}</Text>
+                  <Text style={{ color: '#64748b', fontSize: 13 }}>{u.email}</Text>
+                  <Text style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>
+                    Role: {getRoleLabel(u.role)} • Branch: {branches.find(b => b.id === u.branchId)?.name || '-'}
+                  </Text>
+                  <View style={{ marginTop: 4, alignSelf: 'flex-start' }}>
+                    <Badge variant={u.isActive ? 'brand' : 'neutral'}>{u.isActive ? 'Active' : 'Inactive'}</Badge>
                   </View>
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    <Button variant="secondary" onClick={() => handleEdit(u)}>Edit</Button>
-                    <Button variant="danger" onClick={() => {
-                      Alert.alert(
-                        "Delete User",
-                        "Are you sure you want to delete this staff member?",
-                        [
-                          { text: "Cancel", style: "cancel" },
-                          {
-                            text: "Delete",
-                            style: "destructive",
-                            onPress: async () => {
-                              try {
-                                await deleteStaff(u.id);
-                                showToast("Staff deleted successfully.", "success");
-                              } catch (err: any) {
-                                showToast(err.message || "linked records maujood hain", "error");
-                              }
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <Button variant="secondary" onClick={() => handleEdit(u)}>Edit</Button>
+                  <Button variant="danger" onClick={() => {
+                    Alert.alert(
+                      "Delete User",
+                      "Are you sure you want to delete this staff member?",
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        {
+                          text: "Delete",
+                          style: "destructive",
+                          onPress: async () => {
+                            try {
+                              await deleteStaff(u.id);
+                              showToast("Staff deleted successfully.", "success");
+                            } catch (err: any) {
+                              showToast(err.message || "linked records maujood hain", "error");
                             }
                           }
-                        ]
-                      );
-                    }}>Del</Button>
-                  </View>
-                </Card>
-              ))}
-            {staffUsers.length === 0 && <Text style={{ textAlign: 'center', marginTop: 20, color: '#94a3b8' }}>No staff found.</Text>}
+                        }
+                      ]
+                    );
+                  }}>Del</Button>
+                </View>
+              </Card>
+            ))}
+            {paginatedStaff.length === 0 && <Text style={{ textAlign: 'center', marginTop: 20, color: '#94a3b8' }}>No staff found.</Text>}
+
+            {filteredStaff.length > paginatedStaff.length && (
+              <Button
+                full
+                variant="secondary"
+                onClick={() => setCurrentPage(prev => prev + 1)}
+                style={{ marginVertical: 12 }}
+              >
+                Load More ({filteredStaff.length - paginatedStaff.length} remaining)
+              </Button>
+            )}
           </ScrollView>
         ) : (
           <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
