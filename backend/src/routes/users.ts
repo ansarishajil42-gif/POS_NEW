@@ -155,6 +155,28 @@ router.delete("/:id", async (req, res) => {
   const tenantId = (req as any).user?.tenantId;
 
   try {
+    const { orders, shifts } = await import("../db/schema.js");
+
+    // Check linked orders
+    const linkedOrders = await db.select({ id: orders.id })
+      .from(orders)
+      .where(eq(orders.cashierId, id))
+      .limit(1);
+
+    if (linkedOrders.length > 0) {
+      return res.status(400).json({ error: "linked records maujood hain" });
+    }
+
+    // Check linked shifts
+    const linkedShifts = await db.select({ id: shifts.id })
+      .from(shifts)
+      .where(eq(shifts.cashierId, id))
+      .limit(1);
+
+    if (linkedShifts.length > 0) {
+      return res.status(400).json({ error: "linked records maujood hain" });
+    }
+
     const deleted = await db.delete(staffUsers)
       .where(and(eq(staffUsers.id, id), eq(staffUsers.tenantId, tenantId)))
       .returning();

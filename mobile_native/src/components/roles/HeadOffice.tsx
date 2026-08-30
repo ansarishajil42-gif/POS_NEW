@@ -1640,7 +1640,26 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
                 </View>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <Button variant="secondary" onClick={() => handleEdit(u)}>Edit</Button>
-                  <Button variant="danger" onClick={() => deleteStaff(u.id)}>Del</Button>
+                  <Button variant="danger" onClick={() => {
+                    Alert.alert(
+                      "Delete User",
+                      "Are you sure you want to delete this staff member?",
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        {
+                          text: "Delete",
+                          style: "destructive",
+                          onPress: async () => {
+                            try {
+                              await deleteStaff(u.id);
+                            } catch (err: any) {
+                              Alert.alert("Delete Failed", err.message || "linked records maujood hain");
+                            }
+                          }
+                        }
+                      ]
+                    );
+                  }}>Del</Button>
                 </View>
               </Card>
             ))}
