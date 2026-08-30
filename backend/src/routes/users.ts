@@ -3,6 +3,7 @@ import { db } from "../db/index.js";
 import { staffUsers } from "../db/schema.js";
 import { eq, and } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -150,7 +151,7 @@ router.patch("/:id", async (req, res) => {
 });
 
 // Delete user
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
   const tenantId = (req as any).user?.tenantId;
 
@@ -192,7 +193,7 @@ router.delete("/:id", async (req, res) => {
 });
 
 // Get role permissions
-router.get("/permissions", async (req, res) => {
+router.get("/permissions", requireAuth, async (req, res) => {
   const tenantId = (req as any).user?.tenantId;
   try {
     const { rolePermissions } = await import("../db/schema.js");
@@ -205,7 +206,7 @@ router.get("/permissions", async (req, res) => {
 });
 
 // Toggle role permission
-router.patch("/permissions/toggle", async (req, res) => {
+router.patch("/permissions/toggle", requireAuth, async (req, res) => {
   const tenantId = (req as any).user?.tenantId;
   const { role, permission, enabled } = req.body;
 
