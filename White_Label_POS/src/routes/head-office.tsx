@@ -17,6 +17,8 @@ import {
   Plus,
   Pencil,
   Trash2,
+  Eye,
+  EyeOff,
   X,
   ArrowRight,
   Briefcase,
@@ -4517,6 +4519,34 @@ function HeadOffice() {
                               <Button
                                 size="icon"
                                 variant="outline"
+                                className={`h-8 w-8 rounded-lg ${post.status === "Published" ? "text-amber-500 hover:bg-amber-500/10" : "text-green-500 hover:bg-green-500/10"}`}
+                                title={post.status === "Published" ? "Change to Draft" : "Publish Now"}
+                                onClick={async () => {
+                                  try {
+                                    const res = await updateBlogPostFn({
+                                      data: {
+                                        id: post.id,
+                                        status: post.status === "Published" ? "Draft" : "Published",
+                                      },
+                                    });
+                                    if (res.success) {
+                                      toast.success(post.status === "Published" ? "Post changed to Draft" : "Post published successfully");
+                                      fetchBlogPosts();
+                                    }
+                                  } catch (err: any) {
+                                    toast.error(err.message || "Failed to update status");
+                                  }
+                                }}
+                              >
+                                {post.status === "Published" ? (
+                                  <EyeOff className="h-3.5 w-3.5" />
+                                ) : (
+                                  <Eye className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="outline"
                                 className="h-8 w-8 rounded-lg text-destructive hover:bg-destructive/10"
                                 onClick={() => {
                                   setDeleteBlogContext(post);
@@ -4597,18 +4627,14 @@ function HeadOffice() {
                     </div>
                     <div className="space-y-2">
                       <Label>Publish Status</Label>
-                      <Select
+                      <select
                         value={blogForm.status}
-                        onValueChange={(val) => setBlogForm({ ...blogForm, status: val })}
+                        onChange={(e) => setBlogForm({ ...blogForm, status: e.target.value })}
+                        className="w-full h-10 rounded-xl border border-border/50 bg-surface-2 px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring text-ink cursor-pointer"
                       >
-                        <SelectTrigger className="rounded-xl border-border/50 bg-surface-2">
-                          <SelectValue placeholder="Draft" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Draft">Draft</SelectItem>
-                          <SelectItem value="Published">Published</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        <option value="Draft" className="bg-surface text-ink">Draft</option>
+                        <option value="Published" className="bg-surface text-ink">Published</option>
+                      </select>
                     </div>
                   </div>
 
