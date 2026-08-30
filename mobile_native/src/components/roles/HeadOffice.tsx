@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Alert, Modal, Keyboard } from 'react-native';
 import { AppHeader, ScreenBody, ScreenHeader } from '../Shell';
 import { Card, StatCard } from '../ui/Card';
 import { Badge, statusVariant } from '../ui/Badge';
 import { Button, Sheet, Field } from '../ui/Primitives';
 import { Toast, type ToastType } from '../ui/Toast';
+import { documentDirectory, writeAsStringAsync, EncodingType } from 'expo-file-system/legacy';
 import { formatCurrency } from '../../lib/utils';
 import { useAuth } from '../../lib/auth';
 import { useHeadOffice, PurchaseItem, RoleConfig, Customer, Promotion, permToKeyMap } from '../../lib/HeadOfficeContext';
@@ -2178,66 +2179,175 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
 
 export function VatScreen({ onBack }: { onBack: () => void }) {
   const { branch } = useAuth();
+  const { fetchVatSettings, updateVatSettings, fetchVatSummary } = useHeadOffice();
+
+  const [loading, setLoading] = useState(true);
   const [inclusive, setInclusive] = useState(true);
+  const [vatRate, setVatRate] = useState("5.00");
+  const [trn, setTrn] = useState("");
+  const [currency, setCurrency] = useState("AED");
+
+  // Summary stats
+  const [summary, setSummary] = useState({
+    salesExVat: "0.00",
+    outputVat: "0.00",
+    inputVat: "0.00",
+    netVat: "0.00",
+    csv: "",
+  });
 
   const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
   const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
 
-  const handleDownloadSummary = () => {
-    showToast('Q3 2026 FTA tax summary file has been saved to your downloads folder.', 'success');
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const settings = await fetchVatSettings();
+      setInclusive(settings.vatInclusive);
+      setVatRate(settings.vatRate || "5.00");
+      setTrn(settings.taxRegistrationNumber || "");
+      setCurrency(settings.currency || "AED");
+
+      const sumData = await fetchVatSummary("2026-07-01", "2026-09-30");
+      setSummary({
+        salesExVat: sumData.salesExVat || "0.00",
+        outputVat: sumData.vatAmount || "0.00",
+        inputVat: sumData.inputVat || "0.00",
+        netVat: sumData.netVat || "0.00",
+        csv: sumData.csv || "",
+      });
+    } catch (err: any) {
+      console.error("VatScreen load error:", err);
+      showToast("Failed to load VAT compliance details", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const handleToggleInclusive = async () => {
+    try {
+      const nextInclusive = !inclusive;
+      setInclusive(nextInclusive);
+      await updateVatSettings({
+        vatRate,
+        vatInclusive: nextInclusive,
+        taxRegistrationNumber: trn,
+      });
+      showToast(`VAT ${nextInclusive ? 'Inclusive' : 'Exclusive'} setting saved.`, 'success');
+      loadData();
+    } catch (err: any) {
+      showToast('Failed to update settings', 'error');
+    }
+  };
+
+  const handleDownloadSummary = async () => {
+    if (!summary.csv) {
+      showToast("No CSV report content available.", "error");
+      return;
+    }
+    try {
+      const filename = `FTA_VAT_Summary_Q3_2026.csv`;
+      const fileUri = `${documentDirectory}${filename}`;
+      await writeAsStringAsync(fileUri, summary.csv, {
+        encoding: EncodingType.UTF8,
+      });
+      
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'text/csv',
+          dialogTitle: `Export FTA Summary`,
+          UTI: 'public.comma-separated-values-text',
+        });
+      } else {
+        Alert.alert('Error', 'Sharing is not available on this device');
+      }
+    } catch (err: any) {
+      console.error('Export CSV error:', err);
+      showToast('Failed to export CSV: ' + err.message, 'error');
+    }
   };
 
   const handleDownloadZReport = () => {
     showToast('Audit-ready Z-Reports bundle has been generated.', 'success');
   };
 
+  // Receipt calculations
+  const baseTotal = 86.50;
+  const rateVal = parseFloat(vatRate) / 100;
+  
+  let receiptSubtotal = 0;
+  let receiptVat = 0;
+  let receiptTotal = 0;
+
+  if (inclusive) {
+    receiptTotal = baseTotal;
+    receiptSubtotal = receiptTotal / (1 + rateVal);
+    receiptVat = receiptTotal - receiptSubtotal;
+  } else {
+    receiptSubtotal = baseTotal / (1 + 0.05); // Back to base subtotal for consistency
+    receiptVat = receiptSubtotal * rateVal;
+    receiptTotal = receiptSubtotal + receiptVat;
+  }
+
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="HO" branch={branch} />
-      <ScreenHeader title="VAT Compliance" subtitle="FTA-ready reports (download only)" onBack={onBack} />
+      <ScreenHeader title="VAT Compliance" subtitle="FTA-ready reports & configurations" onBack={onBack} />
       <ScreenBody>
-        <Card>
-          <View style={styles.cardHeaderRow}>
-            <Text style={styles.cardTitle}>Sample Tax Invoice</Text>
-            <TouchableOpacity onPress={() => setInclusive(!inclusive)}>
-              <Text style={styles.toggleTextAction}>{inclusive ? 'VAT Inclusive' : 'VAT Exclusive'}</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.receiptContainer}>
-            <View style={styles.receiptLine}><Text style={styles.receiptLabel}>TRN</Text><Text style={styles.receiptVal}>100123456700003</Text></View>
-            <View style={styles.receiptLine}><Text style={styles.receiptLabel}>Invoice #</Text><Text style={styles.receiptVal}>RCP-50421</Text></View>
-            <View style={styles.receiptDivider} />
-            <View style={styles.receiptLine}><Text style={styles.receiptLabel}>Subtotal</Text><Text style={styles.receiptVal}>$82.38</Text></View>
-            <View style={styles.receiptLine}><Text style={styles.receiptLabel}>VAT (5%)</Text><Text style={styles.receiptVal}>$4.12</Text></View>
-            <View style={styles.receiptDivider} />
-            <View style={styles.receiptLine}><Text style={styles.receiptLabelBold}>Total ({inclusive ? 'VAT Incl.' : 'VAT Excl.'})</Text><Text style={styles.receiptValBold}>$86.50</Text></View>
-          </View>
-        </Card>
+        {loading ? (
+          <Card style={{ padding: 40, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: '#64748b' }}>Loading VAT Compliance data...</Text>
+          </Card>
+        ) : (
+          <>
+            <Card>
+              <View style={styles.cardHeaderRow}>
+                <Text style={styles.cardTitle}>Sample Tax Invoice</Text>
+                <TouchableOpacity onPress={handleToggleInclusive}>
+                  <Text style={styles.toggleTextAction}>{inclusive ? 'VAT Inclusive' : 'VAT Exclusive'}</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.receiptContainer}>
+                <View style={styles.receiptLine}><Text style={styles.receiptLabel}>TRN</Text><Text style={styles.receiptVal}>{trn || 'Not Configured'}</Text></View>
+                <View style={styles.receiptLine}><Text style={styles.receiptLabel}>Invoice #</Text><Text style={styles.receiptVal}>RCP-50421</Text></View>
+                <View style={styles.receiptDivider} />
+                <View style={styles.receiptLine}><Text style={styles.receiptLabel}>Subtotal</Text><Text style={styles.receiptVal}>{currency} {receiptSubtotal.toFixed(2)}</Text></View>
+                <View style={styles.receiptLine}><Text style={styles.receiptLabel}>VAT ({vatRate}%)</Text><Text style={styles.receiptVal}>{currency} {receiptVat.toFixed(2)}</Text></View>
+                <View style={styles.receiptDivider} />
+                <View style={styles.receiptLine}><Text style={styles.receiptLabelBold}>Total ({inclusive ? 'VAT Incl.' : 'VAT Excl.'})</Text><Text style={styles.receiptValBold}>{currency} {receiptTotal.toFixed(2)}</Text></View>
+              </View>
+            </Card>
 
-        {/* Read-Only FTA Card */}
-        <Card style={styles.marginT}>
-          <Text style={styles.cardTitle}>FTA Filing Summary (Q3 2026)</Text>
-          <View style={styles.inventoryList}>
-            <DetailRow label="Standard-rated supplies" value="$248,400" />
-            <DetailRow label="Output VAT" value="$12,420" />
-            <DetailRow label="Input VAT" value="$4,180" />
-            <DetailRow label="Net VAT payable" value="$8,240" />
-          </View>
-        </Card>
+            {/* Live FTA Card */}
+            <Card style={styles.marginT}>
+              <Text style={styles.cardTitle}>FTA Filing Summary (Q3 2026)</Text>
+              <View style={styles.inventoryList}>
+                <DetailRow label="Standard-rated supplies" value={`${currency} ${parseFloat(summary.salesExVat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
+                <DetailRow label="Output VAT" value={`${currency} ${parseFloat(summary.outputVat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
+                <DetailRow label="Input VAT" value={`${currency} ${parseFloat(summary.inputVat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
+                <DetailRow label="Net VAT payable" value={`${currency} ${parseFloat(summary.netVat).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
+              </View>
+            </Card>
 
-        {/* Action Downloads Row */}
-        <View style={styles.actionsGrid}>
-          <View style={styles.halfCol}>
-            <Button variant="secondary" style={styles.actionBtn} onClick={handleDownloadZReport}>
-              Download Z-Reports
-            </Button>
-          </View>
-          <View style={styles.halfCol}>
-            <Button variant="primary" style={styles.actionBtn} onClick={handleDownloadSummary}>
-              Download FTA Summary
-            </Button>
-          </View>
-        </View>
+            {/* Action Downloads Row */}
+            <View style={styles.actionsGrid}>
+              <View style={styles.halfCol}>
+                <Button variant="secondary" style={styles.actionBtn} onClick={handleDownloadZReport}>
+                  Download Z-Reports
+                </Button>
+              </View>
+              <View style={styles.halfCol}>
+                <Button variant="primary" style={styles.actionBtn} onClick={handleDownloadSummary}>
+                  Download FTA Summary
+                </Button>
+              </View>
+            </View>
+          </>
+        )}
       </ScreenBody>
       {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>

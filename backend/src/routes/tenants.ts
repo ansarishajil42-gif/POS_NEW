@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { eq, and, sql } from "drizzle-orm";
-import { tenants, branches, staffUsers, orders, shifts, platformSettings } from "../db/schema.js";
+import { tenants, branches, staffUsers, orders, shifts, platformSettings, tenantSettings, purchaseOrders } from "../db/schema.js";
 import bcrypt from "bcryptjs";
+import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -335,6 +336,239 @@ router.patch("/:id/admin", async (req, res) => {
     res.json(safeAdmin);
   } catch (error) {
     console.error("Update admin error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Get individual Tenant settings (VAT rate, inclusive, TRN)
+router.get("/settings", requireAuth, async (req, res) => {
+  const tenantId = (req as any).user?.tenantId;
+  try {
+    let settings = await db.query.tenantSettings.findFirst({
+      where: eq(tenantSettings.tenantId, tenantId),
+    });
+    if (!settings) {
+      // Create default settings if not exists
+      const [newSettings] = await db.insert(tenantSettings).values({
+        tenantId,
+        vatRate: "5.00",
+        vatInclusive: true,
+        currency: "AED",
+      }).returning();
+      settings = newSettings;
+    }
+    res.json(settings);
+  } catch (error) {
+    console.error("Fetch tenant settings error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Update individual Tenant settings (VAT rate, inclusive, TRN)
+router.patch("/settings", requireAuth, async (req, res) => {
+  const tenantId = (req as any).user?.tenantId;
+  const { vatRate, vatInclusive, taxRegistrationNumber } = req.body;
+  try {
+    const settings = await db.query.tenantSettings.findFirst({
+      where: eq(tenantSettings.tenantId, tenantId),
+    });
+
+    const updates: any = { updatedAt: new Date() };
+    if (vatRate !== undefined) updates.vatRate = vatRate.toString();
+    if (vatInclusive !== undefined) updates.vatInclusive = vatInclusive;
+    if (taxRegistrationNumber !== undefined) updates.taxRegistrationNumber = taxRegistrationNumber || null;
+
+    if (settings) {
+      const [updated] = await db.update(tenantSettings)
+        .set(updates)
+        .where(eq(tenantSettings.id, settings.id))
+        .returning();
+      res.json(updated);
+    } else {
+      const [inserted] = await db.insert(tenantSettings)
+        .values({
+          tenantId,
+          vatRate: vatRate?.toString() || "5.00",
+          vatInclusive: vatInclusive ?? true,
+          taxRegistrationNumber: taxRegistrationNumber || null,
+        })
+        .returning();
+      res.json(inserted);
+    }
+  } catch (error) {
+    console.error("Update tenant settings error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Get Sales Summary Report
+router.get("/reports/sales-summary", requireAuth, async (req, res) => {
+  const tenantId = (req as any).user?.tenantId;
+  const { startDate, endDate, branchId } = req.query;
+
+  try {
+    const sDate = startDate ? new Date(startDate as string) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const eDate = endDate ? new Date(endDate as string) : new Date();
+    eDate.setHours(23, 59, 59, 999);
+
+    if (isNaN(sDate.getTime()) || isNaN(eDate.getTime()) || sDate > eDate) {
+      return res.status(400).json({ error: "Invalid date range" });
+    }
+
+    let conditions = [
+      eq(orders.tenantId, tenantId),
+      eq(orders.status, "completed"),
+      sql`${orders.createdAt} >= ${sDate}`,
+      sql`${orders.createdAt} <= ${eDate}`
+    ];
+    if (branchId && branchId !== 'all') {
+      conditions.push(eq(orders.branchId, branchId as string));
+    }
+
+    const result = await db.select({
+      orderCount: sql<number>`count(${orders.id})`,
+      netSales: sql<number>`sum(${orders.subtotal})`,
+      vatAmount: sql<number>`sum(${orders.vat})`,
+      totalSales: sql<number>`sum(${orders.total})`,
+    }).from(orders).where(and(...conditions));
+
+    const stats = result[0];
+    const orderCount = Number(stats?.orderCount || 0);
+    const netSales = Number(stats?.netSales || 0);
+    const vatAmount = Number(stats?.vatAmount || 0);
+    const totalSales = Number(stats?.totalSales || 0);
+    const averageOrderValue = orderCount > 0 ? (totalSales / orderCount).toFixed(2) : "0.00";
+
+    res.json({
+      orderCount,
+      netSales: netSales.toFixed(2),
+      vatAmount: vatAmount.toFixed(2),
+      totalSales: totalSales.toFixed(2),
+      averageOrderValue
+    });
+  } catch (error) {
+    console.error("Sales summary report error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Get VAT Summary FTA Report
+router.get("/reports/vat-summary", requireAuth, async (req, res) => {
+  const tenantId = (req as any).user?.tenantId;
+  const { startDate, endDate, branchId } = req.query;
+
+  try {
+    const sDate = startDate ? new Date(startDate as string) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const eDate = endDate ? new Date(endDate as string) : new Date();
+    eDate.setHours(23, 59, 59, 999);
+
+    if (isNaN(sDate.getTime()) || isNaN(eDate.getTime()) || sDate > eDate) {
+      return res.status(400).json({ error: "Invalid date range" });
+    }
+
+    const { inArray } = await import("drizzle-orm");
+
+    // Fetch tenant configuration
+    const settings = await db.query.tenantSettings.findFirst({
+      where: eq(tenantSettings.tenantId, tenantId)
+    });
+    const trn = settings?.taxRegistrationNumber || "Not Configured";
+    const vatRate = settings ? parseFloat(settings.vatRate) / 100 : 0.05;
+    const inclusive = settings ? settings.vatInclusive : true;
+    const currency = settings ? settings.currency : "AED";
+
+    // Query Sales
+    let salesConditions = [
+      eq(orders.tenantId, tenantId),
+      eq(orders.status, "completed"),
+      sql`${orders.createdAt} >= ${sDate}`,
+      sql`${orders.createdAt} <= ${eDate}`
+    ];
+    if (branchId && branchId !== 'all') {
+      salesConditions.push(eq(orders.branchId, branchId as string));
+    }
+    
+    const sales = await db.select({
+      subtotal: orders.subtotal,
+      vat: orders.vat,
+      total: orders.total
+    }).from(orders).where(and(...salesConditions));
+
+    // Query Purchases
+    let purchaseConditions = [
+      eq(purchaseOrders.tenantId, tenantId),
+      sql`${purchaseOrders.createdAt} >= ${sDate}`,
+      sql`${purchaseOrders.createdAt} <= ${eDate}`,
+      inArray(purchaseOrders.status, ["GRN", "Invoiced"])
+    ];
+    if (branchId && branchId !== 'all') {
+      purchaseConditions.push(eq(purchaseOrders.branchId, branchId as string));
+    }
+
+    const purchases = await db.select({
+      total: purchaseOrders.total
+    }).from(purchaseOrders).where(and(...purchaseConditions));
+
+    let totalSales = 0;
+    let outputVat = 0;
+    let taxableSales = 0;
+
+    sales.forEach(s => {
+      totalSales += parseFloat(s.total as string);
+      outputVat += parseFloat(s.vat as string);
+      taxableSales += parseFloat(s.subtotal as string);
+    });
+
+    let totalPurchases = 0;
+    let inputVat = 0;
+    let taxablePurchases = 0;
+
+    purchases.forEach(p => {
+      const t = parseFloat(p.total as string);
+      totalPurchases += t;
+      if (inclusive) {
+        const tax = t - (t / (1 + vatRate));
+        inputVat += tax;
+        taxablePurchases += (t - tax);
+      } else {
+        inputVat += t * vatRate;
+        taxablePurchases += t;
+      }
+    });
+
+    const netVat = outputVat - inputVat;
+
+    // Create CSV String matching the web exactly
+    const BOM = "\uFEFF";
+    let csv = BOM;
+    csv += '"FTA VAT Summary"\n';
+    csv += `"Date Range","${sDate.toISOString().split('T')[0]} to ${eDate.toISOString().split('T')[0]}"\n`;
+    csv += `"Currency","${currency}"\n\n`;
+    
+    csv += '"Description","Amount"\n';
+    csv += `"Total Sales","${totalSales.toFixed(2)}"\n`;
+    csv += `"Taxable Sales","${taxableSales.toFixed(2)}"\n`;
+    csv += `"Output VAT (Collected)","${outputVat.toFixed(2)}"\n`;
+    csv += `"Total Purchases","${totalPurchases.toFixed(2)}"\n`;
+    csv += `"Taxable Purchases","${taxablePurchases.toFixed(2)}"\n`;
+    csv += `"Input VAT (Paid)","${inputVat.toFixed(2)}"\n`;
+    csv += `"Net VAT Due/(Refundable)","${netVat.toFixed(2)}"\n`;
+
+    res.json({
+      trn,
+      periodStart: sDate.toISOString(),
+      periodEnd: eDate.toISOString(),
+      taxableOrdersCount: sales.length,
+      salesExVat: taxableSales.toFixed(2),
+      vatAmount: outputVat.toFixed(2),
+      salesIncVat: totalSales.toFixed(2),
+      standardRatedSales: taxableSales.toFixed(2),
+      inputVat: inputVat.toFixed(2),
+      netVat: netVat.toFixed(2),
+      csv,
+    });
+  } catch (error) {
+    console.error("VAT summary report error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

@@ -149,6 +149,10 @@ interface HeadOfficeContextProps {
   fetchStaffPermissions: (userId: string) => Promise<{ role: string; roleDefaults: any[]; overrides: any[] }>;
   toggleStaffPermissionOverride: (userId: string, permission: string, enabled: boolean) => Promise<void>;
   resetStaffPermissions: (userId: string) => Promise<void>;
+  fetchVatSettings: () => Promise<any>;
+  updateVatSettings: (settings: { vatRate: string; vatInclusive: boolean; taxRegistrationNumber?: string | null }) => Promise<any>;
+  fetchSalesSummary: (startDate: string, endDate: string, branchId?: string) => Promise<any>;
+  fetchVatSummary: (startDate: string, endDate: string, branchId?: string) => Promise<any>;
 }
 
 const HeadOfficeContext = createContext<HeadOfficeContextProps | null>(null);
@@ -549,6 +553,34 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
     setPromotions((prev) => [newCampaign, ...prev]);
   };
 
+  const fetchVatSettings = async () => {
+    const response = await apiClient.get<any>('/tenants/settings');
+    return response;
+  };
+
+  const updateVatSettings = async (settings: { vatRate: string; vatInclusive: boolean; taxRegistrationNumber?: string | null }) => {
+    const response = await apiClient.patch<any>('/tenants/settings', settings);
+    return response;
+  };
+
+  const fetchSalesSummary = async (startDate: string, endDate: string, branchId?: string) => {
+    let url = `/tenants/reports/sales-summary?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
+    if (branchId) {
+      url += `&branchId=${encodeURIComponent(branchId)}`;
+    }
+    const response = await apiClient.get<any>(url);
+    return response;
+  };
+
+  const fetchVatSummary = async (startDate: string, endDate: string, branchId?: string) => {
+    let url = `/tenants/reports/vat-summary?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
+    if (branchId) {
+      url += `&branchId=${encodeURIComponent(branchId)}`;
+    }
+    const response = await apiClient.get<any>(url);
+    return response;
+  };
+
   const contextValue = useMemo(
     () => ({
       branches,
@@ -592,6 +624,10 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       fetchStaffPermissions,
       toggleStaffPermissionOverride,
       resetStaffPermissions,
+      fetchVatSettings,
+      updateVatSettings,
+      fetchSalesSummary,
+      fetchVatSummary,
     }),
     [branches, products, batches, purchases, vendors, roles, loyaltyPolicies, customers, promotions, staffUsers]
   );
