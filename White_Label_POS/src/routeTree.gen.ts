@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AggregatorsRouteImport } from './routes/aggregators'
+import { Route as BlogRouteImport } from './routes/blog'
 import { Route as HeadOfficeRouteImport } from './routes/head-office'
 import { Route as InventoryManagerRouteImport } from './routes/inventory-manager'
 import { Route as LoginRouteImport } from './routes/login'
@@ -20,6 +21,7 @@ import { Route as PurchasingRouteImport } from './routes/purchasing'
 import { Route as StoreManagerRouteImport } from './routes/store-manager'
 import { Route as SuperAdminRouteImport } from './routes/super-admin'
 import { Route as VendorPortalRouteImport } from './routes/vendor-portal'
+import { Route as BlogSlugRouteImport } from './routes/blog.$slug'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -29,6 +31,11 @@ const IndexRoute = IndexRouteImport.update({
 const AggregatorsRoute = AggregatorsRouteImport.update({
   id: '/aggregators',
   path: '/aggregators',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BlogRoute = BlogRouteImport.update({
+  id: '/blog',
+  path: '/blog',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HeadOfficeRoute = HeadOfficeRouteImport.update({
@@ -76,10 +83,16 @@ const VendorPortalRoute = VendorPortalRouteImport.update({
   path: '/vendor-portal',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BlogSlugRoute = BlogSlugRouteImport.update({
+  id: '/$slug',
+  path: '/$slug',
+  getParentRoute: () => BlogRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/aggregators': typeof AggregatorsRoute
+  '/blog': typeof BlogRouteWithChildren
   '/head-office': typeof HeadOfficeRoute
   '/inventory-manager': typeof InventoryManagerRoute
   '/login': typeof LoginRoute
@@ -89,10 +102,12 @@ export interface FileRoutesByFullPath {
   '/store-manager': typeof StoreManagerRoute
   '/super-admin': typeof SuperAdminRoute
   '/vendor-portal': typeof VendorPortalRoute
+  '/blog/$slug': typeof BlogSlugRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/aggregators': typeof AggregatorsRoute
+  '/blog': typeof BlogRouteWithChildren
   '/head-office': typeof HeadOfficeRoute
   '/inventory-manager': typeof InventoryManagerRoute
   '/login': typeof LoginRoute
@@ -102,11 +117,13 @@ export interface FileRoutesByTo {
   '/store-manager': typeof StoreManagerRoute
   '/super-admin': typeof SuperAdminRoute
   '/vendor-portal': typeof VendorPortalRoute
+  '/blog/$slug': typeof BlogSlugRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/aggregators': typeof AggregatorsRoute
+  '/blog': typeof BlogRouteWithChildren
   '/head-office': typeof HeadOfficeRoute
   '/inventory-manager': typeof InventoryManagerRoute
   '/login': typeof LoginRoute
@@ -116,12 +133,14 @@ export interface FileRoutesById {
   '/store-manager': typeof StoreManagerRoute
   '/super-admin': typeof SuperAdminRoute
   '/vendor-portal': typeof VendorPortalRoute
+  '/blog/$slug': typeof BlogSlugRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/aggregators'
+    | '/blog'
     | '/head-office'
     | '/inventory-manager'
     | '/login'
@@ -131,10 +150,12 @@ export interface FileRouteTypes {
     | '/store-manager'
     | '/super-admin'
     | '/vendor-portal'
+    | '/blog/$slug'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/aggregators'
+    | '/blog'
     | '/head-office'
     | '/inventory-manager'
     | '/login'
@@ -144,10 +165,12 @@ export interface FileRouteTypes {
     | '/store-manager'
     | '/super-admin'
     | '/vendor-portal'
+    | '/blog/$slug'
   id:
     | '__root__'
     | '/'
     | '/aggregators'
+    | '/blog'
     | '/head-office'
     | '/inventory-manager'
     | '/login'
@@ -157,11 +180,13 @@ export interface FileRouteTypes {
     | '/store-manager'
     | '/super-admin'
     | '/vendor-portal'
+    | '/blog/$slug'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AggregatorsRoute: typeof AggregatorsRoute
+  BlogRoute: typeof BlogRouteWithChildren
   HeadOfficeRoute: typeof HeadOfficeRoute
   InventoryManagerRoute: typeof InventoryManagerRoute
   LoginRoute: typeof LoginRoute
@@ -187,6 +212,13 @@ declare module '@tanstack/react-router' {
       path: '/aggregators'
       fullPath: '/aggregators'
       preLoaderRoute: typeof AggregatorsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/blog': {
+      id: '/blog'
+      path: '/blog'
+      fullPath: '/blog'
+      preLoaderRoute: typeof BlogRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/head-office': {
@@ -252,12 +284,30 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof VendorPortalRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/blog/$slug': {
+      id: '/blog/$slug'
+      path: '/$slug'
+      fullPath: '/blog/$slug'
+      preLoaderRoute: typeof BlogSlugRouteImport
+      parentRoute: typeof BlogRoute
+    }
   }
 }
+
+interface BlogRouteChildren {
+  BlogSlugRoute: typeof BlogSlugRoute
+}
+
+const BlogRouteChildren: BlogRouteChildren = {
+  BlogSlugRoute: BlogSlugRoute,
+}
+
+const BlogRouteWithChildren = BlogRoute._addFileChildren(BlogRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AggregatorsRoute: AggregatorsRoute,
+  BlogRoute: BlogRouteWithChildren,
   HeadOfficeRoute: HeadOfficeRoute,
   InventoryManagerRoute: InventoryManagerRoute,
   LoginRoute: LoginRoute,

@@ -11,6 +11,7 @@ import ordersRouter from "./routes/orders.js";
 import vendorsRouter from "./routes/vendors.js";
 import purchasingRouter from "./routes/purchasing.js";
 import usersRouter from "./routes/users.js";
+import { publicRouter as blogPublicRouter, adminRouter as blogAdminRouter } from "./routes/blog.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -49,6 +50,8 @@ app.use("/api/orders", ordersRouter);
 app.use("/api/vendors", vendorsRouter);
 app.use("/api/purchasing", purchasingRouter);
 app.use("/api/users", usersRouter);
+app.use("/api/blog", blogPublicRouter);
+app.use("/api/blog-admin", blogAdminRouter);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

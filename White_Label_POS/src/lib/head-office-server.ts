@@ -25,6 +25,7 @@ import {
   productBarcodes,
   productVariants,
   unitConversions,
+  blogPosts,
 } from "@/server/db/schema";
 import { eq, and, sql, desc, inArray, ne, or, ilike, lte, gte } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
@@ -2181,4 +2182,157 @@ export const calculateApplicablePromotionsFn = createServerFn({ method: "POST" }
     });
     
     return { success: true, results };
+  });
+
+export const getBlogPostsFn = createServerFn()
+  .handler(async () => {
+    await getHeadOfficeSession();
+    try {
+      const posts = await db.query.blogPosts.findMany({
+        orderBy: desc(blogPosts.createdAt),
+      });
+      return { success: true, posts };
+    } catch (e: any) {
+      throw new Error(e.message);
+    }
+  });
+
+export const createBlogPostFn = createServerFn({ method: "POST" })
+  .validator((d: {
+    title: string;
+    slug: string;
+    coverImageUrl?: string;
+    shortDescription: string;
+    content: string;
+    status: string;
+    authorName?: string;
+  }) => d)
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+    try {
+      const existing = await db.query.blogPosts.findFirst({
+        where: eq(blogPosts.slug, data.slug),
+      });
+      if (existing) {
+        throw new Error("Slug must be unique");
+      }
+
+      const [newPost] = await db.insert(blogPosts).values({
+        title: data.title,
+        slug: data.slug,
+        coverImageUrl: data.coverImageUrl || null,
+        shortDescription: data.shortDescription,
+        content: data.content,
+        status: data.status || "Draft",
+        authorName: data.authorName || "Admin",
+        publishedAt: data.status === "Published" ? new Date() : null,
+      }).returning();
+
+      await logAuditAction({
+        action: "Create Blog Post",
+        entityType: "blog_post",
+        entityId: newPost.id,
+        tenantId: session.tenantId,
+        userId: session.userId,
+        afterValue: newPost,
+      });
+
+      return { success: true, post: newPost };
+    } catch (e: any) {
+      throw new Error(e.message);
+    }
+  });
+
+export const updateBlogPostFn = createServerFn({ method: "POST" })
+  .validator((d: {
+    id: string;
+    title: string;
+    slug: string;
+    coverImageUrl?: string;
+    shortDescription: string;
+    content: string;
+    status: string;
+    authorName?: string;
+  }) => d)
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+    try {
+      const post = await db.query.blogPosts.findFirst({
+        where: eq(blogPosts.id, data.id),
+      });
+      if (!post) {
+        throw new Error("Blog post not found");
+      }
+
+      if (data.slug && data.slug !== post.slug) {
+        const existing = await db.query.blogPosts.findFirst({
+          where: eq(blogPosts.slug, data.slug),
+        });
+        if (existing) {
+          throw new Error("Slug must be unique");
+        }
+      }
+
+      const updates: any = {
+        title: data.title,
+        slug: data.slug,
+        coverImageUrl: data.coverImageUrl || null,
+        shortDescription: data.shortDescription,
+        content: data.content,
+        status: data.status,
+        authorName: data.authorName || "Admin",
+        updatedAt: new Date(),
+      };
+
+      if (data.status === "Published" && post.status !== "Published") {
+        updates.publishedAt = new Date();
+      } else if (data.status === "Draft" && post.status === "Published") {
+        updates.publishedAt = null;
+      }
+
+      const [updatedPost] = await db.update(blogPosts)
+        .set(updates)
+        .where(eq(blogPosts.id, data.id))
+        .returning();
+
+      await logAuditAction({
+        action: "Update Blog Post",
+        entityType: "blog_post",
+        entityId: data.id,
+        tenantId: session.tenantId,
+        userId: session.userId,
+        afterValue: updatedPost,
+      });
+
+      return { success: true, post: updatedPost };
+    } catch (e: any) {
+      throw new Error(e.message);
+    }
+  });
+
+export const deleteBlogPostFn = createServerFn({ method: "POST" })
+  .validator((d: { id: string }) => d)
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+    try {
+      const deleted = await db.delete(blogPosts)
+        .where(eq(blogPosts.id, data.id))
+        .returning();
+      if (deleted.length === 0) {
+        throw new Error("Blog post not found");
+      }
+
+      await logAuditAction({
+        action: "Delete Blog Post",
+        entityType: "blog_post",
+        entityId: data.id,
+        tenantId: session.tenantId,
+        userId: session.userId,
+        beforeValue: deleted[0],
+      });
+
+      return { success: true };
+    } catch (e: any) {
+      throw new Error(e.message);
+    }
   });

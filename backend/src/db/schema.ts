@@ -474,3 +474,17 @@ export const staffPermissionOverridesRelations = relations(staffPermissionOverri
   tenant: one(tenants, { fields: [staffPermissionOverrides.tenantId], references: [tenants.id] }),
   staffUser: one(staffUsers, { fields: [staffPermissionOverrides.staffUserId], references: [staffUsers.id] }),
 }));
+
+export const blogPosts = pgTable("blog_posts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull(),
+  slug: text("slug").notNull().unique(),
+  coverImageUrl: text("cover_image_url"),
+  shortDescription: text("short_description").notNull(),
+  content: text("content").notNull(),
+  status: text("status").notNull().default("Draft"),
+  authorName: text("author_name").notNull().default("Admin"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  publishedAt: timestamp("published_at"),
+});
