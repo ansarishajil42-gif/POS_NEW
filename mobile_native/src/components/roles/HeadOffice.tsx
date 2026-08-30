@@ -7,7 +7,7 @@ import { Button, Sheet, Field } from '../ui/Primitives';
 import { Toast, type ToastType } from '../ui/Toast';
 import { formatCurrency } from '../../lib/utils';
 import { useAuth } from '../../lib/auth';
-import { useHeadOffice, PurchaseItem, RoleConfig, Customer, Promotion } from '../../lib/HeadOfficeContext';
+import { useHeadOffice, PurchaseItem, RoleConfig, Customer, Promotion, permToKeyMap } from '../../lib/HeadOfficeContext';
 import {
   products,
   customerHistory
@@ -1610,7 +1610,7 @@ export function HeadOfficeMore({ onOpen }: { onOpen: (key: string) => void }) {
 
 export function RbacScreen({ onBack }: { onBack: () => void }) {
   const { branch } = useAuth();
-  const { roles, togglePermission, staffUsers, addStaff, updateStaff, deleteStaff, branches } = useHeadOffice();
+  const { roles, togglePermission, staffUsers, addStaff, updateStaff, deleteStaff, branches, fetchStaffPermissions, toggleStaffPermissionOverride, resetStaffPermissions } = useHeadOffice();
   const [activeTab, setActiveTab] = useState<'directory' | 'roles'>('directory');
   const [selectedRoleName, setSelectedRoleName] = useState<string>('Branch Manager');
   
@@ -1619,6 +1619,14 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+
+  // Overrides UI states
+  const [selectedRoleForStaffList, setSelectedRoleForStaffList] = useState<{ roleKey: string, roleName: string } | null>(null);
+  const [roleStaffOpen, setRoleStaffOpen] = useState(false);
+  const [selectedUserForPermissions, setSelectedUserForPermissions] = useState<any | null>(null);
+  const [staffPermissionsOpen, setStaffPermissionsOpen] = useState(false);
+  const [staffPermsLoading, setStaffPermsLoading] = useState(false);
+  const [staffPermissionsList, setStaffPermissionsList] = useState<any[]>([]);
 
   React.useEffect(() => {
     setCurrentPage(1);
@@ -1700,6 +1708,106 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
       showToast(err.message || "An error occurred.", "error");
     }
   };
+
+  const handleOpenRoleStaff = (roleKey: string, roleName: string) => {
+    setSelectedRoleForStaffList({ roleKey, roleName });
+    setRoleStaffOpen(true);
+  };
+
+  const handleOpenStaffPermissions = async (user: any) => {
+    setSelectedUserForPermissions(user);
+    setStaffPermissionsOpen(true);
+    setStaffPermsLoading(true);
+    try {
+      const data = await fetchStaffPermissions(user.id);
+      const roleConfig = roles.find(r => r.role.toLowerCase().replace(" ", "_") === data.role);
+      const standardPerms = roleConfig ? roleConfig.perms : [];
+      const merged = standardPerms.map(p => {
+        const dbPerm = permToKeyMap[p.name] || p.name.toLowerCase().replace(" ", "_");
+        const override = data.overrides.find((o: any) => o.permission === dbPerm);
+        return {
+          name: p.name,
+          enabled: override ? override.enabled : p.enabled,
+          isOverridden: !!override,
+        };
+      });
+      setStaffPermissionsList(merged);
+    } catch (err) {
+      console.error(err);
+      showToast("Failed to fetch staff permissions", "error");
+    } finally {
+      setStaffPermsLoading(false);
+    }
+  };
+
+  const handleToggleStaffOverride = async (permName: string, enabled: boolean) => {
+    if (!selectedUserForPermissions) return;
+    const dbPerm = permToKeyMap[permName] || permName.toLowerCase().replace(" ", "_");
+    try {
+      await toggleStaffPermissionOverride(selectedUserForPermissions.id, dbPerm, enabled);
+      setStaffPermissionsList(prev => prev.map(p => {
+        if (p.name === permName) {
+          return { ...p, enabled, isOverridden: true };
+        }
+        return p;
+      }));
+      showToast("Override updated successfully.", "success");
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message || "Failed to save override.", "error");
+    }
+  };
+
+  const handleResetStaffOverrides = async () => {
+    if (!selectedUserForPermissions) return;
+    try {
+      await resetStaffPermissions(selectedUserForPermissions.id);
+      const data = await fetchStaffPermissions(selectedUserForPermissions.id);
+      const roleConfig = roles.find(r => r.role.toLowerCase().replace(" ", "_") === data.role);
+      const standardPerms = roleConfig ? roleConfig.perms : [];
+      const merged = standardPerms.map(p => ({
+        name: p.name,
+        enabled: p.enabled,
+        isOverridden: false,
+      }));
+      setStaffPermissionsList(merged);
+      showToast("Resetted overrides back to default role-level.", "success");
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message || "Failed to reset overrides.", "error");
+    }
+  };
+
+  const roleCards = [
+    {
+      roleKey: 'branch_manager',
+      roleName: 'Branch Manager',
+      icon: <Store size={18} color="#4f46e5" />,
+      memberCount: staffUsers.filter(u => u.role === 'branch_manager').length,
+      customizedCount: staffUsers.filter(u => u.role === 'branch_manager' && u.isCustomized).length,
+    },
+    {
+      roleKey: 'inventory_manager',
+      roleName: 'Inventory Manager',
+      icon: <Package size={18} color="#0891b2" />,
+      memberCount: staffUsers.filter(u => u.role === 'inventory_manager').length,
+      customizedCount: staffUsers.filter(u => u.role === 'inventory_manager' && u.isCustomized).length,
+    },
+    {
+      roleKey: 'purchasing_officer',
+      roleName: 'Purchasing Officer',
+      icon: <Receipt size={18} color="#059669" />,
+      memberCount: staffUsers.filter(u => u.role === 'purchasing_officer').length,
+      customizedCount: staffUsers.filter(u => u.role === 'purchasing_officer' && u.isCustomized).length,
+    },
+    {
+      roleKey: 'cashier',
+      roleName: 'Cashier',
+      icon: <Coins size={18} color="#d97706" />,
+      memberCount: staffUsers.filter(u => u.role === 'cashier').length,
+      customizedCount: staffUsers.filter(u => u.role === 'cashier' && u.isCustomized).length,
+    },
+  ];
 
   const getRoleLabel = (roleVal: string) => {
     const opt = roleOptions.find(o => o.value === roleVal);
@@ -1801,56 +1909,31 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
           </ScrollView>
         ) : (
           <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
-              {roles.map(r => (
-                <TouchableOpacity
-                  key={r.role}
-                  onPress={() => setSelectedRoleName(r.role)}
-                  style={{
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                    borderRadius: 8,
-                    backgroundColor: selectedRoleName === r.role ? '#39ff14' : '#f1f5f9',
-                    borderWidth: 1,
-                    borderColor: selectedRoleName === r.role ? '#39ff14' : '#e2e8f0',
-                  }}
-                >
-                  <Text style={{
-                    fontWeight: 'bold',
-                    fontSize: 12,
-                    color: selectedRoleName === r.role ? '#0f172a' : '#64748b'
-                  }}>
-                    {r.role}
-                  </Text>
-                </TouchableOpacity>
+            <Text style={[styles.sectionTitle, { marginTop: 0 }]}>Select a Role to Manage Permissions</Text>
+            <View style={styles.statsGrid}>
+              {roleCards.map(rc => (
+                <View key={rc.roleKey} style={styles.halfCol}>
+                  <TouchableOpacity onPress={() => handleOpenRoleStaff(rc.roleKey, rc.roleName)} activeOpacity={0.95}>
+                    <Card style={[styles.statsCard, { minHeight: 120, justifyContent: 'space-between', padding: 14 }]}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View style={styles.moreIconWrapper}>
+                          {rc.icon}
+                        </View>
+                        <Badge variant={rc.customizedCount > 0 ? 'warn' : 'success'}>
+                          {rc.customizedCount > 0 ? `${rc.customizedCount} Overridden` : 'Default'}
+                        </Badge>
+                      </View>
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#0f172a' }}>{rc.roleName}</Text>
+                        <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{rc.memberCount} member{rc.memberCount !== 1 ? 's' : ''}</Text>
+                      </View>
+                    </Card>
+                  </TouchableOpacity>
+                </View>
               ))}
             </View>
 
-            {selectedRole ? (
-              <Card style={styles.marginT}>
-                <View style={styles.cardHeaderRow}>
-                  <Text style={styles.roleTitle}>{selectedRole.role} Permissions</Text>
-                </View>
-                <View style={styles.permsList}>
-                  {selectedRole.perms.map((p) => (
-                    <View key={p.name} style={styles.permRow}>
-                      <Text style={styles.permName}>{p.name}</Text>
-                      <TouchableOpacity
-                        onPress={() => togglePermission(selectedRole.role, p.name, !p.enabled)}
-                        style={[styles.switchTrack, p.enabled ? styles.trackOn : styles.trackOff]}
-                        activeOpacity={0.8}
-                      >
-                        <View style={[styles.switchThumb, p.enabled ? styles.thumbOn : styles.thumbOff]} />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-              </Card>
-            ) : (
-              <Text style={{ textAlign: 'center', color: '#94a3b8' }}>Select a role to view permissions.</Text>
-            )}
-
-            <View style={styles.auditLogBanner}>
+            <View style={[styles.auditLogBanner, { marginTop: 16 }]}>
               <ShieldCheck size={14} color="#16a34a" style={{ marginRight: 6 }} />
               <Text style={styles.auditLogText}>Every permission change is written to an immutable audit log.</Text>
             </View>
@@ -1983,6 +2066,111 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
           </TouchableOpacity>
         ))}
       </Sheet>
+
+      {/* Role Staff List Sheet */}
+      <Sheet
+        open={roleStaffOpen}
+        onClose={() => setRoleStaffOpen(false)}
+        title={`${selectedRoleForStaffList?.roleName || ''} Staff`}
+      >
+        <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
+          <View style={{ gap: 4 }}>
+            {staffUsers
+              .filter(u => u.role === selectedRoleForStaffList?.roleKey)
+              .map(u => (
+                <TouchableOpacity
+                  key={u.id}
+                  onPress={() => {
+                    setRoleStaffOpen(false);
+                    handleOpenStaffPermissions(u);
+                  }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    paddingVertical: 14,
+                    paddingHorizontal: 12,
+                    borderBottomWidth: 1,
+                    borderBottomColor: '#f1f5f9',
+                    backgroundColor: '#fff',
+                    borderRadius: 8,
+                    marginBottom: 4,
+                  }}
+                >
+                  <View style={{ flex: 1, paddingRight: 8 }}>
+                    <Text style={{ fontWeight: 'bold', color: '#0f172a', fontSize: 15 }}>{u.name || 'Unnamed'}</Text>
+                    <Text style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>{u.email}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Badge variant={u.isCustomized ? 'warn' : 'neutral'}>
+                      {u.isCustomized ? 'Customized' : 'Default'}
+                    </Badge>
+                    <ChevronRight size={16} color="#cbd5e1" />
+                  </View>
+                </TouchableOpacity>
+              ))}
+            {staffUsers.filter(u => u.role === selectedRoleForStaffList?.roleKey).length === 0 && (
+              <Text style={{ textAlign: 'center', color: '#94a3b8', marginVertical: 20 }}>No staff members found with this role.</Text>
+            )}
+          </View>
+        </ScrollView>
+      </Sheet>
+
+      {/* Staff Permissions Overlay Grid */}
+      <Sheet
+        open={staffPermissionsOpen}
+        onClose={() => setStaffPermissionsOpen(false)}
+        title="Edit Staff Permissions"
+        footer={
+          staffPermissionsList.some(p => p.isOverridden) ? (
+            <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: '#e2e8f0' }}>
+              <Button variant="secondary" onClick={handleResetStaffOverrides} style={{ width: '100%' }}>
+                Reset Overrides to Default Role
+              </Button>
+            </View>
+          ) : undefined
+        }
+      >
+        <View style={{ padding: 4 }}>
+          <View style={{ marginBottom: 16 }}>
+            <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#0f172a' }}>
+              {selectedUserForPermissions?.name || 'Unnamed'}
+            </Text>
+            <Text style={{ color: '#64748b', fontSize: 12, marginTop: 2 }}>
+              {selectedUserForPermissions?.email} • {getRoleLabel(selectedUserForPermissions?.role || '')}
+            </Text>
+          </View>
+
+          {staffPermsLoading ? (
+            <Text style={{ textAlign: 'center', color: '#94a3b8', marginVertical: 20 }}>Loading permissions...</Text>
+          ) : (
+            <ScrollView style={{ maxHeight: 350 }} showsVerticalScrollIndicator={false}>
+              <View style={styles.permsList}>
+                {staffPermissionsList.map((p) => (
+                  <View key={p.name} style={styles.permRow}>
+                    <View style={{ flex: 1, paddingRight: 10 }}>
+                      <Text style={styles.permName}>{p.name}</Text>
+                      {p.isOverridden && (
+                        <Text style={{ fontSize: 9, color: '#ef4444', marginTop: 2, fontWeight: '500' }}>
+                          Customized Override
+                        </Text>
+                      )}
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => handleToggleStaffOverride(p.name, !p.enabled)}
+                      style={[styles.switchTrack, p.enabled ? styles.trackOn : styles.trackOff]}
+                      activeOpacity={0.8}
+                    >
+                      <View style={[styles.switchThumb, p.enabled ? styles.thumbOn : styles.thumbOff]} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+          )}
+        </View>
+      </Sheet>
+
       {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );

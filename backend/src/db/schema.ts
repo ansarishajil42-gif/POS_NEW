@@ -450,3 +450,27 @@ export const platformSettings = pgTable("platform_settings", {
   vatInclusive: boolean("vat_inclusive").notNull().default(true),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+export const staffPermissionOverrides = pgTable(
+  "staff_permission_overrides",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    staffUserId: uuid("staff_user_id")
+      .notNull()
+      .references(() => staffUsers.id, { onDelete: "cascade" }),
+    permission: text("permission").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [unique("staff_perm_override_unique").on(t.tenantId, t.staffUserId, t.permission)],
+);
+
+export const staffPermissionOverridesRelations = relations(staffPermissionOverrides, ({ one }) => ({
+  tenant: one(tenants, { fields: [staffPermissionOverrides.tenantId], references: [tenants.id] }),
+  staffUser: one(staffUsers, { fields: [staffPermissionOverrides.staffUserId], references: [staffUsers.id] }),
+}));

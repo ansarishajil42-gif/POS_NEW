@@ -43,6 +43,13 @@
       "when": 1788007415588,
       "tag": "0005_opposite_spot",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788089564816,
+      "tag": "0006_light_corsair",
+      "breakpoints": true
     }
   ]
 }

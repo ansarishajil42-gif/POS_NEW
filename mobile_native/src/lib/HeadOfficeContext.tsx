@@ -20,6 +20,7 @@ export interface StaffUser {
   isActive: boolean;
   pin?: string;
   password?: string;
+  isCustomized?: boolean;
 }
 
 export interface PurchaseItem {
@@ -145,11 +146,14 @@ interface HeadOfficeContextProps {
   deleteStaff: (id: string) => Promise<void>;
   fetchRoles: () => Promise<void>;
   togglePermission: (role: string, perm: string, enabled: boolean) => Promise<void>;
+  fetchStaffPermissions: (userId: string) => Promise<{ role: string; roleDefaults: any[]; overrides: any[] }>;
+  toggleStaffPermissionOverride: (userId: string, permission: string, enabled: boolean) => Promise<void>;
+  resetStaffPermissions: (userId: string) => Promise<void>;
 }
 
 const HeadOfficeContext = createContext<HeadOfficeContextProps | null>(null);
 
-const permToKeyMap: Record<string, string> = {
+export const permToKeyMap: Record<string, string> = {
   "Branch override": "branch_override",
   "Local stock": "local_stock",
   "Pricing adjustments": "pricing_adjustments",
@@ -359,6 +363,20 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       console.error('Failed to toggle permission API:', err);
       await fetchRoles(); // revert on fail
     }
+  };
+
+  const fetchStaffPermissions = async (userId: string) => {
+    return await apiClient.get(`/users/${userId}/permissions`) as { role: string; roleDefaults: any[]; overrides: any[] };
+  };
+
+  const toggleStaffPermissionOverride = async (userId: string, permission: string, enabled: boolean) => {
+    await apiClient.post(`/users/${userId}/permissions/override`, { permission, enabled });
+    await fetchStaff(); // Refresh the isCustomized flag on the list
+  };
+
+  const resetStaffPermissions = async (userId: string) => {
+    await apiClient.delete(`/users/${userId}/permissions/override`);
+    await fetchStaff(); // Refresh the isCustomized flag on the list
   };
 
   const fetchProducts = async () => {
@@ -571,6 +589,9 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       updateStaff,
       deleteStaff,
       fetchRoles,
+      fetchStaffPermissions,
+      toggleStaffPermissionOverride,
+      resetStaffPermissions,
     }),
     [branches, products, batches, purchases, vendors, roles, loyaltyPolicies, customers, promotions, staffUsers]
   );

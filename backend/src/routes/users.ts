@@ -50,8 +50,24 @@ router.get("/", async (req, res) => {
       })
         .from(staffUsers);
     }
-    console.log("[Backend] GET /users returning users count:", result.length);
-    res.json(result);
+
+    // Attach isCustomized flag if overrides exist
+    let overrides: any[] = [];
+    if (tenantId) {
+      const { staffPermissionOverrides } = await import("../db/schema.js");
+      overrides = await db.select().from(staffPermissionOverrides).where(eq(staffPermissionOverrides.tenantId, tenantId as string));
+    }
+
+    const formatted = result.map(u => {
+      const userOverrides = overrides.filter(o => o.staffUserId === u.id);
+      return {
+        ...u,
+        isCustomized: userOverrides.length > 0
+      };
+    });
+
+    console.log("[Backend] GET /users returning users count:", formatted.length);
+    res.json(formatted);
   } catch (error) {
     console.error("Fetch users error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -241,6 +257,101 @@ router.patch("/permissions/toggle", requireAuth, async (req, res) => {
     }
   } catch (error) {
     console.error("Toggle permission error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Get individual staff user permissions (default role + overrides merged)
+router.get("/:id/permissions", requireAuth, async (req, res) => {
+  const tenantId = (req as any).user?.tenantId;
+  const staffUserId = req.params.id;
+  try {
+    const { rolePermissions, staffPermissionOverrides, staffUsers } = await import("../db/schema.js");
+    
+    // Find the user to get their role
+    const user = await db.query.staffUsers.findFirst({
+      where: and(eq(staffUsers.id, staffUserId), eq(staffUsers.tenantId, tenantId)),
+    });
+    if (!user) {
+      return res.status(404).json({ error: "Staff user not found" });
+    }
+
+    // Get all default role-level permissions
+    const roleDefaultPerms = await db.select().from(rolePermissions).where(
+      and(eq(rolePermissions.tenantId, tenantId), eq(rolePermissions.role, user.role))
+    );
+
+    // Get all individual overrides for this staff user
+    const overrides = await db.select().from(staffPermissionOverrides).where(
+      and(eq(staffPermissionOverrides.tenantId, tenantId), eq(staffPermissionOverrides.staffUserId, staffUserId))
+    );
+
+    res.json({
+      role: user.role,
+      roleDefaults: roleDefaultPerms,
+      overrides: overrides,
+    });
+  } catch (error) {
+    console.error("Fetch staff permissions error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Toggle individual staff user permission override
+router.post("/:id/permissions/override", requireAuth, async (req, res) => {
+  const tenantId = (req as any).user?.tenantId;
+  const staffUserId = req.params.id;
+  const { permission, enabled } = req.body;
+
+  if (!permission || enabled === undefined) {
+    return res.status(400).json({ error: "permission and enabled are required" });
+  }
+
+  try {
+    const { staffPermissionOverrides } = await import("../db/schema.js");
+    
+    const existing = await db.select().from(staffPermissionOverrides).where(
+      and(
+        eq(staffPermissionOverrides.tenantId, tenantId),
+        eq(staffPermissionOverrides.staffUserId, staffUserId),
+        eq(staffPermissionOverrides.permission, permission)
+      )
+    );
+
+    if (existing.length > 0) {
+      const updated = await db.update(staffPermissionOverrides)
+        .set({ enabled, updatedAt: new Date() })
+        .where(eq(staffPermissionOverrides.id, existing[0].id))
+        .returning();
+      res.json(updated[0]);
+    } else {
+      const inserted = await db.insert(staffPermissionOverrides)
+        .values({ tenantId, staffUserId, permission, enabled })
+        .returning();
+      res.json(inserted[0]);
+    }
+  } catch (error) {
+    console.error("Upsert staff override error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Reset all overrides for a specific staff user
+router.delete("/:id/permissions/override", requireAuth, async (req, res) => {
+  const tenantId = (req as any).user?.tenantId;
+  const staffUserId = req.params.id;
+  try {
+    const { staffPermissionOverrides } = await import("../db/schema.js");
+    
+    await db.delete(staffPermissionOverrides).where(
+      and(
+        eq(staffPermissionOverrides.tenantId, tenantId),
+        eq(staffPermissionOverrides.staffUserId, staffUserId)
+      )
+    );
+    res.json({ success: true, message: "Overrides reset successfully" });
+  } catch (error) {
+    console.error("Reset staff overrides error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
