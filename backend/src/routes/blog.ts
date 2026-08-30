@@ -13,11 +13,7 @@ const upload = multer({
   },
 });
 
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
-const supabase = createClient(
-  process.env.SUPABASE_URL || "",
-  supabaseKey
-);
+
 
 export const publicRouter = Router();
 export const adminRouter = Router();
@@ -76,13 +72,25 @@ adminRouter.post("/upload", requireAuth, requireHOAdmin, upload.single("file"), 
   }
 
   try {
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
+    console.log("[RUNTIME BACKEND UPLOAD KEY CHECK]:");
+    console.log("SUPABASE_URL:", process.env.SUPABASE_URL);
+    console.log("SUPABASE_SERVICE_ROLE_KEY length:", process.env.SUPABASE_SERVICE_ROLE_KEY?.length || 0);
+    console.log("SUPABASE_ANON_KEY length:", process.env.SUPABASE_ANON_KEY?.length || 0);
+    console.log("Using Key Type:", process.env.SUPABASE_SERVICE_ROLE_KEY ? "SERVICE_ROLE" : (process.env.SUPABASE_ANON_KEY ? "ANON" : "NONE"));
+
+    const client = createClient(
+      process.env.SUPABASE_URL || "",
+      supabaseKey
+    );
+
     const file = req.file;
     const fileExt = file.originalname.split(".").pop();
     const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
     const filePath = `covers/${fileName}`;
 
     // Upload to Supabase Storage
-    const { data, error } = await supabase.storage
+    const { data, error } = await client.storage
       .from("blog-covers")
       .upload(filePath, file.buffer, {
         contentType: file.mimetype,
@@ -95,7 +103,7 @@ adminRouter.post("/upload", requireAuth, requireHOAdmin, upload.single("file"), 
     }
 
     // Get public URL
-    const { data: publicUrlData } = supabase.storage
+    const { data: publicUrlData } = client.storage
       .from("blog-covers")
       .getPublicUrl(filePath);
 
