@@ -103,6 +103,7 @@ import {
   createBlogPostFn,
   updateBlogPostFn,
   deleteBlogPostFn,
+  uploadBlogCoverFn,
 } from "@/lib/head-office-server";
 import { getAuditLogsServerFn } from "@/lib/super-admin-server";
 import { stockTransferServerFn } from "@/lib/inventory-manager-server";
@@ -444,6 +445,58 @@ function HeadOffice() {
   const [deleteBlogContext, setDeleteBlogContext] = useState<any>(null);
   const [deleteBlogDialogOpen, setDeleteBlogDialogOpen] = useState(false);
   const [isDeletingBlogPost, setIsDeletingBlogPost] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  const handleUploadImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("File size exceeds 5MB limit");
+      return;
+    }
+
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error("Invalid file type. Only JPEG, PNG, WEBP, and GIF are allowed.");
+      return;
+    }
+
+    setIsUploadingImage(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = (reader.result as string).split(",")[1];
+        try {
+          const res = await uploadBlogCoverFn({
+            data: {
+              base64Data: base64,
+              fileName: file.name,
+              mimeType: file.type,
+            },
+          });
+          if (res.success && res.url) {
+            setBlogForm((prev) => ({ ...prev, coverImageUrl: res.url }));
+            toast.success("Image uploaded successfully");
+          } else {
+            toast.error("Upload failed");
+          }
+        } catch (err: any) {
+          toast.error(err.message || "Upload failed");
+        } finally {
+          setIsUploadingImage(false);
+        }
+      };
+      reader.onerror = () => {
+        toast.error("Failed to read file");
+        setIsUploadingImage(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to process file");
+      setIsUploadingImage(false);
+    }
+  };
 
   const fetchBlogPosts = () => {
     setIsLoadingBlog(true);
@@ -4561,12 +4614,31 @@ function HeadOffice() {
 
                   <div className="space-y-2">
                     <Label>Cover Image URL</Label>
-                    <Input
-                      placeholder="https://example.com/cover.jpg"
-                      value={blogForm.coverImageUrl}
-                      onChange={(e) => setBlogForm({ ...blogForm, coverImageUrl: e.target.value })}
-                      className="rounded-xl border-border/50 bg-surface-2"
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="https://example.com/cover.jpg"
+                        value={blogForm.coverImageUrl}
+                        onChange={(e) => setBlogForm({ ...blogForm, coverImageUrl: e.target.value })}
+                        className="rounded-xl border-border/50 bg-surface-2 flex-1"
+                      />
+                      <div className="relative shrink-0">
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif"
+                          onChange={handleUploadImage}
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                          disabled={isUploadingImage}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="rounded-xl pointer-events-none"
+                          disabled={isUploadingImage}
+                        >
+                          {isUploadingImage ? "Uploading..." : "Upload Image"}
+                        </Button>
+                      </div>
+                    </div>
                     {blogForm.coverImageUrl && (
                       <div className="mt-2 border border-border rounded-xl p-2 bg-surface-2 flex justify-center">
                         <img

@@ -3,6 +3,20 @@ import { db } from "../db/index.js";
 import { blogPosts } from "../db/schema.js";
 import { eq, desc } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth.js";
+import multer from "multer";
+import { createClient } from "@supabase/supabase-js";
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+});
+
+const supabase = createClient(
+  process.env.SUPABASE_URL || "",
+  process.env.SUPABASE_ANON_KEY || ""
+);
 
 export const publicRouter = Router();
 export const adminRouter = Router();
@@ -53,6 +67,43 @@ const requireHOAdmin = (req: any, res: any, next: any) => {
   }
   next();
 };
+
+// Upload Cover Image
+adminRouter.post("/upload", requireAuth, requireHOAdmin, upload.single("file"), async (req: any, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+
+  try {
+    const file = req.file;
+    const fileExt = file.originalname.split(".").pop();
+    const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
+    const filePath = `covers/${fileName}`;
+
+    // Upload to Supabase Storage
+    const { data, error } = await supabase.storage
+      .from("blog-covers")
+      .upload(filePath, file.buffer, {
+        contentType: file.mimetype,
+        upsert: true,
+      });
+
+    if (error) {
+      console.error("Supabase storage upload error:", error);
+      return res.status(500).json({ error: `Upload failed: ${error.message}` });
+    }
+
+    // Get public URL
+    const { data: publicUrlData } = supabase.storage
+      .from("blog-covers")
+      .getPublicUrl(filePath);
+
+    res.json({ success: true, url: publicUrlData.publicUrl });
+  } catch (error: any) {
+    console.error("Image upload handler error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // Get all blog posts (Draft & Published)
 adminRouter.get("/posts", requireAuth, requireHOAdmin, async (req, res) => {

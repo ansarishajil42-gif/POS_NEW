@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { createClient } from "@supabase/supabase-js";
 import { db } from "@/server/db";
 import {
   tenants,
@@ -2332,6 +2333,42 @@ export const deleteBlogPostFn = createServerFn({ method: "POST" })
       });
 
       return { success: true };
+    } catch (e: any) {
+      throw new Error(e.message);
+    }
+  });
+
+const supabaseClient = createClient(
+  process.env.SUPABASE_URL || "https://agauuzudkvbxecpukshq.supabase.co",
+  process.env.SUPABASE_ANON_KEY || ""
+);
+
+export const uploadBlogCoverFn = createServerFn({ method: "POST" })
+  .validator((d: { base64Data: string; fileName: string; mimeType: string }) => d)
+  .handler(async ({ data }) => {
+    await getHeadOfficeSession();
+    try {
+      const buffer = Buffer.from(data.base64Data, "base64");
+      const fileExt = data.fileName.split(".").pop();
+      const newFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
+      const filePath = `covers/${newFileName}`;
+
+      const { data: uploadData, error } = await supabaseClient.storage
+        .from("blog-covers")
+        .upload(filePath, buffer, {
+          contentType: data.mimeType,
+          upsert: true,
+        });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      const { data: publicUrlData } = supabaseClient.storage
+        .from("blog-covers")
+        .getPublicUrl(filePath);
+
+      return { success: true, url: publicUrlData.publicUrl };
     } catch (e: any) {
       throw new Error(e.message);
     }
