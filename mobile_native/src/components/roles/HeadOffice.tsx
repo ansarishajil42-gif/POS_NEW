@@ -43,6 +43,9 @@ export function HeadOfficeHome() {
   const { branch } = useAuth();
   const { branches, purchases } = useHeadOffice();
 
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
   const totalSales = branches.reduce((a, b) => a + b.salesToday, 0);
   const totalAlerts = branches.reduce((a, b) => a + b.stockAlerts, 0);
 
@@ -51,7 +54,7 @@ export function HeadOfficeHome() {
   const totalTills = branches.reduce((a, b) => a + b.tills, 0);
 
   const handleExportBrief = () => {
-    Alert.alert('Export Successful', 'Daily Brief has been compiled and downloaded as a CSV audit file.');
+    showToast('Daily Brief has been compiled and downloaded as a CSV audit file.', 'success');
   };
 
   return (
@@ -102,6 +105,7 @@ export function HeadOfficeHome() {
           ))}
         </View>
       </ScreenBody>
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
@@ -109,6 +113,10 @@ export function HeadOfficeHome() {
 export function HeadOfficeOutlets({ onOpen }: { onOpen: (id: string) => void }) {
   const { branch } = useAuth();
   const { branches, addBranch, updateBranch, deleteBranch } = useHeadOffice();
+
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingBranch, setEditingBranch] = useState<any>(null);
   const [formData, setFormData] = useState({ name: '', address: '', tills: '1' });
@@ -121,8 +129,9 @@ export function HeadOfficeOutlets({ onOpen }: { onOpen: (id: string) => void }) 
         await addBranch(formData.name, formData.address, parseInt(formData.tills) || 1);
       }
       setIsFormOpen(false);
+      showToast('Branch saved successfully.', 'success');
     } catch (error) {
-      Alert.alert('Error', 'Failed to save branch.');
+      showToast('Failed to save branch.', 'error');
     }
   };
 
@@ -135,8 +144,9 @@ export function HeadOfficeOutlets({ onOpen }: { onOpen: (id: string) => void }) 
         onPress: async () => {
           try {
             await deleteBranch(id);
+            showToast('Branch deleted successfully.', 'success');
           } catch (error: any) {
-            Alert.alert('Error', error.message || 'Failed to delete branch.');
+            showToast(error.message || 'Failed to delete branch.', 'error');
           }
         }
       }
@@ -206,6 +216,7 @@ export function HeadOfficeOutlets({ onOpen }: { onOpen: (id: string) => void }) 
           <Button full variant="primary" onClick={handleSave} style={styles.marginT}>Save Branch</Button>
         </View>
       </Sheet>
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
@@ -276,6 +287,10 @@ export function OutletDetail({ id, onBack }: { id: string; onBack: () => void })
 export function HeadOfficeCatalog({ onOpenProduct }: { onOpenProduct: (id: string) => void }) {
   const { branch } = useAuth();
   const { products, addProduct, updateProduct, deleteProduct, batches } = useHeadOffice();
+
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
   const [tab, setTab] = useState<'catalog' | 'batches'>('catalog');
   const [q, setQ] = useState('');
 
@@ -331,8 +346,9 @@ export function HeadOfficeCatalog({ onOpenProduct }: { onOpenProduct: (id: strin
         onPress: async () => {
           try {
             await deleteProduct(id);
+            showToast('Product deleted successfully.', 'success');
           } catch (error: any) {
-            Alert.alert('Error', error.message || 'Failed to delete product.');
+            showToast(error.message || 'Failed to delete product.', 'error');
           }
         }
       }
@@ -347,8 +363,9 @@ export function HeadOfficeCatalog({ onOpenProduct }: { onOpenProduct: (id: strin
         await addProduct(formData);
       }
       setIsFormOpen(false);
+      showToast('Product saved successfully.', 'success');
     } catch (error) {
-      Alert.alert('Error', 'Failed to save product.');
+      showToast('Failed to save product.', 'error');
     }
   };
 
@@ -525,6 +542,7 @@ export function HeadOfficeCatalog({ onOpenProduct }: { onOpenProduct: (id: strin
           <Button full variant="primary" onClick={handleSave} style={{ marginVertical: 32 }}>Save Product</Button>
         </ScrollView>
       </Sheet>
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
@@ -1935,12 +1953,15 @@ export function VatScreen({ onBack }: { onBack: () => void }) {
   const { branch } = useAuth();
   const [inclusive, setInclusive] = useState(true);
 
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
   const handleDownloadSummary = () => {
-    Alert.alert('Filing Saved', 'Q3 2026 FTA tax summary file has been saved to your downloads folder.');
+    showToast('Q3 2026 FTA tax summary file has been saved to your downloads folder.', 'success');
   };
 
   const handleDownloadZReport = () => {
-    Alert.alert('Download Complete', 'Audit-ready Z-Reports bundle has been generated.');
+    showToast('Audit-ready Z-Reports bundle has been generated.', 'success');
   };
 
   return (
@@ -1962,7 +1983,7 @@ export function VatScreen({ onBack }: { onBack: () => void }) {
             <View style={styles.receiptLine}><Text style={styles.receiptLabel}>Subtotal</Text><Text style={styles.receiptVal}>$82.38</Text></View>
             <View style={styles.receiptLine}><Text style={styles.receiptLabel}>VAT (5%)</Text><Text style={styles.receiptVal}>$4.12</Text></View>
             <View style={styles.receiptDivider} />
-            <View style={styles.receiptLine}><Text style={styles.receiptLabelBold}>Total</Text><Text style={styles.receiptValBold}>$86.50</Text></View>
+            <View style={styles.receiptLine}><Text style={styles.receiptLabelBold}>Total ({inclusive ? 'VAT Incl.' : 'VAT Excl.'})</Text><Text style={styles.receiptValBold}>$86.50</Text></View>
           </View>
         </Card>
 
@@ -1991,6 +2012,7 @@ export function VatScreen({ onBack }: { onBack: () => void }) {
           </View>
         </View>
       </ScreenBody>
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
@@ -1998,6 +2020,9 @@ export function VatScreen({ onBack }: { onBack: () => void }) {
 export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => void }) {
   const { branch } = useAuth();
   const { customers, loyaltyPolicies, updateLoyaltyPolicies, issueVoucher } = useHeadOffice();
+
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
 
   // Policy Form Local States
   const [pointsSpent, setPointsSpent] = useState(String(loyaltyPolicies.pointsPerAed));
@@ -2010,12 +2035,12 @@ export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => 
       minPoints: parseInt(minRedeem) || 5000,
       redemptionValue: parseInt(redValue) || 10,
     });
-    Alert.alert('Success', 'Loyalty policies updated successfully.');
+    showToast('Loyalty policies updated successfully.', 'success');
   };
 
   const handleIssueVoucher = (c: Customer) => {
     issueVoucher(c.id);
-    Alert.alert('Voucher Issued', `A voucher code has been dispatched to ${c.name}.`);
+    showToast(`A voucher code has been dispatched to ${c.name}.`, 'success');
   };
 
   return (
@@ -2082,6 +2107,7 @@ export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => 
           </View>
         </ScrollView>
       </ScreenBody>
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
@@ -2132,6 +2158,10 @@ export function CustomerDetail({ id, onBack }: { id: string; onBack: () => void 
 export function PromotionsScreen({ onBack }: { onBack: () => void }) {
   const { branch } = useAuth();
   const { promotions, createCampaign } = useHeadOffice();
+
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
   const [createOpen, setCreateOpen] = useState(false);
 
   // Form states
@@ -2144,11 +2174,11 @@ export function PromotionsScreen({ onBack }: { onBack: () => void }) {
 
   const handleCreate = () => {
     if (!name.trim() || !target.trim() || !value.trim() || !startDate.trim() || !endDate.trim()) {
-      Alert.alert('Error', 'Please fill in all fields');
+      showToast('Please fill in all fields', 'error');
       return;
     }
     createCampaign(name, type, target, value, startDate, endDate);
-    Alert.alert('Success', `Campaign "${name}" created successfully.`);
+    showToast(`Campaign "${name}" created successfully.`, 'success');
     setName('');
     setTarget('');
     setValue('');
@@ -2258,7 +2288,7 @@ export function PromotionsScreen({ onBack }: { onBack: () => void }) {
               </Field>
             </View>
           </View>
-          <View style={styles.formRow}>
+          <View style={{ flexDirection: 'row' }}>
             <View style={{ flex: 1, marginRight: 8 }}>
               <Field label="Start Date">
                 <TextInput
@@ -2284,6 +2314,7 @@ export function PromotionsScreen({ onBack }: { onBack: () => void }) {
           </View>
         </View>
       </Sheet>
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
