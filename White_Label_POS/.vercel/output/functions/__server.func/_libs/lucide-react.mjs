@@ -281,6 +281,19 @@ var Barcode = createLucideIcon("barcode", [
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var BookOpen = createLucideIcon("book-open", [["path", {
+	d: "M12 7v14",
+	key: "1akyts"
+}], ["path", {
+	d: "M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z",
+	key: "ruj8y"
+}]]);
+/**
+* @license lucide-react v0.575.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var Boxes = createLucideIcon("boxes", [
 	["path", {
 		d: "M2.97 12.92A2 2 0 0 0 2 14.63v3.24a2 2 0 0 0 .97 1.71l3 1.8a2 2 0 0 0 2.06 0L12 19v-5.5l-5-3-4.03 2.42Z",
@@ -1662,4 +1675,4 @@ var Zap = createLucideIcon("zap", [["path", {
 	key: "1xq2db"
 }]]);
 //#endregion
-export { DollarSign as $, Plus as A, Mail as B, ScrollText as C, ArrowRightLeft as Ct, RefreshCw as D, Rocket as E, Activity as Et, Package as F, Layers as G, LoaderCircle as H, Monitor as I, Gauge as J, KeyRound as K, Minus as L, Phone as M, Pencil as N, Receipt as O, Pen as P, Download as Q, Menu as R, Search as S, ArrowRight as St, Scale as T, Archive as Tt, Linkedin as U, Lock as V, Link2 as W, Eye as X, FileText as Y, EyeOff as Z, Star as _, Boxes as _t, Wallet as a, CircleCheck as at, Shield as b, Ban as bt, UserMinus as c, CircleAlert as ct, TriangleAlert as d, ChevronLeft as dt, CreditCard as et, TrendingUp as f, ChevronDown as ft, Store as g, Briefcase as gt, Tag as h, Building2 as ht, WifiOff as i, CircleUser as it, Play as j, Printer as k, Twitter as l, ChevronUp as lt, Timer as m, Calendar as mt, X as n, CloudOff as nt, Users as o, CircleArrowUp as ot, Trash2 as p, Check as pt, History as q, Wifi as r, Clock as rt, User as s, CircleArrowDown as st, Zap as t, Coins as tt, Truck as u, ChevronRight as ut, Square as v, Barcode as vt, ScanBarcode as w, ArrowLeft as wt, ShieldCheck as x, BadgeCheck as xt, ShoppingCart as y, Banknote as yt, MapPin as z };
+export { DollarSign as $, Plus as A, Mail as B, ScrollText as C, ArrowRight as Ct, RefreshCw as D, Activity as Dt, Rocket as E, Archive as Et, Package as F, Layers as G, LoaderCircle as H, Monitor as I, Gauge as J, KeyRound as K, Minus as L, Phone as M, Pencil as N, Receipt as O, Pen as P, Download as Q, Menu as R, Search as S, BadgeCheck as St, Scale as T, ArrowLeft as Tt, Linkedin as U, Lock as V, Link2 as W, Eye as X, FileText as Y, EyeOff as Z, Star as _, Boxes as _t, Wallet as a, CircleCheck as at, Shield as b, Banknote as bt, UserMinus as c, CircleAlert as ct, TriangleAlert as d, ChevronLeft as dt, CreditCard as et, TrendingUp as f, ChevronDown as ft, Store as g, Briefcase as gt, Tag as h, Building2 as ht, WifiOff as i, CircleUser as it, Play as j, Printer as k, Twitter as l, ChevronUp as lt, Timer as m, Calendar as mt, X as n, CloudOff as nt, Users as o, CircleArrowUp as ot, Trash2 as p, Check as pt, History as q, Wifi as r, Clock as rt, User as s, CircleArrowDown as st, Zap as t, Coins as tt, Truck as u, ChevronRight as ut, Square as v, BookOpen as vt, ScanBarcode as w, ArrowRightLeft as wt, ShieldCheck as x, Ban as xt, ShoppingCart as y, Barcode as yt, MapPin as z };
