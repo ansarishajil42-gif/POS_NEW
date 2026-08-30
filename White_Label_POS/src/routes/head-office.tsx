@@ -4699,7 +4699,7 @@ function HeadOffice() {
                 <DialogHeader>
                   <DialogTitle>Delete Blog Post</DialogTitle>
                   <DialogDescription>
-                    Are you sure you want to delete the blog post "{deleteBlogContext?.title}"? This action cannot be undone.
+                    Are you sure you want to delete this post?
                   </DialogDescription>
                 </DialogHeader>
                 <DialogFooter className="mt-4 gap-2 sm:gap-0">

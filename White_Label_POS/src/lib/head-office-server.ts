@@ -2338,9 +2338,10 @@ export const deleteBlogPostFn = createServerFn({ method: "POST" })
     }
   });
 
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
 const supabaseClient = createClient(
   process.env.SUPABASE_URL || "https://agauuzudkvbxecpukshq.supabase.co",
-  process.env.SUPABASE_ANON_KEY || ""
+  supabaseKey
 );
 
 export const uploadBlogCoverFn = createServerFn({ method: "POST" })
