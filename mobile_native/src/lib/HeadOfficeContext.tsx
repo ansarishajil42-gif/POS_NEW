@@ -11,6 +11,17 @@ export interface Branch {
   staff: number;
 }
 
+export interface StaffUser {
+  id: string;
+  name?: string;
+  email: string;
+  role: string;
+  branchId?: string;
+  isActive: boolean;
+  pin?: string;
+  password?: string;
+}
+
 export interface PurchaseItem {
   id: string;
   stage: 'PO' | 'GRN' | 'Invoice';
@@ -113,8 +124,8 @@ interface HeadOfficeContextProps {
   purchases: PurchaseItem[];
   fetchPurchasing: () => Promise<void>;
   createPurchaseOrder: (vendorId: string, branchId: string, items: any[], total: number) => Promise<void>;
-  recordGRN: (poId: string, items: any[]) => Promise<void>;
-  convertToInvoice: (grnId: string) => Promise<void>;
+  recordGRN: (poId: string, grnNumber: string, items: any[]) => Promise<void>;
+  convertToInvoice: (grnId: string, invoiceNumber: string, dueDate: string, total: number) => Promise<void>;
   vendors: Vendor[];
   fetchVendors: () => Promise<void>;
   addVendor: (v: any) => Promise<void>;
@@ -124,10 +135,16 @@ interface HeadOfficeContextProps {
   loyaltyPolicies: LoyaltyPolicies;
   customers: Customer[];
   promotions: Promotion[];
-  togglePermission: (roleName: string, permissionName: string) => void;
   updateLoyaltyPolicies: (policies: LoyaltyPolicies) => void;
   issueVoucher: (customerId: string) => void;
   createCampaign: (name: string, type: string, target: string, value: string, startDate: string, endDate: string) => void;
+  staffUsers: StaffUser[];
+  fetchStaff: () => Promise<void>;
+  addStaff: (data: Partial<StaffUser>) => Promise<void>;
+  updateStaff: (id: string, data: Partial<StaffUser>) => Promise<void>;
+  deleteStaff: (id: string) => Promise<void>;
+  fetchRoles: () => Promise<void>;
+  togglePermission: (role: string, perm: string, enabled: boolean) => Promise<void>;
 }
 
 const HeadOfficeContext = createContext<HeadOfficeContextProps | null>(null);
@@ -244,6 +261,83 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [batches, setBatches] = useState<any[]>([]);
+  const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
+
+  const fetchStaff = async () => {
+    if (!user?.tenantId) return;
+    try {
+      const data = await apiClient.get(`/users?tenantId=${user.tenantId}`) as StaffUser[];
+      setStaffUsers(data);
+    } catch (err) {
+      console.error('Failed to fetch staff:', err);
+    }
+  };
+
+  const addStaff = async (data: Partial<StaffUser>) => {
+    if (!user?.tenantId) return;
+    await apiClient.post('/users', { tenantId: user.tenantId, ...data });
+    await fetchStaff();
+  };
+
+  const updateStaff = async (id: string, data: Partial<StaffUser>) => {
+    await apiClient.patch(`/users/${id}`, data);
+    await fetchStaff();
+  };
+
+  const deleteStaff = async (id: string) => {
+    await apiClient.delete(`/users/${id}`);
+    await fetchStaff();
+  };
+
+  const fetchRoles = async () => {
+    if (!user?.tenantId) return;
+    try {
+      const perms = await apiClient.get('/users/permissions') as any[];
+      const mergedRoles = initialRoles.map(r => {
+        const dbRole = r.role.toLowerCase().replace(" ", "_");
+        return {
+          ...r,
+          perms: r.perms.map(p => {
+            const dbPerm = p.name.toLowerCase().replace(" ", "_");
+            const record = perms.find((x: any) => x.role === dbRole && x.permission === dbPerm);
+            return {
+              ...p,
+              enabled: record ? record.enabled : true,
+            };
+          })
+        };
+      });
+      setRoles(mergedRoles);
+    } catch (err) {
+      console.error('Failed to fetch permissions:', err);
+    }
+  };
+
+  const togglePermission = async (roleName: string, permName: string, enabled: boolean) => {
+    const dbRole = roleName.toLowerCase().replace(" ", "_");
+    const dbPerm = permName.toLowerCase().replace(" ", "_");
+    if (dbRole === 'super_admin' || dbRole === 'head_office_admin') return;
+
+    try {
+      setRoles(prev => prev.map(r => {
+        if (r.role === roleName) {
+          return {
+            ...r,
+            perms: r.perms.map(p => p.name === permName ? { ...p, enabled } : p)
+          };
+        }
+        return r;
+      }));
+      await apiClient.patch('/users/permissions/toggle', {
+        role: dbRole,
+        permission: dbPerm,
+        enabled,
+      });
+    } catch (err) {
+      console.error('Failed to toggle permission API:', err);
+      await fetchRoles(); // revert on fail
+    }
+  };
 
   const fetchProducts = async () => {
     try {
@@ -348,11 +442,15 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    fetchBranches();
-    fetchProducts();
-    fetchBatches();
-    fetchVendors();
-    fetchPurchasing();
+    if (user?.tenantId) {
+      fetchBranches();
+      fetchProducts();
+      fetchBatches();
+      fetchVendors();
+      fetchPurchasing();
+      fetchStaff();
+      fetchRoles();
+    }
   }, [user?.tenantId]);
 
   const createPurchaseOrder = async (vendorId: string, branchId: string, items: any[], total: number) => {
@@ -370,18 +468,7 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
     await fetchPurchasing();
   };
 
-  const togglePermission = (roleName: string, permissionName: string) => {
-    setRoles((prev) =>
-      prev.map((r) =>
-        r.role === roleName
-          ? {
-            ...r,
-            perms: r.perms.map((p) => (p.name === permissionName ? { ...p, enabled: !p.enabled } : p)),
-          }
-          : r
-      )
-    );
-  };
+
 
   const updateLoyaltyPolicies = (policies: LoyaltyPolicies) => {
     setLoyaltyPolicies(policies);
@@ -456,8 +543,14 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       updateLoyaltyPolicies,
       issueVoucher,
       createCampaign,
+      staffUsers,
+      fetchStaff,
+      addStaff,
+      updateStaff,
+      deleteStaff,
+      fetchRoles,
     }),
-    [branches, products, batches, purchases, vendors, roles, loyaltyPolicies, customers, promotions]
+    [branches, products, batches, purchases, vendors, roles, loyaltyPolicies, customers, promotions, staffUsers]
   );
 
   return <HeadOfficeContext.Provider value={contextValue}>{children}</HeadOfficeContext.Provider>;

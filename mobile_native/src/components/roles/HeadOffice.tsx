@@ -1231,7 +1231,7 @@ export function HeadOfficePurchasing() {
                     <Text style={{ fontSize: 12, color: '#64748b' }}>PO: <Text style={{ fontWeight: 'bold', color: '#0f172a' }}>{invoiceDetail.poNumber}</Text></Text>
                     <Text style={{ fontSize: 12, color: '#64748b' }}>GRN: <Text style={{ fontWeight: 'bold', color: '#0f172a' }}>{invoiceDetail.grnNumber}</Text></Text>
                     <View style={{ marginTop: 8, alignSelf: 'flex-start' }}>
-                      <Badge variant={statusVariant(invoiceDetail.status)} text={invoiceDetail.status.toUpperCase()} />
+                      <Badge variant={statusVariant(invoiceDetail.status)}>{invoiceDetail.status.toUpperCase()}</Badge>
                     </View>
                   </View>
                 </View>
@@ -1405,7 +1405,7 @@ export function HeadOfficePurchasing() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 14, fontWeight: '500', color: '#0f172a', marginBottom: 6 }}>Delivery Branch</Text>
-                <TextInput style={[styles.input, { backgroundColor: '#f1f5f9', color: '#94a3b8' }]} value={activePo?.po?.branch?.name || branch?.name || 'Head Office'} editable={false} />
+                <TextInput style={[styles.input, { backgroundColor: '#f1f5f9', color: '#94a3b8' }]} value={activePo?.po?.branch?.name || (typeof branch === 'string' ? branch : (branch as any)?.name) || 'Head Office'} editable={false} />
               </View>
             </View>
 
@@ -1474,7 +1474,7 @@ export function HeadOfficePurchasing() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 14, fontWeight: '500', color: '#0f172a', marginBottom: 6 }}>Delivery Branch</Text>
-                <TextInput style={[styles.input, { backgroundColor: '#f1f5f9', color: '#94a3b8' }]} value={activeConvertItem?.grn?.purchaseOrder?.branch?.name || branch?.name || 'Head Office'} editable={false} />
+                <TextInput style={[styles.input, { backgroundColor: '#f1f5f9', color: '#94a3b8' }]} value={activeConvertItem?.grn?.purchaseOrder?.branch?.name || (typeof branch === 'string' ? branch : (branch as any)?.name) || 'Head Office'} editable={false} />
               </View>
             </View>
 
@@ -1592,50 +1592,109 @@ export function HeadOfficeMore({ onOpen }: { onOpen: (key: string) => void }) {
 
 export function RbacScreen({ onBack }: { onBack: () => void }) {
   const { branch } = useAuth();
-  const { roles, togglePermission } = useHeadOffice();
+  const { roles, togglePermission, staffUsers, addStaff, updateStaff, deleteStaff, branches } = useHeadOffice();
+  const [activeTab, setActiveTab] = useState<'directory' | 'roles'>('directory');
+  
+  const [staffModalOpen, setStaffModalOpen] = useState(false);
+  const [staffForm, setStaffForm] = useState<any>({
+    id: '', name: '', email: '', role: 'Cashier', branchId: '', pin: '', isActive: true
+  });
+
+  const handleEdit = (user: any) => {
+    setStaffForm(user);
+    setStaffModalOpen(true);
+  };
+
+  const handleSave = () => {
+    if (staffForm.id) {
+      updateStaff(staffForm.id, staffForm);
+    } else {
+      addStaff(staffForm);
+    }
+    setStaffModalOpen(false);
+  };
 
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="HO" branch={branch} />
-      <ScreenHeader title="Staff & Roles" subtitle="RBAC permissions editor" onBack={onBack} />
+      <ScreenHeader title="Staff & Roles" subtitle="Manage users and permissions" onBack={onBack} />
       <ScreenBody>
-        <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
-          <View style={styles.listContainer}>
-            {roles.map((r) => (
-              <Card key={r.role} style={styles.marginT}>
-                <View style={styles.cardHeaderRow}>
-                  <Text style={styles.roleTitle}>{r.role}</Text>
-                  <Badge variant="brand">{r.users} users</Badge>
+        <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
+          <Button variant={activeTab === 'directory' ? 'primary' : 'secondary'} onClick={() => setActiveTab('directory')}>Directory</Button>
+          <Button variant={activeTab === 'roles' ? 'primary' : 'secondary'} onClick={() => setActiveTab('roles')}>Roles & Permissions</Button>
+          {activeTab === 'directory' && (
+            <View style={{ marginLeft: 'auto' }}>
+              <Button variant="primary" onClick={() => { setStaffForm({id: '', name: '', email: '', role: 'Cashier', branchId: '', pin: '', isActive: true}); setStaffModalOpen(true); }}>Add User</Button>
+            </View>
+          )}
+        </View>
+
+        {activeTab === 'directory' ? (
+          <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
+            {staffUsers.map((u: any) => (
+              <Card key={u.id} style={{ marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View>
+                  <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#0f172a' }}>{u.name || 'Unnamed'}</Text>
+                  <Text style={{ color: '#64748b' }}>{u.email}</Text>
+                  <Text style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>Role: {u.role} • Branch: {branches.find(b => b.id === u.branchId)?.name || 'N/A'}</Text>
                 </View>
-                <View style={styles.permsList}>
-                  {r.perms.map((p) => (
-                    <View key={p.name} style={styles.permRow}>
-                      <Text style={styles.permName}>{p.name}</Text>
-                      <TouchableOpacity
-                        onPress={() => togglePermission(r.role, p.name)}
-                        style={[
-                          styles.switchTrack,
-                          p.enabled ? styles.trackOn : styles.trackOff
-                        ]}
-                        activeOpacity={0.8}
-                      >
-                        <View style={[
-                          styles.switchThumb,
-                          p.enabled ? styles.thumbOn : styles.thumbOff
-                        ]} />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <Button variant="secondary" onClick={() => handleEdit(u)}>Edit</Button>
+                  <Button variant="danger" onClick={() => deleteStaff(u.id)}>Del</Button>
                 </View>
               </Card>
             ))}
-          </View>
-          <View style={styles.auditLogBanner}>
-            <ShieldCheck size={14} color="#16a34a" style={{ marginRight: 6 }} />
-            <Text style={styles.auditLogText}>Every permission change is written to an immutable audit log.</Text>
-          </View>
-        </ScrollView>
+            {staffUsers.length === 0 && <Text style={{ textAlign: 'center', marginTop: 20, color: '#94a3b8' }}>No staff found.</Text>}
+          </ScrollView>
+        ) : (
+          <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
+            <View style={styles.listContainer}>
+              {roles.map((r) => (
+                <Card key={r.role} style={styles.marginT}>
+                  <View style={styles.cardHeaderRow}>
+                    <Text style={styles.roleTitle}>{r.role}</Text>
+                  </View>
+                  <View style={styles.permsList}>
+                    {r.perms.map((p) => (
+                      <View key={p.name} style={styles.permRow}>
+                        <Text style={styles.permName}>{p.name}</Text>
+                        <TouchableOpacity
+                          onPress={() => togglePermission(r.role, p.name, !p.enabled)}
+                          style={[styles.switchTrack, p.enabled ? styles.trackOn : styles.trackOff]}
+                          activeOpacity={0.8}
+                        >
+                          <View style={[styles.switchThumb, p.enabled ? styles.thumbOn : styles.thumbOff]} />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                </Card>
+              ))}
+            </View>
+            <View style={styles.auditLogBanner}>
+              <ShieldCheck size={14} color="#16a34a" style={{ marginRight: 6 }} />
+              <Text style={styles.auditLogText}>Every permission change is written to an immutable audit log.</Text>
+            </View>
+          </ScrollView>
+        )}
       </ScreenBody>
+
+      <Modal visible={staffModalOpen} animationType="slide" transparent>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 12 }}>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 16 }}>{staffForm.id ? 'Edit User' : 'Add User'}</Text>
+            
+            <TextInput style={[styles.input, { marginBottom: 12 }]} placeholder="Name" value={staffForm.name} onChangeText={t => setStaffForm({...staffForm, name: t})} />
+            <TextInput style={[styles.input, { marginBottom: 12 }]} placeholder="Email" value={staffForm.email} onChangeText={t => setStaffForm({...staffForm, email: t})} />
+            <TextInput style={[styles.input, { marginBottom: 12 }]} placeholder="Role (e.g. Cashier, Store Manager)" value={staffForm.role} onChangeText={t => setStaffForm({...staffForm, role: t})} />
+            
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+              <Button variant="secondary" onClick={() => setStaffModalOpen(false)}>Cancel</Button>
+              <Button variant="primary" onClick={handleSave}>Save</Button>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

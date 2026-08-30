@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, pgEnum, uuid, decimal, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, pgEnum, uuid, decimal, integer, boolean, unique } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
 export const roleEnum = pgEnum("role", [
@@ -417,6 +417,27 @@ export const shiftsRelations = relations(shifts, ({ one }) => ({
 
 export const orderPaymentsRelations = relations(orderPayments, ({ one }) => ({
   order: one(orders, { fields: [orderPayments.orderId], references: [orders.id] }),
+}));
+
+export const rolePermissions = pgTable(
+  "role_permissions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    role: roleEnum("role").notNull(),
+    permission: text("permission").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [unique("role_perm_unique").on(t.tenantId, t.role, t.permission)],
+);
+
+export const rolePermissionsRelations = relations(rolePermissions, ({ one }) => ({
+  tenant: one(tenants, { fields: [rolePermissions.tenantId], references: [tenants.id] }),
 }));
 
 // 18. platform_settings
