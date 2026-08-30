@@ -13,6 +13,8 @@ import {
   customerHistory
 } from '../../lib/mockData';
 import { apiClient } from '../../lib/apiClient';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import {
   Store,
   Package,
@@ -683,6 +685,236 @@ export function HeadOfficePurchasing() {
     }
   };
 
+  const handleDownloadInvoicePdf = async (invoice: any) => {
+    if (!invoice) return;
+    try {
+      const itemsHtml = (invoice.items || []).map((item: any) => `
+        <tr>
+          <td>${item.name}</td>
+          <td class="right-align">${item.receivedQty} pcs</td>
+          <td class="right-align">${formatCurrency(item.unitPrice)}</td>
+          <td class="right-align">${formatCurrency(item.subtotal)}</td>
+        </tr>
+      `).join('');
+
+      const badgeClass = invoice.status === 'paid' ? 'badge-paid' : (invoice.status === 'pending' ? 'badge-pending' : 'badge-default');
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            body {
+              font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+              color: #0f172a;
+              margin: 0;
+              padding: 40px;
+            }
+            .header {
+              display: flex;
+              justify-content: space-between;
+              border-bottom: 2px solid #e2e8f0;
+              padding-bottom: 20px;
+              margin-bottom: 20px;
+            }
+            .tenant-title {
+              font-size: 24px;
+              font-weight: bold;
+              color: #0f172a;
+            }
+            .branch-name {
+              font-size: 14px;
+              color: #64748b;
+              margin-top: 4px;
+            }
+            .invoice-info {
+              text-align: right;
+            }
+            .invoice-title {
+              font-size: 20px;
+              font-weight: bold;
+              color: #0f172a;
+              margin-bottom: 5px;
+            }
+            .invoice-meta {
+              font-size: 12px;
+              color: #64748b;
+              line-height: 1.5;
+            }
+            .details-row {
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 30px;
+              gap: 20px;
+            }
+            .details-col {
+              flex: 1;
+            }
+            .details-title {
+              font-weight: bold;
+              color: #0f172a;
+              margin-bottom: 8px;
+              font-size: 14px;
+              border-bottom: 1px solid #e2e8f0;
+              padding-bottom: 4px;
+            }
+            .details-text {
+              font-size: 12px;
+              color: #334155;
+              line-height: 1.6;
+            }
+            .table-container {
+              margin-bottom: 30px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              text-align: left;
+            }
+            th {
+              background-color: #f8fafc;
+              border-bottom: 2px solid #e2e8f0;
+              color: #64748b;
+              font-weight: bold;
+              font-size: 12px;
+              padding: 10px;
+            }
+            td {
+              border-bottom: 1px solid #f1f5f9;
+              padding: 10px;
+              font-size: 12px;
+              color: #0f172a;
+            }
+            .right-align {
+              text-align: right;
+            }
+            .totals-container {
+              display: flex;
+              flex-direction: column;
+              align-items: flex-end;
+              border-top: 2px solid #e2e8f0;
+              padding-top: 15px;
+            }
+            .total-row {
+              display: flex;
+              justify-content: flex-end;
+              width: 320px;
+              margin-bottom: 6px;
+              font-size: 14px;
+              color: #64748b;
+            }
+            .total-row.final {
+              font-size: 18px;
+              font-weight: bold;
+              color: #0f172a;
+              margin-top: 5px;
+            }
+            .total-label {
+              flex: 1;
+              text-align: right;
+              padding-right: 15px;
+            }
+            .total-val {
+              width: 120px;
+              text-align: right;
+            }
+            .badge {
+              display: inline-block;
+              padding: 3px 8px;
+              border-radius: 4px;
+              font-size: 10px;
+              font-weight: bold;
+              text-transform: uppercase;
+              margin-top: 5px;
+            }
+            .badge-paid { background-color: #dcfce7; color: #15803d; }
+            .badge-pending { background-color: #fef9c3; color: #a16207; }
+            .badge-default { background-color: #f1f5f9; color: #475569; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div>
+              <div class="tenant-title">${invoice.tenantName}</div>
+              <div class="branch-name">Branch: ${invoice.branchName}</div>
+            </div>
+            <div class="invoice-info">
+              <div class="invoice-title">INVOICE</div>
+              <div class="invoice-meta">
+                Ref: ${invoice.invoiceNumber}<br/>
+                Date: ${invoice.createdAt ? invoice.createdAt.split("T")[0] : ""}<br/>
+                Due Date: ${invoice.dueDate ? invoice.dueDate.split("T")[0] : ""}
+              </div>
+            </div>
+          </div>
+
+          <div class="details-row">
+            <div class="details-col">
+              <div class="details-title">Supplier Details:</div>
+              <div class="details-text">
+                <strong>${invoice.vendorName}</strong><br/>
+                ${invoice.vendorTrn ? `TRN: ${invoice.vendorTrn}<br/>` : ''}
+                ${invoice.vendorContact ? `Contact: ${invoice.vendorContact}<br/>` : ''}
+                ${invoice.vendorEmail ? `Email: ${invoice.vendorEmail}<br/>` : ''}
+              </div>
+            </div>
+            <div class="details-col">
+              <div class="details-title">References:</div>
+              <div class="details-text">
+                PO Reference: <strong>${invoice.poNumber}</strong><br/>
+                GRN Reference: <strong>${invoice.grnNumber}</strong><br/>
+                Status: <span class="badge ${badgeClass}">${invoice.status}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th class="right-align">Rec. Qty</th>
+                  <th class="right-align">Unit Price</th>
+                  <th class="right-align">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemsHtml || '<tr><td colspan="4" style="text-align:center;">No products found</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="totals-container">
+            <div class="total-row">
+              <span class="total-label">Subtotal:</span>
+              <span class="total-val">${formatCurrency(invoice.subtotal)}</span>
+            </div>
+            <div class="total-row">
+              <span class="total-label">VAT (${invoice.vatRate}% ${invoice.vatInclusive ? 'Incl.' : 'Excl.'}):</span>
+              <span class="total-val">${formatCurrency(invoice.vat)}</span>
+            </div>
+            <div class="total-row final">
+              <span class="total-label">Total:</span>
+              <span class="total-val">${formatCurrency(invoice.total)}</span>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      const { uri } = await Print.printToFileAsync({ html: htmlContent });
+      
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
+      } else {
+        showToast('PDF generated at ' + uri, 'success');
+      }
+    } catch (error: any) {
+      showToast(error.message || 'Failed to generate PDF', 'error');
+    }
+  };
+
   const openRecordGRN = (po: any) => {
     setActivePo(po);
     setGrnNumber('');
@@ -1031,8 +1263,7 @@ export function HeadOfficePurchasing() {
                 </View>
 
                 <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 24 }}>
-                  <Button variant="secondary" onClick={() => showToast('PDF Download coming soon', 'success')}>Download PDF</Button>
-                  <Button variant="secondary" onClick={() => showToast('Printing coming soon', 'success')}>Print Invoice</Button>
+                  <Button variant="secondary" onClick={() => handleDownloadInvoicePdf(invoiceDetail)}>Download PDF</Button>
                   <Button variant="primary" onClick={() => setInvoiceDetailOpen(false)}>Close</Button>
                 </View>
               </View>
