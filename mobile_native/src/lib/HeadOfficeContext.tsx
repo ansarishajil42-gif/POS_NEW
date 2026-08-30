@@ -149,44 +149,56 @@ interface HeadOfficeContextProps {
 
 const HeadOfficeContext = createContext<HeadOfficeContextProps | null>(null);
 
+const permToKeyMap: Record<string, string> = {
+  "Branch override": "branch_override",
+  "Local stock": "local_stock",
+  "Pricing adjustments": "pricing_adjustments",
+  "Till management": "till_management",
+  "Shift & staff": "shift_staff",
+  "Stock adjust": "stock_adjust",
+  "Receive goods": "receive_goods",
+  "Create PO": "create_po",
+  "Receive invoices": "receive_invoices",
+  "Process sales": "process_sales",
+  "Refunds": "refunds",
+  "End of shift": "end_of_shift",
+};
+
 const initialRoles: RoleConfig[] = [
   {
-    role: 'Store Manager',
-    users: 14,
+    role: 'Branch Manager',
+    users: 0,
     perms: [
-      { name: 'Full outlet access', enabled: true },
-      { name: 'Price overrides', enabled: true },
-      { name: 'Void receipts', enabled: true },
-      { name: 'Shift approvals', enabled: true },
+      { name: 'Branch override', enabled: true },
+      { name: 'Local stock', enabled: true },
+      { name: 'Pricing adjustments', enabled: true },
+      { name: 'Till management', enabled: true },
+      { name: 'Shift & staff', enabled: true },
     ],
   },
   {
     role: 'Inventory Manager',
-    users: 9,
+    users: 0,
     perms: [
-      { name: 'Stock adjustments', enabled: true },
-      { name: 'Batch & expiry', enabled: true },
-      { name: 'Transfers', enabled: true },
-      { name: 'Clearance pricing', enabled: true },
+      { name: 'Stock adjust', enabled: true },
+      { name: 'Receive goods', enabled: true },
     ],
   },
   {
     role: 'Purchasing Officer',
-    users: 6,
+    users: 0,
     perms: [
-      { name: 'Create POs', enabled: true },
-      { name: 'Record GRNs', enabled: true },
-      { name: 'Vendor invoices', enabled: true },
-      { name: 'AP monitoring', enabled: true },
+      { name: 'Create PO', enabled: true },
+      { name: 'Receive invoices', enabled: true },
     ],
   },
   {
     role: 'Cashier',
-    users: 212,
+    users: 0,
     perms: [
-      { name: 'Checkout', enabled: true },
-      { name: 'Shift float', enabled: true },
-      { name: 'Loyalty redemption', enabled: true },
+      { name: 'Process sales', enabled: true },
+      { name: 'Refunds', enabled: true },
+      { name: 'End of shift', enabled: true },
     ],
   },
 ];
@@ -298,7 +310,7 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
         return {
           ...r,
           perms: r.perms.map(p => {
-            const dbPerm = p.name.toLowerCase().replace(" ", "_");
+            const dbPerm = permToKeyMap[p.name] || p.name.toLowerCase().replace(" ", "_");
             const record = perms.find((x: any) => x.role === dbRole && x.permission === dbPerm);
             return {
               ...p,
@@ -315,7 +327,7 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
 
   const togglePermission = async (roleName: string, permName: string, enabled: boolean) => {
     const dbRole = roleName.toLowerCase().replace(" ", "_");
-    const dbPerm = permName.toLowerCase().replace(" ", "_");
+    const dbPerm = permToKeyMap[permName] || permName.toLowerCase().replace(" ", "_");
     if (dbRole === 'super_admin' || dbRole === 'head_office_admin') return;
 
     try {

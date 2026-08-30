@@ -1594,25 +1594,91 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
   const { branch } = useAuth();
   const { roles, togglePermission, staffUsers, addStaff, updateStaff, deleteStaff, branches } = useHeadOffice();
   const [activeTab, setActiveTab] = useState<'directory' | 'roles'>('directory');
+  const [selectedRoleName, setSelectedRoleName] = useState<string>('Branch Manager');
   
   const [staffModalOpen, setStaffModalOpen] = useState(false);
+  const [rolePickerOpen, setRolePickerOpen] = useState(false);
+  const [branchPickerOpen, setBranchPickerOpen] = useState(false);
+
   const [staffForm, setStaffForm] = useState<any>({
-    id: '', name: '', email: '', role: 'Cashier', branchId: '', pin: '', isActive: true
+    id: '', name: '', email: '', role: 'cashier', branchId: '', pin: '', password: '', isActive: true
   });
 
-  const handleEdit = (user: any) => {
-    setStaffForm(user);
+  const roleOptions = [
+    { label: 'Branch Manager', value: 'branch_manager' },
+    { label: 'Inventory Manager', value: 'inventory_manager' },
+    { label: 'Purchasing Officer', value: 'purchasing_officer' },
+    { label: 'Cashier', value: 'cashier' },
+  ];
+
+  const handleAddUser = () => {
+    setStaffForm({
+      id: '',
+      name: '',
+      email: '',
+      role: 'cashier',
+      branchId: branches[0]?.id || '',
+      pin: '',
+      password: '',
+      isActive: true
+    });
     setStaffModalOpen(true);
   };
 
-  const handleSave = () => {
-    if (staffForm.id) {
-      updateStaff(staffForm.id, staffForm);
-    } else {
-      addStaff(staffForm);
-    }
-    setStaffModalOpen(false);
+  const handleEdit = (u: any) => {
+    setStaffForm({
+      id: u.id,
+      name: u.name || '',
+      email: u.email || '',
+      role: u.role || 'cashier',
+      branchId: u.branchId || '',
+      pin: '',
+      password: '',
+      isActive: u.isActive !== false
+    });
+    setStaffModalOpen(true);
   };
+
+  const handleSave = async () => {
+    if (!staffForm.name || !staffForm.email || !staffForm.role) {
+      Alert.alert("Validation Error", "Name, Email and Role are required.");
+      return;
+    }
+    if (!staffForm.branchId) {
+      Alert.alert("Validation Error", "Branch assignment is required.");
+      return;
+    }
+    if (!staffForm.id) {
+      if (staffForm.role === 'cashier' && !staffForm.pin) {
+        Alert.alert("Validation Error", "PIN is required for Cashier.");
+        return;
+      }
+      if (staffForm.role !== 'cashier' && !staffForm.password) {
+        Alert.alert("Validation Error", "Password is required.");
+        return;
+      }
+    }
+
+    try {
+      if (staffForm.id) {
+        await updateStaff(staffForm.id, staffForm);
+      } else {
+        await addStaff(staffForm);
+      }
+      setStaffModalOpen(false);
+      Alert.alert("Success", "Staff saved successfully.");
+    } catch (err: any) {
+      console.error("Save staff error details:", err);
+      Alert.alert("Save Failed", err.message || "An error occurred.");
+    }
+  };
+
+  const getRoleLabel = (roleVal: string) => {
+    const opt = roleOptions.find(o => o.value === roleVal);
+    return opt ? opt.label : roleVal.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
+  };
+
+  const selectedRole = roles.find(r => r.role === selectedRoleName);
 
   return (
     <View style={styles.flex1}>
@@ -1624,72 +1690,105 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
           <Button variant={activeTab === 'roles' ? 'primary' : 'secondary'} onClick={() => setActiveTab('roles')}>Roles & Permissions</Button>
           {activeTab === 'directory' && (
             <View style={{ marginLeft: 'auto' }}>
-              <Button variant="primary" onClick={() => { setStaffForm({id: '', name: '', email: '', role: 'Cashier', branchId: '', pin: '', isActive: true}); setStaffModalOpen(true); }}>Add User</Button>
+              <Button variant="primary" onClick={handleAddUser}>Add User</Button>
             </View>
           )}
         </View>
 
         {activeTab === 'directory' ? (
           <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
-            {staffUsers.map((u: any) => (
-              <Card key={u.id} style={{ marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <View>
-                  <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#0f172a' }}>{u.name || 'Unnamed'}</Text>
-                  <Text style={{ color: '#64748b' }}>{u.email}</Text>
-                  <Text style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>Role: {u.role} • Branch: {branches.find(b => b.id === u.branchId)?.name || 'N/A'}</Text>
-                </View>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  <Button variant="secondary" onClick={() => handleEdit(u)}>Edit</Button>
-                  <Button variant="danger" onClick={() => {
-                    Alert.alert(
-                      "Delete User",
-                      "Are you sure you want to delete this staff member?",
-                      [
-                        { text: "Cancel", style: "cancel" },
-                        {
-                          text: "Delete",
-                          style: "destructive",
-                          onPress: async () => {
-                            try {
-                              await deleteStaff(u.id);
-                            } catch (err: any) {
-                              Alert.alert("Delete Failed", err.message || "linked records maujood hain");
+            {staffUsers
+              .filter((u: any) => u.role !== 'super_admin' && u.role !== 'head_office_admin')
+              .map((u: any) => (
+                <Card key={u.id} style={{ marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flex: 1, paddingRight: 8 }}>
+                    <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#0f172a' }}>{u.name || 'Unnamed'}</Text>
+                    <Text style={{ color: '#64748b', fontSize: 13 }}>{u.email}</Text>
+                    <Text style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>
+                      Role: {getRoleLabel(u.role)} • Branch: {branches.find(b => b.id === u.branchId)?.name || '-'}
+                    </Text>
+                    <View style={{ marginTop: 4, alignSelf: 'flex-start' }}>
+                      <Badge variant={u.isActive ? 'brand' : 'neutral'}>{u.isActive ? 'Active' : 'Inactive'}</Badge>
+                    </View>
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <Button variant="secondary" onClick={() => handleEdit(u)}>Edit</Button>
+                    <Button variant="danger" onClick={() => {
+                      Alert.alert(
+                        "Delete User",
+                        "Are you sure you want to delete this staff member?",
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          {
+                            text: "Delete",
+                            style: "destructive",
+                            onPress: async () => {
+                              try {
+                                await deleteStaff(u.id);
+                              } catch (err: any) {
+                                Alert.alert("Delete Failed", err.message || "linked records maujood hain");
+                              }
                             }
                           }
-                        }
-                      ]
-                    );
-                  }}>Del</Button>
-                </View>
-              </Card>
-            ))}
+                        ]
+                      );
+                    }}>Del</Button>
+                  </View>
+                </Card>
+              ))}
             {staffUsers.length === 0 && <Text style={{ textAlign: 'center', marginTop: 20, color: '#94a3b8' }}>No staff found.</Text>}
           </ScrollView>
         ) : (
           <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
-            <View style={styles.listContainer}>
-              {roles.map((r) => (
-                <Card key={r.role} style={styles.marginT}>
-                  <View style={styles.cardHeaderRow}>
-                    <Text style={styles.roleTitle}>{r.role}</Text>
-                  </View>
-                  <View style={styles.permsList}>
-                    {r.perms.map((p) => (
-                      <View key={p.name} style={styles.permRow}>
-                        <Text style={styles.permName}>{p.name}</Text>
-                        <TouchableOpacity
-                          onPress={() => togglePermission(r.role, p.name, !p.enabled)}
-                          style={[styles.switchTrack, p.enabled ? styles.trackOn : styles.trackOff]}
-                          activeOpacity={0.8}
-                        >
-                          <View style={[styles.switchThumb, p.enabled ? styles.thumbOn : styles.thumbOff]} />
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                  </View>
-                </Card>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+              {roles.map(r => (
+                <TouchableOpacity
+                  key={r.role}
+                  onPress={() => setSelectedRoleName(r.role)}
+                  style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 8,
+                    backgroundColor: selectedRoleName === r.role ? '#39ff14' : '#f1f5f9',
+                    borderWidth: 1,
+                    borderColor: selectedRoleName === r.role ? '#39ff14' : '#e2e8f0',
+                  }}
+                >
+                  <Text style={{
+                    fontWeight: 'bold',
+                    fontSize: 12,
+                    color: selectedRoleName === r.role ? '#0f172a' : '#64748b'
+                  }}>
+                    {r.role}
+                  </Text>
+                </TouchableOpacity>
               ))}
             </View>
+
+            {selectedRole ? (
+              <Card style={styles.marginT}>
+                <View style={styles.cardHeaderRow}>
+                  <Text style={styles.roleTitle}>{selectedRole.role} Permissions</Text>
+                </View>
+                <View style={styles.permsList}>
+                  {selectedRole.perms.map((p) => (
+                    <View key={p.name} style={styles.permRow}>
+                      <Text style={styles.permName}>{p.name}</Text>
+                      <TouchableOpacity
+                        onPress={() => togglePermission(selectedRole.role, p.name, !p.enabled)}
+                        style={[styles.switchTrack, p.enabled ? styles.trackOn : styles.trackOff]}
+                        activeOpacity={0.8}
+                      >
+                        <View style={[styles.switchThumb, p.enabled ? styles.thumbOn : styles.thumbOff]} />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              </Card>
+            ) : (
+              <Text style={{ textAlign: 'center', color: '#94a3b8' }}>Select a role to view permissions.</Text>
+            )}
+
             <View style={styles.auditLogBanner}>
               <ShieldCheck size={14} color="#16a34a" style={{ marginRight: 6 }} />
               <Text style={styles.auditLogText}>Every permission change is written to an immutable audit log.</Text>
@@ -1701,19 +1800,128 @@ export function RbacScreen({ onBack }: { onBack: () => void }) {
       <Modal visible={staffModalOpen} animationType="slide" transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}>
           <View style={{ backgroundColor: '#fff', padding: 20, borderRadius: 12 }}>
-            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 16 }}>{staffForm.id ? 'Edit User' : 'Add User'}</Text>
+            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 16, color: '#0f172a' }}>
+              {staffForm.id ? 'Edit Staff Member' : 'Add Staff Member'}
+            </Text>
             
-            <TextInput style={[styles.input, { marginBottom: 12 }]} placeholder="Name" value={staffForm.name} onChangeText={t => setStaffForm({...staffForm, name: t})} />
-            <TextInput style={[styles.input, { marginBottom: 12 }]} placeholder="Email" value={staffForm.email} onChangeText={t => setStaffForm({...staffForm, email: t})} />
-            <TextInput style={[styles.input, { marginBottom: 12 }]} placeholder="Role (e.g. Cashier, Store Manager)" value={staffForm.role} onChangeText={t => setStaffForm({...staffForm, role: t})} />
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 400 }}>
+              <Text style={styles.inputLabel}>Name</Text>
+              <TextInput style={[styles.input, { marginBottom: 12 }]} placeholder="Full Name" value={staffForm.name} onChangeText={t => setStaffForm({...staffForm, name: t})} />
+              
+              <Text style={styles.inputLabel}>Email</Text>
+              <TextInput style={[styles.input, { marginBottom: 12 }]} placeholder="Email Address" keyboardType="email-address" autoCapitalize="none" value={staffForm.email} onChangeText={t => setStaffForm({...staffForm, email: t})} />
+              
+              <Text style={styles.inputLabel}>Role</Text>
+              <TouchableOpacity 
+                style={[styles.input, { marginBottom: 12, justifyContent: 'center', minHeight: 45 }]} 
+                onPress={() => setRolePickerOpen(true)}
+              >
+                <Text style={{ color: staffForm.role ? '#0f172a' : '#94a3b8' }}>
+                  {roleOptions.find(o => o.value === staffForm.role)?.label || "Select Role"}
+                </Text>
+              </TouchableOpacity>
+              
+              <Text style={styles.inputLabel}>Branch assignment</Text>
+              <TouchableOpacity 
+                style={[styles.input, { marginBottom: 12, justifyContent: 'center', minHeight: 45 }]} 
+                onPress={() => setBranchPickerOpen(true)}
+              >
+                <Text style={{ color: staffForm.branchId ? '#0f172a' : '#94a3b8' }}>
+                  {branches.find(b => b.id === staffForm.branchId)?.name || "Select Branch"}
+                </Text>
+              </TouchableOpacity>
+              
+              {staffForm.role === 'cashier' ? (
+                <>
+                  <Text style={styles.inputLabel}>PIN {staffForm.id ? "(Leave blank to keep existing)" : "*"}</Text>
+                  <TextInput 
+                    style={[styles.input, { marginBottom: 12 }]} 
+                    placeholder="4-digit PIN" 
+                    keyboardType="numeric"
+                    secureTextEntry 
+                    value={staffForm.pin} 
+                    onChangeText={t => setStaffForm({...staffForm, pin: t})} 
+                  />
+                </>
+              ) : (
+                <>
+                  <Text style={styles.inputLabel}>Password {staffForm.id ? "(Leave blank to keep existing)" : "*"}</Text>
+                  <TextInput 
+                    style={[styles.input, { marginBottom: 12 }]} 
+                    placeholder="Password" 
+                    secureTextEntry 
+                    value={staffForm.password} 
+                    onChangeText={t => setStaffForm({...staffForm, password: t})} 
+                  />
+                </>
+              )}
+
+              {staffForm.id && (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginVertical: 12 }}>
+                  <View>
+                    <Text style={{ fontWeight: '600', color: '#0f172a' }}>Active Status</Text>
+                    <Text style={{ fontSize: 11, color: '#64748b' }}>Inactive staff cannot log in.</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setStaffForm({...staffForm, isActive: !staffForm.isActive})}
+                    style={[
+                      styles.switchTrack,
+                      staffForm.isActive ? styles.trackOn : styles.trackOff
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <View style={[
+                      styles.switchThumb,
+                      staffForm.isActive ? styles.thumbOn : styles.thumbOff
+                    ]} />
+                  </TouchableOpacity>
+                </View>
+              )}
+            </ScrollView>
             
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
-              <Button variant="secondary" onClick={() => setStaffModalOpen(false)}>Cancel</Button>
-              <Button variant="primary" onClick={handleSave}>Save</Button>
+              <Button variant="secondary" style={{ flex: 1 }} onClick={() => setStaffModalOpen(false)}>Cancel</Button>
+              <Button variant="primary" style={{ flex: 1 }} onClick={handleSave}>Save Staff</Button>
             </View>
           </View>
         </View>
       </Modal>
+
+      {/* Role Picker Sheet */}
+      <Sheet open={rolePickerOpen} onClose={() => setRolePickerOpen(false)} title="Select Role">
+        {roleOptions.map(o => (
+          <TouchableOpacity 
+            key={o.value} 
+            style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}
+            onPress={() => {
+              setStaffForm({ ...staffForm, role: o.value });
+              setRolePickerOpen(false);
+            }}
+          >
+            <Text style={{ fontSize: 16, color: '#0f172a', fontWeight: staffForm.role === o.value ? 'bold' : 'normal' }}>
+              {o.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </Sheet>
+
+      {/* Branch Picker Sheet */}
+      <Sheet open={branchPickerOpen} onClose={() => setBranchPickerOpen(false)} title="Select Branch">
+        {branches.map(b => (
+          <TouchableOpacity 
+            key={b.id} 
+            style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}
+            onPress={() => {
+              setStaffForm({ ...staffForm, branchId: b.id });
+              setBranchPickerOpen(false);
+            }}
+          >
+            <Text style={{ fontSize: 16, color: '#0f172a', fontWeight: staffForm.branchId === b.id ? 'bold' : 'normal' }}>
+              {b.name}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </Sheet>
     </View>
   );
 }

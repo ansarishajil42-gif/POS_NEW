@@ -95,9 +95,9 @@ router.post("/", async (req, res) => {
     });
 
     res.status(201).json(newUser[0]);
-  } catch (error) {
+  } catch (error: any) {
     console.error("Create user error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ error: error.message || "Internal server error" });
   }
 });
 
@@ -143,9 +143,9 @@ router.patch("/:id", async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
     res.json(updated[0]);
-  } catch (error) {
+  } catch (error: any) {
     console.error("Update user error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ error: error.message || "Internal server error" });
   }
 });
 
