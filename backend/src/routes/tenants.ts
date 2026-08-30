@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, gte, lte } from "drizzle-orm";
 import { tenants, branches, staffUsers, orders, shifts, platformSettings, tenantSettings, purchaseOrders } from "../db/schema.js";
 import bcrypt from "bcryptjs";
 import { requireAuth } from "../middleware/auth.js";
@@ -228,8 +228,8 @@ router.get("/reports/sales-summary", requireAuth, async (req, res) => {
     let conditions = [
       eq(orders.tenantId, tenantId),
       eq(orders.status, "completed"),
-      sql`${orders.createdAt} >= ${sDate}`,
-      sql`${orders.createdAt} <= ${eDate}`
+      gte(orders.createdAt, sDate),
+      lte(orders.createdAt, eDate)
     ];
     if (branchId && branchId !== 'all') {
       conditions.push(eq(orders.branchId, branchId as string));
@@ -291,8 +291,8 @@ router.get("/reports/vat-summary", requireAuth, async (req, res) => {
     let salesConditions = [
       eq(orders.tenantId, tenantId),
       eq(orders.status, "completed"),
-      sql`${orders.createdAt} >= ${sDate}`,
-      sql`${orders.createdAt} <= ${eDate}`
+      gte(orders.createdAt, sDate),
+      lte(orders.createdAt, eDate)
     ];
     if (branchId && branchId !== 'all') {
       salesConditions.push(eq(orders.branchId, branchId as string));
@@ -307,8 +307,8 @@ router.get("/reports/vat-summary", requireAuth, async (req, res) => {
     // Query Purchases
     let purchaseConditions = [
       eq(purchaseOrders.tenantId, tenantId),
-      sql`${purchaseOrders.createdAt} >= ${sDate}`,
-      sql`${purchaseOrders.createdAt} <= ${eDate}`,
+      gte(purchaseOrders.createdAt, sDate),
+      lte(purchaseOrders.createdAt, eDate),
       inArray(purchaseOrders.status, ["GRN", "Invoiced"])
     ];
     if (branchId && branchId !== 'all') {
