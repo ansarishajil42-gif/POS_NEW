@@ -9,6 +9,18 @@ const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key-12345";
 
 const router = Router();
 
+// Fetch tenants and branches for PIN login selectors
+router.get("/tenants-branches", async (req, res) => {
+  try {
+    const allTenants = await db.select().from(tenants);
+    const allBranches = await db.select().from(branches);
+    res.json({ tenants: allTenants, branches: allBranches });
+  } catch (error) {
+    console.error("Fetch tenants and branches error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Login with email and password (for admins, managers, officers)
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
