@@ -390,6 +390,30 @@ export function StoreManagerStaff() {
               <Text style={styles.noDataText}>No scheduled or active shifts rostered.</Text>
             )}
           </View>
+
+          <Text style={styles.sectionTitle}><Boxes size={13} color="#475569" style={styles.sectionIcon} /> Till Registry</Text>
+          <View style={[styles.listContainer, { marginBottom: 24 }]}>
+            {tills.map((t) => (
+              <Card key={t.id}>
+                <View style={styles.cardHeaderRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.productName}>{t.name}</Text>
+                    <Text style={styles.productMeta}>{t.description || "No description"}</Text>
+                    <Text style={styles.productMeta}>Opening Float: AED {parseFloat(t.openingFloat || 0).toFixed(2)}</Text>
+                    <Text style={styles.productMeta}>Created: {new Date(t.createdAt).toLocaleDateString()}</Text>
+                  </View>
+                  <View style={styles.productPriceCol}>
+                    <Badge variant={t.status === 'Open' ? 'success' : 'neutral'}>
+                      {t.status}
+                    </Badge>
+                  </View>
+                </View>
+              </Card>
+            ))}
+            {tills.length === 0 && (
+              <Text style={styles.noDataText}>No tills registered in this branch.</Text>
+            )}
+          </View>
         </ScrollView>
       </ScreenBody>
 
