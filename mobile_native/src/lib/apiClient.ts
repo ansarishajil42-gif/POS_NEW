@@ -187,7 +187,11 @@ const request = async <T>(endpoint: string, options: RequestOptions = {}): Promi
     }
 
     if (__DEV__) {
-      console.error(`[API Error] ${response.status} ${url} - ${errorMessage}`);
+      if (response.status === 404) {
+        console.warn(`[API Warn] ${response.status} ${url} - Endpoint not found (pending backend deployment)`);
+      } else {
+        console.error(`[API Error] ${response.status} ${url} - ${errorMessage}`);
+      }
     }
 
     throw new ApiError(response.status, errorMessage, data);

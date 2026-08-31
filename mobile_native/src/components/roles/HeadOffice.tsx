@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Alert, Modal, Keyboard } from 'react-native';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Alert, Modal, Keyboard, Platform } from 'react-native';
 import { AppHeader, ScreenBody, ScreenHeader } from '../Shell';
 import { Card, StatCard } from '../ui/Card';
 import { Badge, statusVariant } from '../ui/Badge';
@@ -11,6 +11,7 @@ import { useAuth } from '../../lib/auth';
 import { useHeadOffice, PurchaseItem, RoleConfig, Customer, Promotion, permToKeyMap } from '../../lib/HeadOfficeContext';
 import {
   products,
+  customerHistory
 } from '../../lib/mockData';
 import { apiClient } from '../../lib/apiClient';
 import * as Print from 'expo-print';
@@ -36,7 +37,9 @@ import {
   Download,
   Edit2,
   Trash2,
-  X
+  X,
+  ChevronLeft,
+  Check
 } from 'lucide-react-native';
 
 export function HeadOfficeHome() {
@@ -1579,6 +1582,8 @@ export function HeadOfficeMore({ onOpen }: { onOpen: (key: string) => void }) {
     { key: 'vat', label: 'VAT Compliance', desc: 'FTA summaries & tax filing downloads', icon: <FileText size={18} color="#39ff14" /> },
     { key: 'crm', label: 'Customer Loyalty', desc: 'Loyalty policies & vouchers issuing', icon: <Users size={18} color="#39ff14" /> },
     { key: 'promotions', label: 'Promotions', desc: 'Marketing campaigns & bundle codes', icon: <Tag size={18} color="#39ff14" /> },
+    { key: 'price-requests', label: 'Price Requests', desc: 'Approve or reject override requests', icon: <ShoppingCart size={18} color="#39ff14" /> },
+    { key: 'audit-logs', label: 'Audit Logs', desc: 'System actions and operations log', icon: <FileText size={18} color="#39ff14" /> },
     { key: 'aggregator', label: 'Aggregator Sync', desc: 'Talabat, Careem & more', icon: <Layers size={18} color="#39ff14" /> },
   ];
 
@@ -2389,9 +2394,9 @@ export function VatScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => void }) {
+export function CrmScreen({ onBack, onOpenCustomer }: { onBack: () => void; onOpenCustomer: (id: string) => void }) {
   const { branch } = useAuth();
-  const { customers, loyaltyPolicies, updateLoyaltyPolicies, fetchCustomers, addCustomer } = useHeadOffice();
+  const { customers, loyaltyPolicies, updateLoyaltyPolicies, issueVoucher } = useHeadOffice();
 
   const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
   const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
@@ -2401,54 +2406,25 @@ export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => 
   const [minRedeem, setMinRedeem] = useState(String(loyaltyPolicies.minPoints));
   const [redValue, setRedValue] = useState(String(loyaltyPolicies.redemptionValue));
 
-  // Search & Create States
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [formData, setFormData] = useState({ name: '', phone: '', email: '' });
-
-  useEffect(() => {
-    fetchCustomers(searchQuery);
-  }, [searchQuery]);
-
-  useEffect(() => {
-    setPointsSpent(String(loyaltyPolicies.pointsPerAed));
-    setMinRedeem(String(loyaltyPolicies.minPoints));
-    setRedValue(String(loyaltyPolicies.redemptionValue));
-  }, [loyaltyPolicies]);
-
-  const handleSavePolicies = async () => {
-    try {
-      await updateLoyaltyPolicies({
-        pointsPerAed: parseInt(pointsSpent) || 10,
-        minPoints: parseInt(minRedeem) || 5000,
-        redemptionValue: parseFloat(redValue) || 0.01,
-      });
-      showToast('Loyalty policies updated successfully.', 'success');
-    } catch (err: any) {
-      showToast('Failed to update policies.', 'error');
-    }
+  const handleSavePolicies = () => {
+    updateLoyaltyPolicies({
+      pointsPerAed: parseInt(pointsSpent) || 10,
+      minPoints: parseInt(minRedeem) || 5000,
+      redemptionValue: parseInt(redValue) || 10,
+    });
+    showToast('Loyalty policies updated successfully.', 'success');
   };
 
-  const handleSaveCustomer = async () => {
-    if (!formData.name.trim()) {
-      showToast('Name is required', 'error');
-      return;
-    }
-    try {
-      await addCustomer(formData.name, formData.email, formData.phone);
-      showToast('Customer created successfully.', 'success');
-      setFormData({ name: '', phone: '', email: '' });
-      setIsFormOpen(false);
-    } catch (err: any) {
-      showToast(err.message || 'Failed to create customer', 'error');
-    }
+  const handleIssueVoucher = (c: Customer) => {
+    issueVoucher(c.id);
+    showToast(`A voucher code has been dispatched to ${c.name}.`, 'success');
   };
 
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="HO" branch={branch} />
+      <ScreenHeader title="Customer Loyalty" subtitle="Loyalty policies & vouchers" onBack={onBack} />
       <ScreenBody>
-        <Text style={styles.mainTitle}>Customer Loyalty</Text>
 
         {/* Point-Redemption Policies Card */}
         <Card style={styles.marginT}>
@@ -2472,19 +2448,8 @@ export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => 
           </View>
         </Card>
 
-        {/* Search & Actions Bar */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
-          <TextInput
-            style={[styles.textInput, { flex: 1, marginRight: 8, height: 40 }]}
-            placeholder="Search customers by name, phone or email..."
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          <Button onClick={() => setIsFormOpen(true)} style={{ height: 40, justifyContent: 'center' }}>Add Customer</Button>
-        </View>
-
         {/* Customer List Section */}
-        <Text style={styles.sectionTitle}>Loyalty Accounts ({customers.length})</Text>
+        <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Loyalty Accounts ({customers.length})</Text>
         <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false} nestedScrollEnabled>
           <View style={styles.listContainer}>
             {customers.map((c) => (
@@ -2492,14 +2457,26 @@ export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => 
                 <View style={styles.cardHeaderRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.productName}>{c.name}</Text>
-                    <Text style={styles.productMeta}>{c.phone || 'No Phone'}</Text>
-                    <Text style={styles.productMeta}>{c.email || 'No Email'}</Text>
+                    <Text style={styles.productMeta}>{c.phone}</Text>
+                    <Text style={styles.productMeta}>{c.visits} visits · {formatCurrency(c.spent)} spent</Text>
+                    {c.vouchersIssued > 0 && (
+                      <Badge variant="success" style={{ marginTop: 4, alignSelf: 'flex-start' }}>
+                        {c.vouchersIssued} Voucher{c.vouchersIssued > 1 ? 's' : ''} Issued
+                      </Badge>
+                    )}
                   </View>
                   <View style={[styles.productPriceCol, { minWidth: 100 }]}>
                     <Text style={styles.pointsText}>{c.points} pts</Text>
                     <Badge variant={c.tier === 'Platinum' ? 'brand' : c.tier === 'Gold' ? 'warn' : c.tier === 'Silver' ? 'info' : 'neutral'}>
                       {c.tier}
                     </Badge>
+                    <Button
+                      variant="secondary"
+                      style={{ marginTop: 6, paddingVertical: 4 }}
+                      onClick={() => handleIssueVoucher(c)}
+                    >
+                      Issue Voucher
+                    </Button>
                   </View>
                 </View>
               </Card>
@@ -2507,20 +2484,6 @@ export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => 
           </View>
         </ScrollView>
       </ScreenBody>
-      <Sheet open={isFormOpen} onClose={() => setIsFormOpen(false)} title="New Customer">
-        <View style={styles.formGroup}>
-          <Field label="Customer Name">
-            <TextInput style={styles.input} value={formData.name} onChangeText={t => setFormData({ ...formData, name: t })} placeholder="e.g. Ali Ahmed" />
-          </Field>
-          <Field label="Email Address">
-            <TextInput style={styles.input} value={formData.email} onChangeText={t => setFormData({ ...formData, email: t })} placeholder="e.g. ali@example.com" keyboardType="email-address" autoCapitalize="none" />
-          </Field>
-          <Field label="Phone Number">
-            <TextInput style={styles.input} value={formData.phone} onChangeText={t => setFormData({ ...formData, phone: t })} placeholder="e.g. +971 50 123 4567" keyboardType="phone-pad" />
-          </Field>
-          <Button full variant="primary" onClick={handleSaveCustomer} style={styles.marginT}>Create Customer</Button>
-        </View>
-      </Sheet>
       {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
@@ -2528,342 +2491,48 @@ export function CrmScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => 
 
 export function CustomerDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const { branch } = useAuth();
-  const { customers, fetchCustomerHistory, adjustCustomerPoints, adjustCustomerBalance } = useHeadOffice();
+  const { customers } = useHeadOffice();
   const c = customers.find((x) => x.id === id);
 
-  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
-  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
-
-  const [history, setHistory] = useState<any[]>([]);
-  const [totalSpend, setTotalSpend] = useState(0);
-  const [orderCount, setOrderCount] = useState(0);
-
-  // Points Adjustment Modal States
-  const [adjustOpen, setAdjustOpen] = useState(false);
-  const [adjustType, setAdjustType] = useState<'add' | 'deduct'>('add');
-  const [adjustAmount, setAdjustAmount] = useState('');
-  const [adjustReason, setAdjustReason] = useState('');
-
-  // Store Credit Modal States
-  const [creditOpen, setCreditOpen] = useState(false);
-  const [creditType, setCreditType] = useState<'add' | 'deduct'>('add');
-  const [creditAmount, setCreditAmount] = useState('');
-  const [creditReason, setCreditReason] = useState('');
-
-  useEffect(() => {
-    if (id) {
-      fetchCustomerHistory(id).then((res) => {
-        setHistory(res.orders);
-        setTotalSpend(res.totalSpend);
-        setOrderCount(res.orderCount);
-      }).catch((err) => {
-        console.error('History load error:', err);
-      });
-    }
-  }, [id]);
-
   if (!c) return null;
-
-  const handleAdjustPoints = async () => {
-    const delta = Number(adjustAmount);
-    if (isNaN(delta) || delta <= 0) {
-      showToast('Please enter a valid positive number', 'error');
-      return;
-    }
-    if (!adjustReason.trim()) {
-      showToast('Reason is required', 'error');
-      return;
-    }
-    const finalDelta = adjustType === 'add' ? delta : -delta;
-    try {
-      await adjustCustomerPoints(c.id, finalDelta, adjustReason);
-      showToast('Points adjusted successfully.', 'success');
-      setAdjustOpen(false);
-      setAdjustAmount('');
-      setAdjustReason('');
-      
-      const res = await fetchCustomerHistory(c.id);
-      setHistory(res.orders);
-      setTotalSpend(res.totalSpend);
-      setOrderCount(res.orderCount);
-    } catch (err: any) {
-      showToast(err.message || 'Failed to adjust points', 'error');
-    }
-  };
-
-  const handleAdjustCredit = async () => {
-    const delta = Number(creditAmount);
-    if (isNaN(delta) || delta <= 0) {
-      showToast('Please enter a valid positive number', 'error');
-      return;
-    }
-    if (!creditReason.trim()) {
-      showToast('Reason is required', 'error');
-      return;
-    }
-    const finalDelta = creditType === 'add' ? delta : -delta;
-    try {
-      await adjustCustomerBalance(c.id, finalDelta, creditReason);
-      showToast('Store credit adjusted successfully.', 'success');
-      setCreditOpen(false);
-      setCreditAmount('');
-      setCreditReason('');
-      
-      const res = await fetchCustomerHistory(c.id);
-      setHistory(res.orders);
-      setTotalSpend(res.totalSpend);
-      setOrderCount(res.orderCount);
-    } catch (err: any) {
-      showToast(err.message || 'Failed to adjust credit', 'error');
-    }
-  };
 
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="HO" branch={branch} />
       <ScreenHeader title={c.name} subtitle={`${c.tier} · ${c.points} points`} onBack={onBack} />
       <ScreenBody>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginTop: 8 }}>
-          <View style={{ width: '48%', marginBottom: 8 }}><StatCard label="Points" value={String(c.points)} accent="brand" /></View>
-          <View style={{ width: '48%', marginBottom: 8 }}><StatCard label="Store Credit" value={formatCurrency(Number(c.storeCredit || 0))} accent="sky" /></View>
-          <View style={{ width: '48%' }}><StatCard label="Visits" value={String(orderCount)} accent="sky" /></View>
-          <View style={{ width: '48%' }}><StatCard label="Spent" value={formatCurrency(totalSpend)} /></View>
-        </View>
-
-        {/* Manual Adjustments Actions */}
-        <View style={{ flexDirection: 'row', gap: 8, marginTop: 12, marginBottom: 8 }}>
-          <Button style={{ flex: 1 }} variant="secondary" onClick={() => setAdjustOpen(true)}>Adjust Points</Button>
-          <Button style={{ flex: 1 }} variant="secondary" onClick={() => setCreditOpen(true)}>Adjust Credit</Button>
+        <View style={styles.statsGrid}>
+          <View style={styles.thirdCol}>
+            <StatCard label="Points" value={String(c.points)} accent="brand" />
+          </View>
+          <View style={styles.thirdCol}>
+            <StatCard label="Visits" value={String(c.visits)} accent="sky" />
+          </View>
+          <View style={styles.thirdCol}>
+            <StatCard label="Spent" value={formatCurrency(c.spent)} />
+          </View>
         </View>
 
         <Text style={styles.sectionTitle}>Purchase History</Text>
-        <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false} nestedScrollEnabled>
-          <View style={styles.listContainer}>
-            {history.length === 0 ? (
-              <Text style={{ textAlign: 'center', color: '#666', marginTop: 12 }}>No purchase history recorded.</Text>
-            ) : (
-              history.map((h) => (
-                <Card key={h.id}>
-                  <View style={styles.cardHeaderRow}>
-                    <View>
-                      <Text style={styles.productName}>{new Date(h.createdAt).toLocaleDateString()}</Text>
-                      <Text style={styles.productMeta}>Source: {h.source || 'POS'} · Status: {h.status}</Text>
-                    </View>
-                    <Text style={styles.productPrice}>{formatCurrency(Number(h.total))}</Text>
-                  </View>
-                </Card>
-              ))
-            )}
-          </View>
-        </ScrollView>
-      </ScreenBody>
-
-      {/* Adjust Points Sheet */}
-      <Sheet open={adjustOpen} onClose={() => setAdjustOpen(false)} title="Adjust Points">
-        <View style={styles.formGroup}>
-          <Field label="Action">
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <Button style={{ flex: 1 }} variant={adjustType === 'add' ? 'primary' : 'secondary'} onClick={() => setAdjustType('add')}>Add / Accrue (+)</Button>
-              <Button style={{ flex: 1 }} variant={adjustType === 'deduct' ? 'primary' : 'secondary'} onClick={() => setAdjustType('deduct')}>Deduct (-)</Button>
-            </View>
-          </Field>
-          <Field label="Points Amount">
-            <TextInput style={styles.input} keyboardType="numeric" value={adjustAmount} onChangeText={setAdjustAmount} placeholder="e.g. 50" />
-          </Field>
-          <Field label="Adjustment Reason">
-            <TextInput style={styles.input} value={adjustReason} onChangeText={setAdjustReason} placeholder="e.g. Goodwill gesture" />
-          </Field>
-          <Button full variant="primary" onClick={handleAdjustPoints} style={styles.marginT}>Save Adjustment</Button>
-        </View>
-      </Sheet>
-
-      {/* Adjust Store Credit Sheet */}
-      <Sheet open={creditOpen} onClose={() => setCreditOpen(false)} title="Adjust Store Credit">
-        <View style={styles.formGroup}>
-          <Field label="Action">
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <Button style={{ flex: 1 }} variant={creditType === 'add' ? 'primary' : 'secondary'} onClick={() => setCreditType('add')}>Add / Accrue (+)</Button>
-              <Button style={{ flex: 1 }} variant={creditType === 'deduct' ? 'primary' : 'secondary'} onClick={() => setCreditType('deduct')}>Deduct (-)</Button>
-            </View>
-          </Field>
-          <Field label="Credit Amount (AED)">
-            <TextInput style={styles.input} keyboardType="numeric" value={creditAmount} onChangeText={setCreditAmount} placeholder="e.g. 10.00" />
-          </Field>
-          <Field label="Adjustment Reason">
-            <TextInput style={styles.input} value={creditReason} onChangeText={setCreditReason} placeholder="e.g. Refund balance" />
-          </Field>
-          <Button full variant="primary" onClick={handleAdjustCredit} style={styles.marginT}>Save Adjustment</Button>
-        </View>
-      </Sheet>
-
-      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
-    </View>
-  );
-}
-
-export function PromotionsScreen({ onBack }: { onBack: () => void }) {
-  const { branch } = useAuth();
-  const { promotions, createCampaign } = useHeadOffice();
-
-  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
-  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
-
-  const [createOpen, setCreateOpen] = useState(false);
-
-  // Form states
-  const [name, setName] = useState('');
-  const [type, setType] = useState('Discount');
-  const [target, setTarget] = useState('');
-  const [value, setValue] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-
-  const handleCreate = () => {
-    if (!name.trim() || !target.trim() || !value.trim() || !startDate.trim() || !endDate.trim()) {
-      showToast('Please fill in all fields', 'error');
-      return;
-    }
-    createCampaign(name, type, target, value, startDate, endDate);
-    showToast(`Campaign "${name}" created successfully.`, 'success');
-    setName('');
-    setTarget('');
-    setValue('');
-    setStartDate('');
-    setEndDate('');
-    setCreateOpen(false);
-  };
-
-  return (
-    <View style={styles.flex1}>
-      <AppHeader roleLabel="HO" branch={branch} />
-      <ScreenHeader title="Promotions" subtitle="Marketing campaigns manager" onBack={onBack} />
-      <ScreenBody>
-        <Card style={styles.statsCard}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.statusSub}>Pricing Engine Status</Text>
-              <Text style={styles.payableAmount}>Live</Text>
-              <Text style={styles.statusSub}>Campaign bundles evaluated at checkout</Text>
-            </View>
-            <Button onClick={() => setCreateOpen(true)}>Create Campaign</Button>
-          </View>
-        </Card>
-
-        <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Active Campaigns ({promotions.length})</Text>
-        <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
-          <View style={styles.listContainer}>
-            {promotions.map((p) => (
-              <Card key={p.id}>
-                <View style={styles.cardHeaderRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.productName}>{p.name}</Text>
-                    <Text style={styles.productMeta}>Target: {p.target} · Value: {p.value}</Text>
-                    <Text style={styles.productMeta}>Dates: {p.startDate} to {p.endDate}</Text>
-                  </View>
-                  <View style={styles.productPriceCol}>
-                    <Badge variant={p.status === 'Active' ? 'success' : p.status === 'Scheduled' ? 'warn' : 'neutral'}>
-                      {p.status}
-                    </Badge>
-                    <Badge variant="neutral" style={{ marginTop: 4 }}>{p.type}</Badge>
-                  </View>
+        <View style={styles.listContainer}>
+          {customerHistory.map((h) => (
+            <Card key={h.id}>
+              <View style={styles.cardHeaderRow}>
+                <View>
+                  <Text style={styles.productName}>{h.date}</Text>
+                  <Text style={styles.productMeta}>{h.items} items</Text>
                 </View>
-              </Card>
-            ))}
-          </View>
-        </ScrollView>
-      </ScreenBody>
-
-      <Sheet
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        title="Create Campaign"
-        footer={
-          <View style={styles.sheetFooterBtnRow}>
-            <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button variant="primary" style={styles.sheetFooterBtn} onClick={handleCreate}>Save Campaign</Button>
-          </View>
-        }
-      >
-        <View style={styles.modalForm}>
-          <Field label="Campaign Name">
-            <TextInput
-              placeholder="e.g. National Day Bundle"
-              value={name}
-              onChangeText={setName}
-              placeholderTextColor="#94a3b8"
-              style={styles.modalInput}
-            />
-          </Field>
-          <Field label="Type">
-            <View style={styles.segmentedControl}>
-              <TouchableOpacity
-                style={[styles.segBtn, type === 'Discount' && styles.segBtnActive]}
-                onPress={() => setType('Discount')}
-              >
-                <Text style={[styles.segTxt, type === 'Discount' && styles.segTxtActive]}>Discount</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.segBtn, type === 'Bundle' && styles.segBtnActive]}
-                onPress={() => setType('Bundle')}
-              >
-                <Text style={[styles.segTxt, type === 'Bundle' && styles.segTxtActive]}>Bundle</Text>
-              </TouchableOpacity>
-            </View>
-          </Field>
-          <View style={styles.formRow}>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <Field label="Target">
-                <TextInput
-                  placeholder="e.g. Beverages"
-                  value={target}
-                  onChangeText={setTarget}
-                  placeholderTextColor="#94a3b8"
-                  style={styles.modalInput}
-                />
-              </Field>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Field label="Value">
-                <TextInput
-                  placeholder="e.g. 15% OFF"
-                  value={value}
-                  onChangeText={setValue}
-                  placeholderTextColor="#94a3b8"
-                  style={styles.modalInput}
-                />
-              </Field>
-            </View>
-          </View>
-          <View style={{ flexDirection: 'row' }}>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <Field label="Start Date">
-                <TextInput
-                  placeholder="2026-08-18"
-                  value={startDate}
-                  onChangeText={setStartDate}
-                  placeholderTextColor="#94a3b8"
-                  style={styles.modalInput}
-                />
-              </Field>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Field label="End Date">
-                <TextInput
-                  placeholder="2026-08-31"
-                  value={endDate}
-                  onChangeText={setEndDate}
-                  placeholderTextColor="#94a3b8"
-                  style={styles.modalInput}
-                />
-              </Field>
-            </View>
-          </View>
+                <Text style={styles.productPrice}>${h.total}</Text>
+              </View>
+            </Card>
+          ))}
         </View>
-      </Sheet>
-      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
+      </ScreenBody>
     </View>
   );
 }
+
+
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
@@ -3405,3 +3074,1271 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
 });
+
+// ============================================================================
+// MODULE 1: CRM & Customers Screen
+// ============================================================================
+export function CrmCustomersScreen({ onOpenCustomer }: { onOpenCustomer: (id: string) => void }) {
+  const { branch } = useAuth();
+  const { customers, createCustomer, fetchCustomers, auditLogsList, fetchAuditLogs } = useHeadOffice();
+
+  const [activeTab, setActiveTab] = useState<'customers' | 'segments' | 'communication'>('customers');
+  const [search, setSearch] = useState('');
+  const [selectedSegment, setSelectedSegment] = useState<'All' | 'Bronze' | 'Silver' | 'Gold' | 'Platinum'>('All');
+  
+  // Create customer form states
+  const [createOpen, setCreateOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
+  useEffect(() => {
+    fetchCustomers(search);
+  }, [search]);
+
+  useEffect(() => {
+    if (activeTab === 'communication') {
+      fetchAuditLogs();
+    }
+  }, [activeTab]);
+
+  const handleCreateCustomer = async () => {
+    if (!name.trim()) {
+      showToast('Name is required', 'error');
+      return;
+    }
+    try {
+      await createCustomer(name, email, phone);
+      showToast(`Customer "${name}" created successfully.`, 'success');
+      setName('');
+      setEmail('');
+      setPhone('');
+      setCreateOpen(false);
+    } catch (e: any) {
+      showToast(e.message || 'Failed to create customer', 'error');
+    }
+  };
+
+  // Filter customers by selected tier segment
+  const filteredCustomers = customers.filter(c => {
+    if (selectedSegment === 'All') return true;
+    return c.tier === selectedSegment;
+  });
+
+  // Calculate segment counts
+  const segmentCounts = useMemo(() => {
+    const counts = { Bronze: 0, Silver: 0, Gold: 0, Platinum: 0 };
+    customers.forEach(c => {
+      if (c.tier in counts) {
+        counts[c.tier as keyof typeof counts]++;
+      }
+    });
+    return counts;
+  }, [customers]);
+
+  // Filter audit logs for CRM customer transactions
+  const customerAudits = auditLogsList.filter(log => log.entityType === 'Customer');
+
+  return (
+    <View style={styles.flex1}>
+      <AppHeader roleLabel="HO" branch={branch} />
+      <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+        <Text style={styles.mainTitle}>CRM & Customers</Text>
+        
+        {/* Tab switch control */}
+        <View style={styles.segmentedControl}>
+          <TouchableOpacity
+            style={[styles.segBtn, activeTab === 'customers' && styles.segBtnActive]}
+            onPress={() => { setActiveTab('customers'); setSelectedSegment('All'); }}
+          >
+            <Text style={[styles.segTxt, activeTab === 'customers' && styles.segTxtActive]}>Customers</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.segBtn, activeTab === 'segments' && styles.segBtnActive]}
+            onPress={() => setActiveTab('segments')}
+          >
+            <Text style={[styles.segTxt, activeTab === 'segments' && styles.segTxtActive]}>Segments</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.segBtn, activeTab === 'communication' && styles.segBtnActive]}
+            onPress={() => setActiveTab('communication')}
+          >
+            <Text style={[styles.segTxt, activeTab === 'communication' && styles.segTxtActive]}>History & Comm</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <ScreenBody style={{ paddingTop: 8 }}>
+        {activeTab === 'customers' && (
+          <View style={styles.flex1}>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              <TextInput
+                placeholder="Search by name, email, phone..."
+                value={search}
+                onChangeText={setSearch}
+                placeholderTextColor="#94a3b8"
+                style={[styles.input, { flex: 1, height: 42, paddingVertical: 8 }]}
+              />
+              <Button onClick={() => setCreateOpen(true)}>New Customer</Button>
+            </View>
+
+            {selectedSegment !== 'All' && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={{ fontSize: 12, color: '#64748b' }}>Filtered by segment: </Text>
+                <Badge variant="brand">{selectedSegment}</Badge>
+                <TouchableOpacity style={{ marginLeft: 8 }} onPress={() => setSelectedSegment('All')}>
+                  <Text style={{ fontSize: 12, color: '#ef4444', fontWeight: '600' }}>[Clear]</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <View style={styles.listContainer}>
+              {filteredCustomers.length === 0 ? (
+                <Text style={styles.noDataText}>No customers found</Text>
+              ) : (
+                filteredCustomers.map((c) => (
+                  <Card key={c.id} onClick={() => onOpenCustomer(c.id)}>
+                    <View style={styles.cardHeaderRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.productName}>{c.name}</Text>
+                        <Text style={styles.productMeta}>{c.email} · {c.phone}</Text>
+                        <Text style={styles.productMeta}>Balance Credit: AED {Number(c.storeCredit || 0).toFixed(2)}</Text>
+                      </View>
+                      <View style={[styles.productPriceCol, { minWidth: 90 }]}>
+                        <Text style={styles.pointsText}>{c.points} pts</Text>
+                        <Badge variant={c.tier === 'Platinum' ? 'brand' : c.tier === 'Gold' ? 'warn' : c.tier === 'Silver' ? 'info' : 'neutral'}>
+                          {c.tier}
+                        </Badge>
+                        <Badge variant={c.isActive ? 'success' : 'neutral'} style={{ marginTop: 4 }}>
+                          {c.isActive ? 'Active' : 'Inactive'}
+                        </Badge>
+                      </View>
+                    </View>
+                  </Card>
+                ))
+              )}
+            </View>
+          </View>
+        )}
+
+        {activeTab === 'segments' && (
+          <View style={styles.flex1}>
+            <Text style={styles.sectionTitle}>Tiers & Segmentation</Text>
+            <View style={styles.statsGrid}>
+              <View style={styles.halfCol}>
+                <TouchableOpacity onPress={() => { setSelectedSegment('Bronze'); setActiveTab('customers'); }}>
+                  <StatCard label="Bronze Tier" value={String(segmentCounts.Bronze)} accent="ink" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.halfCol}>
+                <TouchableOpacity onPress={() => { setSelectedSegment('Silver'); setActiveTab('customers'); }}>
+                  <StatCard label="Silver Tier" value={String(segmentCounts.Silver)} accent="sky" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.halfCol}>
+                <TouchableOpacity onPress={() => { setSelectedSegment('Gold'); setActiveTab('customers'); }}>
+                  <StatCard label="Gold Tier" value={String(segmentCounts.Gold)} accent="amber" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.halfCol}>
+                <TouchableOpacity onPress={() => { setSelectedSegment('Platinum'); setActiveTab('customers'); }}>
+                  <StatCard label="Platinum Tier" value={String(segmentCounts.Platinum)} accent="brand" />
+                </TouchableOpacity>
+              </View>
+            </View>
+            <Text style={[styles.sectionTitle, { marginTop: 16 }]}>How tiers are determined:</Text>
+            <Card>
+              <Text style={{ fontSize: 13, color: '#334155', lineHeight: 18 }}>
+                • <Text style={{ fontWeight: 'bold' }}>Bronze</Text>: Active account, default starting tier.{"\n"}
+                • <Text style={{ fontWeight: 'bold' }}>Silver</Text>: Accumulated 1,000+ points.{"\n"}
+                • <Text style={{ fontWeight: 'bold' }}>Gold</Text>: Accumulated 5,000+ points.{"\n"}
+                • <Text style={{ fontWeight: 'bold' }}>Platinum</Text>: Accumulated 15,000+ points.
+              </Text>
+            </Card>
+          </View>
+        )}
+
+        {activeTab === 'communication' && (
+          <View style={styles.flex1}>
+            <Text style={styles.sectionTitle}>Audit and Action Log</Text>
+            <View style={styles.listContainer}>
+              {customerAudits.length === 0 ? (
+                <Text style={styles.noDataText}>No adjustment or CRM history available</Text>
+              ) : (
+                customerAudits.map((log) => (
+                  <Card key={log.id}>
+                    <View style={{ gap: 4 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={{ fontWeight: 'bold', fontSize: 13, color: '#0f172a' }}>{log.action}</Text>
+                        <Text style={{ fontSize: 10, color: '#64748b' }}>
+                          {new Date(log.createdAt).toLocaleString()}
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 12, color: '#475569' }}>
+                        Actor: {log.actorName || log.actorEmail || 'System'}
+                      </Text>
+                      {log.details && (
+                        <View style={{ backgroundColor: '#f8fafc', padding: 6, borderRadius: 6, marginTop: 4 }}>
+                          <Text style={{ fontSize: 11, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', color: '#64748b' }}>
+                            {JSON.stringify(log.details)}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </Card>
+                ))
+              )}
+            </View>
+          </View>
+        )}
+      </ScreenBody>
+
+      {/* Customer Registration Sheet */}
+      <Sheet
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Register Customer"
+        footer={
+          <View style={styles.sheetFooterBtnRow}>
+            <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button variant="primary" style={styles.sheetFooterBtn} onClick={handleCreateCustomer}>Register</Button>
+          </View>
+        }
+      >
+        <View style={styles.modalForm}>
+          <Field label="Full Name *">
+            <TextInput
+              placeholder="e.g. Jane Doe"
+              value={name}
+              onChangeText={setName}
+              placeholderTextColor="#94a3b8"
+              style={styles.modalInput}
+            />
+          </Field>
+          <Field label="Email Address">
+            <TextInput
+              placeholder="jane@example.com"
+              value={email}
+              onChangeText={setEmail}
+              placeholderTextColor="#94a3b8"
+              style={styles.modalInput}
+              keyboardType="email-address"
+            />
+          </Field>
+          <Field label="Phone Number">
+            <TextInput
+              placeholder="+971 50 123 4567"
+              value={phone}
+              onChangeText={setPhone}
+              placeholderTextColor="#94a3b8"
+              style={styles.modalInput}
+              keyboardType="phone-pad"
+            />
+          </Field>
+        </View>
+      </Sheet>
+
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
+    </View>
+  );
+}
+
+// ============================================================================
+// Customer CRM Detail View
+// ============================================================================
+export function CustomerCrmDetail({ id, onBack }: { id: string; onBack: () => void }) {
+  const { branch } = useAuth();
+  const { customers, adjustCustomerPoints, adjustCustomerCredit, fetchCustomerHistory, updateCustomer } = useHeadOffice();
+  const c = customers.find((x) => x.id === id);
+
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
+  const [history, setHistory] = useState<any>({ orders: [], totalSpend: 0, orderCount: 0 });
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // Modal forms
+  const [pointsOpen, setPointsOpen] = useState(false);
+  const [pointsDelta, setPointsDelta] = useState('');
+  const [pointsReason, setPointsReason] = useState('');
+
+  const [creditOpen, setCreditOpen] = useState(false);
+  const [creditDelta, setCreditDelta] = useState('');
+  const [creditReason, setCreditReason] = useState('');
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editActive, setEditActive] = useState(true);
+
+  useEffect(() => {
+    if (c) {
+      setLoadingHistory(true);
+      fetchCustomerHistory(c.id)
+        .then((res) => {
+          if (res) setHistory(res);
+        })
+        .catch(console.error)
+        .finally(() => setLoadingHistory(false));
+
+      setEditName(c.name);
+      setEditEmail(c.email || '');
+      setEditPhone(c.phone || '');
+      setEditActive(c.isActive ?? true);
+    }
+  }, [c?.id]);
+
+  if (!c) return null;
+
+  const handleAdjustPoints = async () => {
+    if (!pointsReason.trim() || isNaN(Number(pointsDelta)) || Number(pointsDelta) === 0) {
+      showToast('Please fill in points delta and reason', 'error');
+      return;
+    }
+    try {
+      await adjustCustomerPoints(c.id, Number(pointsDelta), pointsReason);
+      showToast('Points adjusted successfully', 'success');
+      setPointsOpen(false);
+      setPointsDelta('');
+      setPointsReason('');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to adjust points', 'error');
+    }
+  };
+
+  const handleAdjustCredit = async () => {
+    if (!creditReason.trim() || isNaN(Number(creditDelta)) || Number(creditDelta) === 0) {
+      showToast('Please fill in amount delta and reason', 'error');
+      return;
+    }
+    try {
+      await adjustCustomerCredit(c.id, Number(creditDelta), creditReason);
+      showToast('Store credit adjusted successfully', 'success');
+      setCreditOpen(false);
+      setCreditDelta('');
+      setCreditReason('');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to adjust credit', 'error');
+    }
+  };
+
+  const handleUpdateProfile = async () => {
+    if (!editName.trim()) {
+      showToast('Name is required', 'error');
+      return;
+    }
+    try {
+      await updateCustomer(c.id, editName, editEmail, editPhone, editActive);
+      showToast('Customer profile updated', 'success');
+      setEditOpen(false);
+    } catch (e: any) {
+      showToast(e.message || 'Failed to update profile', 'error');
+    }
+  };
+
+  return (
+    <View style={styles.flex1}>
+      <AppHeader roleLabel="HO" branch={branch} />
+      <ScreenHeader title={c.name} subtitle={`Segment: ${c.tier}`} onBack={onBack} />
+      <ScreenBody>
+        <Card>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View>
+              <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#0f172a' }}>{c.name}</Text>
+              <Text style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>{c.email} · {c.phone}</Text>
+            </View>
+            <Button variant="secondary" onClick={() => setEditOpen(true)}>Edit Profile</Button>
+          </View>
+        </Card>
+
+        {/* Adjustments Cards Grid */}
+        <View style={styles.statsGrid}>
+          <View style={styles.halfCol}>
+            <Card style={{ alignItems: 'center', justifyContent: 'space-between', height: 120 }}>
+              <Text style={styles.statusSub}>Points Balance</Text>
+              <Text style={[styles.pointsText, { fontSize: 20 }]}>{c.points} pts</Text>
+              <Button style={{ paddingVertical: 4, width: '100%' }} onClick={() => setPointsOpen(true)}>Adjust Points</Button>
+            </Card>
+          </View>
+          <View style={styles.halfCol}>
+            <Card style={{ alignItems: 'center', justifyContent: 'space-between', height: 120 }}>
+              <Text style={styles.statusSub}>Store Credit Balance</Text>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#16a34a' }}>AED {Number(c.storeCredit || 0).toFixed(2)}</Text>
+              <Button style={{ paddingVertical: 4, width: '100%' }} onClick={() => setCreditOpen(true)}>Adjust Credit</Button>
+            </Card>
+          </View>
+        </View>
+
+        <Text style={styles.sectionTitle}>Recent Purchase History</Text>
+        <Card style={{ padding: 12, backgroundColor: '#f0fdf4', borderColor: '#bbf7d0', borderWidth: 1, flexDirection: 'row', justifyContent: 'space-around', marginBottom: 12 }}>
+          <View style={{ alignItems: 'center' }}>
+            <Text style={{ fontSize: 11, color: '#166534' }}>Lifetime Spent</Text>
+            <Text style={{ fontSize: 15, fontWeight: 'bold', color: '#166534' }}>AED {Number(history.totalSpend || 0).toFixed(2)}</Text>
+          </View>
+          <View style={{ alignItems: 'center' }}>
+            <Text style={{ fontSize: 11, color: '#166534' }}>Orders Placed</Text>
+            <Text style={{ fontSize: 15, fontWeight: 'bold', color: '#166534' }}>{history.orderCount}</Text>
+          </View>
+        </Card>
+
+        <View style={styles.listContainer}>
+          {loadingHistory ? (
+            <Text style={styles.emptyText}>Loading purchase history...</Text>
+          ) : history.orders.length === 0 ? (
+            <Text style={styles.emptyText}>No purchases found for this customer.</Text>
+          ) : (
+            history.orders.map((o: any) => (
+              <Card key={o.id}>
+                <View style={styles.cardHeaderRow}>
+                  <View>
+                    <Text style={{ fontSize: 12, color: '#64748b', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }}>
+                      ID: {o.id.slice(0, 8)}...
+                    </Text>
+                    <Text style={{ fontSize: 12, color: '#94a3b8' }}>
+                      Source: {o.source} · {new Date(o.createdAt).toLocaleDateString()}
+                    </Text>
+                  </View>
+                  <Text style={{ fontWeight: 'bold', color: '#16a34a', fontSize: 14 }}>
+                    AED {Number(o.total).toFixed(2)}
+                  </Text>
+                </View>
+              </Card>
+            ))
+          )}
+        </View>
+      </ScreenBody>
+
+      {/* Adjust Points Sheet */}
+      <Sheet
+        open={pointsOpen}
+        onClose={() => setPointsOpen(false)}
+        title="Adjust Loyalty Points"
+        footer={
+          <View style={styles.sheetFooterBtnRow}>
+            <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => setPointsOpen(false)}>Cancel</Button>
+            <Button variant="primary" style={styles.sheetFooterBtn} onClick={handleAdjustPoints}>Apply</Button>
+          </View>
+        }
+      >
+        <View style={styles.modalForm}>
+          <Field label="Points Change (Positive to add, negative to deduct) *">
+            <TextInput
+              placeholder="e.g. 500 or -200"
+              value={pointsDelta}
+              onChangeText={setPointsDelta}
+              placeholderTextColor="#94a3b8"
+              style={styles.modalInput}
+              keyboardType="numbers-and-punctuation"
+            />
+          </Field>
+          <Field label="Adjustment Reason *">
+            <TextInput
+              placeholder="Reason for audit logs"
+              value={pointsReason}
+              onChangeText={setPointsReason}
+              placeholderTextColor="#94a3b8"
+              style={styles.modalInput}
+            />
+          </Field>
+        </View>
+      </Sheet>
+
+      {/* Adjust Credit Sheet */}
+      <Sheet
+        open={creditOpen}
+        onClose={() => setCreditOpen(false)}
+        title="Adjust Store Credit"
+        footer={
+          <View style={styles.sheetFooterBtnRow}>
+            <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => setCreditOpen(false)}>Cancel</Button>
+            <Button variant="primary" style={styles.sheetFooterBtn} onClick={handleAdjustCredit}>Apply</Button>
+          </View>
+        }
+      >
+        <View style={styles.modalForm}>
+          <Field label="Store Credit Change (AED) (Negative to deduct) *">
+            <TextInput
+              placeholder="e.g. 100.50 or -50"
+              value={creditDelta}
+              onChangeText={setCreditDelta}
+              placeholderTextColor="#94a3b8"
+              style={styles.modalInput}
+              keyboardType="numbers-and-punctuation"
+            />
+          </Field>
+          <Field label="Adjustment Reason *">
+            <TextInput
+              placeholder="Reason for audit logs"
+              value={creditReason}
+              onChangeText={setCreditReason}
+              placeholderTextColor="#94a3b8"
+              style={styles.modalInput}
+            />
+          </Field>
+        </View>
+      </Sheet>
+
+      {/* Edit Profile Sheet */}
+      <Sheet
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        title="Edit Customer Profile"
+        footer={
+          <View style={styles.sheetFooterBtnRow}>
+            <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button variant="primary" style={styles.sheetFooterBtn} onClick={handleUpdateProfile}>Save Profile</Button>
+          </View>
+        }
+      >
+        <View style={styles.modalForm}>
+          <Field label="Full Name *">
+            <TextInput
+              value={editName}
+              onChangeText={setEditName}
+              style={styles.modalInput}
+            />
+          </Field>
+          <Field label="Email Address">
+            <TextInput
+              value={editEmail}
+              onChangeText={setEditEmail}
+              style={styles.modalInput}
+              keyboardType="email-address"
+            />
+          </Field>
+          <Field label="Phone Number">
+            <TextInput
+              value={editPhone}
+              onChangeText={setEditPhone}
+              style={styles.modalInput}
+              keyboardType="phone-pad"
+            />
+          </Field>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12 }}>
+            <Text style={{ fontSize: 13, color: '#334155' }}>Customer Account is Active</Text>
+            <TouchableOpacity 
+              style={[styles.switchTrack, editActive ? styles.trackOn : styles.trackOff]}
+              onPress={() => setEditActive(!editActive)}
+            >
+              <View style={[styles.switchThumb, editActive ? styles.thumbOn : styles.thumbOff]} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Sheet>
+
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
+    </View>
+  );
+}
+
+export function DatePickerSheet({
+  open,
+  onClose,
+  title,
+  value,
+  onChange,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  value: string;
+  onChange: (dateStr: string) => void;
+}) {
+  const [currentDate, setCurrentDate] = useState(new Date());
+
+  useEffect(() => {
+    if (value) {
+      const d = new Date(value);
+      if (!isNaN(d.getTime())) {
+        setCurrentDate(d);
+      }
+    }
+  }, [value, open]);
+
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayIndex = new Date(year, month, 1).getDay();
+
+  const monthNames = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+
+  const handlePrevMonth = () => {
+    setCurrentDate(new Date(year, month - 1, 1));
+  };
+
+  const handleNextMonth = () => {
+    setCurrentDate(new Date(year, month + 1, 1));
+  };
+
+  const days = [];
+  for (let i = 0; i < firstDayIndex; i++) {
+    days.push(null);
+  }
+  for (let i = 1; i <= daysInMonth; i++) {
+    days.push(i);
+  }
+
+  const selectedDay = value ? new Date(value).getDate() : null;
+  const isSameMonth = value ? new Date(value).getMonth() === month && new Date(value).getFullYear() === year : false;
+
+  return (
+    <Sheet open={open} onClose={onClose} title={title}>
+      <View style={{ padding: 16 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <TouchableOpacity onPress={handlePrevMonth} style={{ padding: 8 }}>
+            <ChevronLeft size={20} color="#475569" />
+          </TouchableOpacity>
+          <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a' }}>{monthNames[month]} {year}</Text>
+          <TouchableOpacity onPress={handleNextMonth} style={{ padding: 8 }}>
+            <ChevronRight size={20} color="#475569" />
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+          {["S", "M", "T", "W", "T", "F", "S"].map((day, idx) => (
+            <View key={idx} style={{ width: '14.28%', alignItems: 'center', marginBottom: 8 }}>
+              <Text style={{ fontSize: 12, fontWeight: '600', color: '#94a3b8' }}>{day}</Text>
+            </View>
+          ))}
+
+          {days.map((day, idx) => {
+            if (day === null) {
+              return <View key={idx} style={{ width: '14.28%', height: 40 }} />;
+            }
+            const isSelected = isSameMonth && selectedDay === day;
+            const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            return (
+              <TouchableOpacity
+                key={idx}
+                onPress={() => {
+                  onChange(dateString);
+                  onClose();
+                }}
+                style={{
+                  width: '14.28%',
+                  height: 40,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  borderRadius: 20,
+                  backgroundColor: isSelected ? '#39ff14' : 'transparent',
+                }}
+              >
+                <Text style={{
+                  fontSize: 14,
+                  fontWeight: isSelected ? '700' : '500',
+                  color: isSelected ? '#0f172a' : '#475569',
+                }}>
+                  {day}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+    </Sheet>
+  );
+}
+
+// ============================================================================
+// MODULE 2: Promotions Screen
+// ============================================================================
+export function PromotionsScreen({ onBack }: { onBack: () => void }) {
+  const { branch } = useAuth();
+  const { promotions, createCampaign, activatePromotion, deactivatePromotion, archivePromotion, fetchPromotions, products } = useHeadOffice();
+
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
+  const [createOpen, setCreateOpen] = useState(false);
+
+  // Form states
+  const [name, setName] = useState('');
+  const [type, setType] = useState('Discount');
+  const [targetScope, setTargetScope] = useState<'All' | 'Category' | 'Product'>('All');
+  const [targetCategory, setTargetCategory] = useState('');
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [value, setValue] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
+  // Picker States
+  const [scopePickerOpen, setScopePickerOpen] = useState(false);
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [startDatePickerOpen, setStartDatePickerOpen] = useState(false);
+  const [endDatePickerOpen, setEndDatePickerOpen] = useState(false);
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+
+  // Derive categories dynamically from catalog products
+  const categories = useMemo(() => {
+    return Array.from(new Set(products.map((p) => p.category).filter(Boolean)));
+  }, [products]);
+
+  useEffect(() => {
+    fetchPromotions();
+  }, []);
+
+  const handleCreate = async () => {
+    if (!name.trim() || !value.trim() || !startDate.trim() || !endDate.trim()) {
+      showToast('Please fill in all fields', 'error');
+      return;
+    }
+    if (targetScope === 'Category' && !targetCategory) {
+      showToast('Please select a category', 'error');
+      return;
+    }
+    if (targetScope === 'Product' && selectedProductIds.length === 0) {
+      showToast('Please select at least one product', 'error');
+      return;
+    }
+
+    try {
+      await createCampaign(
+        name,
+        type,
+        targetScope,
+        value,
+        startDate,
+        endDate,
+        targetScope === 'Category' ? targetCategory : undefined,
+        targetScope === 'Product' ? selectedProductIds.join(',') : undefined
+      );
+      showToast(`Campaign "${name}" created successfully.`, 'success');
+      setName('');
+      setTargetScope('All');
+      setTargetCategory('');
+      setSelectedProductIds([]);
+      setValue('');
+      setStartDate('');
+      setEndDate('');
+      setCreateOpen(false);
+    } catch (e: any) {
+      showToast(e.message || 'Failed to create campaign', 'error');
+    }
+  };
+
+  const handleToggleStatus = async (p: any) => {
+    try {
+      if (p.status === 'Active') {
+        await deactivatePromotion(p.id);
+        showToast('Promotion deactivated successfully.', 'success');
+      } else {
+        await activatePromotion(p.id);
+        showToast('Promotion activated successfully.', 'success');
+      }
+    } catch (e: any) {
+      showToast(e.message || 'Failed to update status', 'error');
+    }
+  };
+
+  const handleArchive = async (id: string) => {
+    try {
+      await archivePromotion(id);
+      showToast('Promotion archived successfully.', 'success');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to archive promotion', 'error');
+    }
+  };
+
+  return (
+    <View style={styles.flex1}>
+      <AppHeader roleLabel="HO" branch={branch} />
+      <ScreenHeader title="Promotions" subtitle="Marketing campaigns manager" onBack={onBack} />
+      <ScreenBody>
+        <Card style={styles.statsCard}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.statusSub}>Pricing Engine Status</Text>
+              <Text style={styles.payableAmount}>Live</Text>
+              <Text style={styles.statusSub}>Campaign bundles evaluated at checkout</Text>
+            </View>
+            <Button onClick={() => setCreateOpen(true)}>Create Campaign</Button>
+          </View>
+        </Card>
+
+        <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Active Campaigns ({promotions.length})</Text>
+        <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
+          <View style={styles.listContainer}>
+            {promotions.length === 0 ? (
+              <Text style={styles.emptyText}>No promotions found</Text>
+            ) : (
+              promotions.map((p) => (
+                <Card key={p.id}>
+                  <View style={styles.cardHeaderRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.productName}>{p.name}</Text>
+                      <Text style={styles.productMeta}>Target: {p.target} · Value: {p.value}</Text>
+                      <Text style={styles.productMeta}>Dates: {p.startDate} to {p.endDate}</Text>
+                    </View>
+                    <View style={[styles.productPriceCol, { minWidth: 110 }]}>
+                      <Badge variant={p.status === 'Active' ? 'success' : p.status === 'Scheduled' ? 'warn' : 'neutral'}>
+                        {p.status}
+                      </Badge>
+                      <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
+                        <Button
+                          variant="secondary"
+                          style={{ paddingVertical: 4, paddingHorizontal: 6 }}
+                          onClick={() => handleToggleStatus(p)}
+                        >
+                          {p.status === 'Active' ? 'Pause' : 'Play'}
+                        </Button>
+                        <Button
+                          variant="danger"
+                          style={{ paddingVertical: 4, paddingHorizontal: 6 }}
+                          onClick={() => handleArchive(p.id)}
+                        >
+                          Archive
+                        </Button>
+                      </View>
+                    </View>
+                  </View>
+                </Card>
+              ))
+            )}
+          </View>
+        </ScrollView>
+      </ScreenBody>
+
+      <Sheet
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Create Campaign"
+        footer={
+          <View style={styles.sheetFooterBtnRow}>
+            <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button variant="primary" style={styles.sheetFooterBtn} onClick={handleCreate}>Save Campaign</Button>
+          </View>
+        }
+      >
+        <ScrollView style={styles.modalForm} showsVerticalScrollIndicator={false}>
+          <Field label="Campaign Name">
+            <TextInput
+              placeholder="e.g. National Day Bundle"
+              value={name}
+              onChangeText={setName}
+              placeholderTextColor="#94a3b8"
+              style={styles.modalInput}
+            />
+          </Field>
+          <Field label="Type">
+            <View style={styles.segmentedControl}>
+              <TouchableOpacity
+                style={[styles.segBtn, type === 'Discount' && styles.segBtnActive]}
+                onPress={() => setType('Discount')}
+              >
+                <Text style={[styles.segTxt, type === 'Discount' && styles.segTxtActive]}>Discount</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.segBtn, type === 'Bundle' && styles.segBtnActive]}
+                onPress={() => setType('Bundle')}
+              >
+                <Text style={[styles.segTxt, type === 'Bundle' && styles.segTxtActive]}>Bundle</Text>
+              </TouchableOpacity>
+            </View>
+          </Field>
+          <View style={styles.formRow}>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Field label="Target Scope">
+                <TouchableOpacity
+                  onPress={() => setScopePickerOpen(true)}
+                  style={[styles.modalInput, { justifyContent: 'center' }]}
+                >
+                  <Text style={{ color: '#0f172a' }}>
+                    {targetScope === 'All' ? 'All Products' : targetScope === 'Category' ? 'Specific Category' : 'Specific Products'}
+                  </Text>
+                </TouchableOpacity>
+              </Field>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Field label="Value">
+                <TextInput
+                  placeholder="e.g. 15% OFF"
+                  value={value}
+                  onChangeText={setValue}
+                  placeholderTextColor="#94a3b8"
+                  style={styles.modalInput}
+                />
+              </Field>
+            </View>
+          </View>
+
+          {targetScope === 'Category' && (
+            <Field label="Select Category">
+              <TouchableOpacity
+                onPress={() => setCategoryPickerOpen(true)}
+                style={[styles.modalInput, { justifyContent: 'center' }]}
+              >
+                <Text style={{ color: targetCategory ? '#0f172a' : '#94a3b8' }}>
+                  {targetCategory || "Choose Category..."}
+                </Text>
+              </TouchableOpacity>
+            </Field>
+          )}
+
+          {targetScope === 'Product' && (
+            <Field label="Select Products">
+              <TouchableOpacity
+                onPress={() => setProductPickerOpen(true)}
+                style={[styles.modalInput, { justifyContent: 'center' }]}
+              >
+                <Text style={{ color: selectedProductIds.length > 0 ? '#0f172a' : '#94a3b8' }}>
+                  {selectedProductIds.length > 0 ? `${selectedProductIds.length} Products Selected` : "Choose Products..."}
+                </Text>
+              </TouchableOpacity>
+            </Field>
+          )}
+
+          <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Field label="Start Date">
+                <TouchableOpacity
+                  onPress={() => setStartDatePickerOpen(true)}
+                  style={[styles.modalInput, { justifyContent: 'center' }]}
+                >
+                  <Text style={{ color: startDate ? '#0f172a' : '#94a3b8' }}>
+                    {startDate || "Select Date..."}
+                  </Text>
+                </TouchableOpacity>
+              </Field>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Field label="End Date">
+                <TouchableOpacity
+                  onPress={() => setEndDatePickerOpen(true)}
+                  style={[styles.modalInput, { justifyContent: 'center' }]}
+                >
+                  <Text style={{ color: endDate ? '#0f172a' : '#94a3b8' }}>
+                    {endDate || "Select Date..."}
+                  </Text>
+                </TouchableOpacity>
+              </Field>
+            </View>
+          </View>
+        </ScrollView>
+      </Sheet>
+
+      {/* Target Scope Picker Sheet */}
+      <Sheet open={scopePickerOpen} onClose={() => setScopePickerOpen(false)} title="Select Target Scope">
+        {['All Products', 'Specific Category', 'Specific Products'].map((opt) => {
+          const scopeVal = opt === 'All Products' ? 'All' : opt === 'Specific Category' ? 'Category' : 'Product';
+          return (
+            <TouchableOpacity
+              key={opt}
+              style={{
+                paddingVertical: 14,
+                paddingHorizontal: 16,
+                borderBottomWidth: 1,
+                borderBottomColor: '#f1f5f9',
+                backgroundColor: targetScope === scopeVal ? '#39ff1411' : 'transparent',
+              }}
+              onPress={() => {
+                setTargetScope(scopeVal);
+                setScopePickerOpen(false);
+              }}
+            >
+              <Text style={{ fontSize: 14, fontWeight: '600', color: '#0f172a' }}>{opt}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </Sheet>
+
+      {/* Category Picker Sheet */}
+      <Sheet open={categoryPickerOpen} onClose={() => setCategoryPickerOpen(false)} title="Select Category">
+        <ScrollView style={{ maxHeight: 300 }}>
+          {categories.map((cat) => (
+            <TouchableOpacity
+              key={cat}
+              style={{
+                paddingVertical: 14,
+                paddingHorizontal: 16,
+                borderBottomWidth: 1,
+                borderBottomColor: '#f1f5f9',
+                backgroundColor: targetCategory === cat ? '#39ff1411' : 'transparent',
+              }}
+              onPress={() => {
+                setTargetCategory(cat);
+                setCategoryPickerOpen(false);
+              }}
+            >
+              <Text style={{ fontSize: 14, fontWeight: '600', color: '#0f172a' }}>{cat}</Text>
+            </TouchableOpacity>
+          ))}
+          {categories.length === 0 && (
+            <Text style={{ padding: 24, color: '#94a3b8', textAlign: 'center', fontSize: 14 }}>
+              No categories found in current Catalog
+            </Text>
+          )}
+        </ScrollView>
+      </Sheet>
+
+      {/* Specific Products Picker Sheet */}
+      <Sheet open={productPickerOpen} onClose={() => setProductPickerOpen(false)} title="Select Specific Products">
+        <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}>
+          <TextInput
+            placeholder="Search products by name or SKU..."
+            value={productSearchQuery}
+            onChangeText={setProductSearchQuery}
+            placeholderTextColor="#94a3b8"
+            style={{
+              height: 40,
+              backgroundColor: '#f1f5f9',
+              borderRadius: 8,
+              paddingHorizontal: 12,
+              fontSize: 14,
+              color: '#0f172a',
+            }}
+          />
+        </View>
+        <ScrollView style={{ maxHeight: 300 }}>
+          {products
+            .filter((p) =>
+              p.name.toLowerCase().includes(productSearchQuery.toLowerCase()) ||
+              p.sku.toLowerCase().includes(productSearchQuery.toLowerCase())
+            )
+            .map((p) => {
+              const isSelected = selectedProductIds.includes(p.id);
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  style={{
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    borderBottomWidth: 1,
+                    borderBottomColor: '#f1f5f9',
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                  onPress={() => {
+                    if (isSelected) {
+                      setSelectedProductIds(selectedProductIds.filter((id) => id !== p.id));
+                    } else {
+                      setSelectedProductIds([...selectedProductIds, p.id]);
+                    }
+                  }}
+                >
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#0f172a' }}>{p.name}</Text>
+                    <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>SKU: {p.sku}</Text>
+                  </View>
+                  <View
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: 6,
+                      borderWidth: 2,
+                      borderColor: isSelected ? '#39ff14' : '#cbd5e1',
+                      backgroundColor: isSelected ? '#39ff14' : 'transparent',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                    }}
+                  >
+                    {isSelected && <Check size={14} color="#0f172a" />}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+        </ScrollView>
+      </Sheet>
+
+      {/* Custom Date Pickers */}
+      <DatePickerSheet
+        open={startDatePickerOpen}
+        onClose={() => setStartDatePickerOpen(false)}
+        title="Select Start Date"
+        value={startDate}
+        onChange={setStartDate}
+      />
+      <DatePickerSheet
+        open={endDatePickerOpen}
+        onClose={() => setEndDatePickerOpen(false)}
+        title="Select End Date"
+        value={endDate}
+        onChange={setEndDate}
+      />
+
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
+    </View>
+  );
+}
+
+// ============================================================================
+// MODULE 3: Price Requests Screen
+// ============================================================================
+export function PriceRequestsScreen({ onBack }: { onBack: () => void }) {
+  const { branch } = useAuth();
+  const { priceRequests, fetchPriceRequests, approvePriceRequest, rejectPriceRequest } = useHeadOffice();
+
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    fetchPriceRequests();
+  }, []);
+
+  const handleApprove = async (id: string) => {
+    try {
+      await approvePriceRequest(id);
+      showToast('Price request approved successfully.', 'success');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to approve request', 'error');
+    }
+  };
+
+  const handleReject = async (id: string) => {
+    try {
+      await rejectPriceRequest(id);
+      showToast('Price request rejected successfully.', 'success');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to reject request', 'error');
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await fetchPriceRequests();
+    setRefreshing(false);
+  };
+
+  return (
+    <View style={styles.flex1}>
+      <AppHeader roleLabel="HO" branch={branch} />
+      <ScreenHeader title="Price Requests" subtitle="Store override approvals" onBack={onBack} />
+      <ScreenBody>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <Text style={styles.sectionTitle}>Override Requests ({priceRequests.length})</Text>
+          <Button variant="secondary" onClick={handleRefresh}>
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </Button>
+        </View>
+
+        <View style={styles.listContainer}>
+          {priceRequests.length === 0 ? (
+            <Text style={styles.noDataText}>No price requests pending</Text>
+          ) : (
+            priceRequests.map((r) => (
+              <Card key={r.id}>
+                <View style={{ gap: 6 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontWeight: 'bold', fontSize: 13, color: '#0f172a' }}>{r.productName}</Text>
+                    <Badge variant={r.status === 'Pending' ? 'warn' : r.status === 'Approved' ? 'success' : 'neutral'}>
+                      {r.status}
+                    </Badge>
+                  </View>
+                  <Text style={{ fontSize: 12, color: '#64748b' }}>Branch: {r.branchName}</Text>
+                  
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#f8fafc', padding: 8, borderRadius: 6, marginVertical: 4 }}>
+                    <View>
+                      <Text style={{ fontSize: 10, color: '#94a3b8' }}>Standard Price</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '500', color: '#64748b', textDecorationLine: 'line-through' }}>
+                        AED {Number(r.standardPrice).toFixed(2)}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={{ fontSize: 10, color: '#64748b' }}>Requested Price</Text>
+                      <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#0f172a' }}>
+                        AED {Number(r.requestedPrice).toFixed(2)}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={{ fontSize: 12, color: '#475569' }}><Text style={{ fontWeight: '500' }}>Reason:</Text> {r.reason}</Text>
+
+                  {r.status === 'Pending' && (
+                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+                      <Button variant="danger" style={{ flex: 1 }} onClick={() => handleReject(r.id)}>
+                        Reject
+                      </Button>
+                      <Button variant="primary" style={{ flex: 1 }} onClick={() => handleApprove(r.id)}>
+                        Approve
+                      </Button>
+                    </View>
+                  )}
+                </View>
+              </Card>
+            ))
+          )}
+        </View>
+      </ScreenBody>
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
+    </View>
+  );
+}
+
+// ============================================================================
+// MODULE 4: Audit Logs Screen
+// ============================================================================
+export function AuditLogsScreen({ onBack }: { onBack: () => void }) {
+  const { branch } = useAuth();
+  const { auditLogsList, fetchAuditLogs } = useHeadOffice();
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    fetchAuditLogs();
+  }, []);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await fetchAuditLogs();
+    setRefreshing(false);
+  };
+
+  return (
+    <View style={styles.flex1}>
+      <AppHeader roleLabel="HO" branch={branch} />
+      <ScreenHeader title="Audit Logs" subtitle="System operation audits" onBack={onBack} />
+      <ScreenBody>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <Text style={styles.sectionTitle}>Operations Log ({auditLogsList.length})</Text>
+          <Button variant="secondary" onClick={handleRefresh}>
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </Button>
+        </View>
+
+        <View style={styles.listContainer}>
+          {auditLogsList.length === 0 ? (
+            <Text style={styles.noDataText}>No audit logs available</Text>
+          ) : (
+            auditLogsList.map((log) => (
+              <Card key={log.id}>
+                <View style={{ gap: 4 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={{ fontWeight: 'bold', fontSize: 13, color: '#0f172a' }}>{log.action}</Text>
+                    <Text style={{ fontSize: 10, color: '#64748b' }}>
+                      {new Date(log.createdAt).toLocaleString()}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 12, color: '#475569' }}>
+                    Actor: {log.actorName || log.actorEmail || 'System'}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#64748b' }}>
+                    Entity: {log.entityType} ({log.entityId.slice(0, 8)}...)
+                  </Text>
+                  {log.details && (
+                    <View style={{ backgroundColor: '#f8fafc', padding: 6, borderRadius: 6, marginTop: 4 }}>
+                      <Text style={{ fontSize: 11, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', color: '#64748b' }}>
+                        {JSON.stringify(log.details)}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </Card>
+            ))
+          )}
+        </View>
+      </ScreenBody>
+    </View>
+  );
+}
+

@@ -163,9 +163,6 @@ router.get("/settings", requireAuth, async (req, res) => {
         tenantId,
         vatRate: "5.00",
         vatInclusive: true,
-        loyaltyRedemptionRate: "0.01",
-        loyaltyPointsPerAed: 10,
-        loyaltyMinPointsToRedeem: 5000,
         currency: "AED",
       }).returning();
       settings = newSettings;
@@ -180,7 +177,7 @@ router.get("/settings", requireAuth, async (req, res) => {
 // Update individual Tenant settings (VAT rate, inclusive, TRN)
 router.patch("/settings", requireAuth, async (req, res) => {
   const tenantId = (req as any).user?.tenantId;
-  const { vatRate, vatInclusive, taxRegistrationNumber, loyaltyPointsPerAed, loyaltyMinPointsToRedeem, loyaltyRedemptionRate } = req.body;
+  const { vatRate, vatInclusive, taxRegistrationNumber } = req.body;
   try {
     const settings = await db.query.tenantSettings.findFirst({
       where: eq(tenantSettings.tenantId, tenantId),
@@ -190,9 +187,6 @@ router.patch("/settings", requireAuth, async (req, res) => {
     if (vatRate !== undefined) updates.vatRate = vatRate.toString();
     if (vatInclusive !== undefined) updates.vatInclusive = vatInclusive;
     if (taxRegistrationNumber !== undefined) updates.taxRegistrationNumber = taxRegistrationNumber || null;
-    if (loyaltyPointsPerAed !== undefined) updates.loyaltyPointsPerAed = Number(loyaltyPointsPerAed);
-    if (loyaltyMinPointsToRedeem !== undefined) updates.loyaltyMinPointsToRedeem = Number(loyaltyMinPointsToRedeem);
-    if (loyaltyRedemptionRate !== undefined) updates.loyaltyRedemptionRate = loyaltyRedemptionRate.toString();
 
     if (settings) {
       const [updated] = await db.update(tenantSettings)
@@ -207,9 +201,6 @@ router.patch("/settings", requireAuth, async (req, res) => {
           vatRate: vatRate?.toString() || "5.00",
           vatInclusive: vatInclusive ?? true,
           taxRegistrationNumber: taxRegistrationNumber || null,
-          loyaltyPointsPerAed: loyaltyPointsPerAed !== undefined ? Number(loyaltyPointsPerAed) : 10,
-          loyaltyMinPointsToRedeem: loyaltyMinPointsToRedeem !== undefined ? Number(loyaltyMinPointsToRedeem) : 5000,
-          loyaltyRedemptionRate: loyaltyRedemptionRate?.toString() || "0.01",
         })
         .returning();
       res.json(inserted);

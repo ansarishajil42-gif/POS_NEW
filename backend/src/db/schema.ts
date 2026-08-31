@@ -28,8 +28,6 @@ export const tenantSettings = pgTable("tenant_settings", {
   vatRate: decimal("vat_rate", { precision: 5, scale: 2 }).notNull().default("5.00"),
   vatInclusive: boolean("vat_inclusive").notNull().default(true),
   loyaltyRedemptionRate: decimal("loyalty_redemption_rate", { precision: 5, scale: 2 }).notNull().default("0.01"), // e.g. 1 point = 0.01 currency
-  loyaltyPointsPerAed: integer("loyalty_points_per_aed").notNull().default(10),
-  loyaltyMinPointsToRedeem: integer("loyalty_min_points_to_redeem").notNull().default(5000),
   currency: text("currency").notNull().default("AED"),
   taxRegistrationNumber: text("trn"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -120,6 +118,17 @@ export const promotions = pgTable("promotions", {
   endDate: timestamp("end_date").notNull(),
   status: text("status").notNull().default("Active"), // Active, Inactive
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  type: text("type"),
+  target: text("target"),
+  value: text("value"),
+  targetCategory: text("target_category"),
+  targetProductIds: text("target_product_ids"),
+  bundleProducts: text("bundle_products"),
+  pricingBasis: text("pricing_basis"),
+  minQty: integer("min_qty"),
+  maxQty: integer("max_qty"),
+  startTime: text("start_time"),
+  endTime: text("end_time"),
 });
 
 // 6. batches
@@ -246,12 +255,12 @@ export const orders = pgTable("orders", {
   branchId: uuid("branch_id").notNull().references(() => branches.id),
   cashierId: uuid("cashier_id").references(() => staffUsers.id),
   tillId: text("till_id"),
-  customerId: uuid("customer_id").references(() => customers.id),
   source: text("source").default("POS"), // POS, talabat, careem, instashop
   subtotal: decimal("subtotal", { precision: 12, scale: 2 }).notNull(),
   vat: decimal("vat", { precision: 12, scale: 2 }).notNull(),
   total: decimal("total", { precision: 12, scale: 2 }).notNull(),
   paymentMethod: text("payment_method"), // Deprecated: Replaced by order_payments table. Kept temporarily.
+  customerId: uuid("customer_id").references(() => customers.id),
   status: text("status").notNull().default("completed"), // completed, voided, refunded, auto-synced
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -494,7 +503,35 @@ export const blogPosts = pgTable("blog_posts", {
   publishedAt: timestamp("published_at"),
 });
 
-// 21. audit_logs
+export const priceOverrideRequests = pgTable("price_override_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id")
+    .notNull()
+    .references(() => tenants.id, { onDelete: "cascade" }),
+  branchId: uuid("branch_id")
+    .notNull()
+    .references(() => branches.id, { onDelete: "cascade" }),
+  productId: uuid("product_id")
+    .notNull()
+    .references(() => products.id, { onDelete: "cascade" }),
+  stockLevelId: uuid("stock_level_id")
+    .notNull()
+    .references(() => stockLevels.id, { onDelete: "cascade" }),
+  standardPrice: decimal("standard_price", { precision: 10, scale: 2 }).notNull(),
+  requestedPrice: decimal("requested_price", { precision: 10, scale: 2 }).notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("Pending"), // Pending, Approved, Rejected
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  approvedBy: uuid("approved_by").references(() => staffUsers.id),
+  approvedAt: timestamp("approved_at"),
+});
+
+export const priceOverrideRequestsRelations = relations(priceOverrideRequests, ({ one }) => ({
+  tenant: one(tenants, { fields: [priceOverrideRequests.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [priceOverrideRequests.branchId], references: [branches.id] }),
+  product: one(products, { fields: [priceOverrideRequests.productId], references: [products.id] }),
+}));
+
 export const auditLogs = pgTable("audit_logs", {
   id: uuid("id").primaryKey().defaultRandom(),
   tenantId: uuid("tenant_id")
@@ -510,4 +547,10 @@ export const auditLogs = pgTable("audit_logs", {
 }, (table) => ({
   tenantIdx: index("audit_logs_tenant_idx").on(table.tenantId),
   createdAtIdx: index("audit_logs_created_at_idx").on(table.createdAt),
+}));
+
+export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
+  tenant: one(tenants, { fields: [auditLogs.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [auditLogs.branchId], references: [branches.id] }),
+  user: one(staffUsers, { fields: [auditLogs.userId], references: [staffUsers.id] }),
 }));

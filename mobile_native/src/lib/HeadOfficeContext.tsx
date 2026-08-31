@@ -57,15 +57,15 @@ export interface LoyaltyPolicies {
 export interface Customer {
   id: string;
   name: string;
-  phone?: string;
-  email?: string;
-  tier: 'Platinum' | 'Gold' | 'Silver' | 'Bronze';
+  phone: string;
+  tier: 'Platinum' | 'Gold' | 'Silver' | 'Bronze' | string;
   points: number;
-  visits?: number;
-  spent?: number;
+  visits: number;
+  spent: number;
+  vouchersIssued: number;
+  email?: string;
   storeCredit?: string;
   isActive?: boolean;
-  vouchersIssued?: number;
 }
 
 export interface Promotion {
@@ -139,16 +139,25 @@ interface HeadOfficeContextProps {
   loyaltyPolicies: LoyaltyPolicies;
   customers: Customer[];
   promotions: Promotion[];
+  priceRequests: any[];
+  auditLogsList: any[];
   fetchCustomers: (search?: string) => Promise<void>;
-  addCustomer: (name: string, email?: string, phone?: string) => Promise<void>;
-  updateCustomer: (id: string, name: string, email?: string, phone?: string, isActive?: boolean) => Promise<void>;
+  createCustomer: (name: string, email?: string, phone?: string) => Promise<void>;
+  updateCustomer: (id: string, name?: string, email?: string, phone?: string, isActive?: boolean) => Promise<void>;
   adjustCustomerPoints: (customerId: string, pointsDelta: number, reason: string) => Promise<void>;
-  adjustCustomerBalance: (customerId: string, amountDelta: number, reason: string) => Promise<void>;
-  fetchCustomerHistory: (customerId: string) => Promise<{ orders: any[]; totalSpend: number; orderCount: number }>;
-  fetchLoyaltySettings: () => Promise<void>;
-  updateLoyaltyPolicies: (policies: LoyaltyPolicies) => Promise<void>;
+  adjustCustomerCredit: (customerId: string, amountDelta: number, reason: string) => Promise<void>;
+  fetchCustomerHistory: (customerId: string) => Promise<any>;
+  fetchPromotions: (status?: string) => Promise<void>;
+  createCampaign: (name: string, type: string, target: string, value: string, startDate: string, endDate: string, targetCategory?: string, targetProductIds?: string) => Promise<void>;
+  activatePromotion: (id: string) => Promise<void>;
+  deactivatePromotion: (id: string) => Promise<void>;
+  archivePromotion: (id: string) => Promise<void>;
+  fetchPriceRequests: () => Promise<void>;
+  approvePriceRequest: (id: string) => Promise<void>;
+  rejectPriceRequest: (id: string) => Promise<void>;
+  fetchAuditLogs: () => Promise<void>;
+  updateLoyaltyPolicies: (policies: LoyaltyPolicies) => void;
   issueVoucher: (customerId: string) => void;
-  createCampaign: (name: string, type: string, target: string, value: string, startDate: string, endDate: string) => void;
   staffUsers: StaffUser[];
   fetchStaff: () => Promise<void>;
   addStaff: (data: Partial<StaffUser>) => Promise<void>;
@@ -221,6 +230,13 @@ const initialRoles: RoleConfig[] = [
   },
 ];
 
+const initialCustomers: Customer[] = [
+  { id: 'c1', name: 'Fatima Al Mansoori', phone: '+971 50 123 4567', tier: 'Platinum', points: 18490, visits: 94, spent: 32400, vouchersIssued: 0 },
+  { id: 'c2', name: 'John Doe', phone: '+971 54 987 6543', tier: 'Gold', points: 8400, visits: 41, spent: 15100, vouchersIssued: 0 },
+  { id: 'c3', name: 'Saeed Al Kaabi', phone: '+971 52 444 8888', tier: 'Silver', points: 3100, visits: 18, spent: 5400, vouchersIssued: 0 },
+  { id: 'c4', name: 'Sarah Smith', phone: '+971 56 111 2222', tier: 'Bronze', points: 450, visits: 3, spent: 890, vouchersIssued: 0 },
+];
+
 const initialPromotions: Promotion[] = [
   { id: 'pr1', name: 'National Day Bundle', type: 'Bundle', target: 'Basic goods', value: 'Buy 2 Get 1', startDate: '2026-11-25', endDate: '2026-12-05', status: 'Scheduled' },
   { id: 'pr2', name: 'Dairy Clearance', type: 'Discount', target: 'Dairy near-expiry', value: '30% OFF', startDate: '2026-08-18', endDate: '2026-08-25', status: 'Active' },
@@ -239,7 +255,9 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
     redemptionValue: 10,
   });
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [promotions, setPromotions] = useState<Promotion[]>(initialPromotions);
+  const [promotions, setPromotions] = useState<Promotion[]>([]);
+  const [priceRequests, setPriceRequests] = useState<any[]>([]);
+  const [auditLogsList, setAuditLogsList] = useState<any[]>([]);
 
   const fetchBranches = async () => {
     if (!user?.tenantId) return;
@@ -498,7 +516,9 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       fetchStaff();
       fetchRoles();
       fetchCustomers();
-      fetchLoyaltySettings();
+      fetchPromotions();
+      fetchPriceRequests();
+      fetchAuditLogs();
     }
   }, [user?.tenantId]);
 
@@ -519,51 +539,54 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
 
 
 
-  const fetchLoyaltySettings = async () => {
+  const updateLoyaltyPolicies = (policies: LoyaltyPolicies) => {
+    setLoyaltyPolicies(policies);
+  };
+
+  const issueVoucher = (customerId: string) => {
+    setCustomers((prev) =>
+      prev.map((c) => (c.id === customerId ? { ...c, vouchersIssued: (c.vouchersIssued || 0) + 1 } : c))
+    );
+  };
+
+  const fetchCustomers = async (search: string = '') => {
     try {
-      const data = await apiClient.get('/tenants/settings') as any;
-      if (data) {
-        setLoyaltyPolicies({
-          pointsPerAed: Number(data.loyaltyPointsPerAed ?? 10),
-          minPoints: Number(data.loyaltyMinPointsToRedeem ?? 5000),
-          redemptionValue: Number(data.loyaltyRedemptionRate ?? 0.01),
-        });
+      const data = await apiClient.get(`/customers?search=${encodeURIComponent(search)}`);
+      let list: any[] = [];
+      if (Array.isArray(data)) {
+        list = data;
+      } else if (data && typeof data === 'object' && Array.isArray((data as any).customers)) {
+        list = (data as any).customers;
+      } else {
+        console.warn('fetchCustomers received a non-array response:', data);
+        setCustomers([]);
+        return;
       }
-    } catch (err) {
-      console.error('Failed to fetch loyalty settings:', err);
+      const formatted = list.map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        phone: c.phone || 'N/A',
+        email: c.email || 'N/A',
+        tier: c.tier || 'Bronze',
+        points: c.points || 0,
+        visits: 0,
+        spent: 0,
+        isActive: c.isActive !== undefined ? c.isActive : true,
+        storeCredit: c.storeCredit || '0.00',
+        vouchersIssued: 0,
+      }));
+      setCustomers(formatted);
+    } catch (error) {
+      console.error('fetchCustomers error:', error);
     }
   };
 
-  const updateLoyaltyPolicies = async (policies: LoyaltyPolicies) => {
-    try {
-      await apiClient.patch('/tenants/settings', {
-        loyaltyPointsPerAed: policies.pointsPerAed,
-        loyaltyMinPointsToRedeem: policies.minPoints,
-        loyaltyRedemptionRate: policies.redemptionValue,
-      });
-      setLoyaltyPolicies(policies);
-    } catch (err) {
-      console.error('Failed to update loyalty settings:', err);
-    }
-  };
-
-  const fetchCustomers = async (search = '') => {
-    try {
-      const res = await apiClient.get(`/customers?search=${encodeURIComponent(search)}`) as any;
-      if (res && res.success) {
-        setCustomers(res.customers || []);
-      }
-    } catch (err) {
-      console.error('Failed to fetch customers:', err);
-    }
-  };
-
-  const addCustomer = async (name: string, email?: string, phone?: string) => {
+  const createCustomer = async (name: string, email?: string, phone?: string) => {
     await apiClient.post('/customers', { name, email, phone });
     await fetchCustomers();
   };
 
-  const updateCustomer = async (id: string, name: string, email?: string, phone?: string, isActive?: boolean) => {
+  const updateCustomer = async (id: string, name?: string, email?: string, phone?: string, isActive?: boolean) => {
     await apiClient.patch(`/customers/${id}`, { name, email, phone, isActive });
     await fetchCustomers();
   };
@@ -573,58 +596,124 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
     await fetchCustomers();
   };
 
-  const adjustCustomerBalance = async (customerId: string, amountDelta: number, reason: string) => {
-    await apiClient.post(`/customers/${customerId}/adjust-balance`, { amountDelta, reason });
+  const adjustCustomerCredit = async (customerId: string, amountDelta: number, reason: string) => {
+    await apiClient.post(`/customers/${customerId}/adjust-credit`, { amountDelta, reason });
     await fetchCustomers();
   };
 
   const fetchCustomerHistory = async (customerId: string) => {
+    console.log(`[Customer History Call] fetchCustomerHistory called for customerId: ${customerId}`);
+    const response = await apiClient.get<any>(`/customers/${customerId}/history`);
+    console.log(`[Customer History Response] fetchCustomerHistory result for ${customerId}:`, response);
+    return response;
+  };
+
+  const fetchPromotions = async (status?: string) => {
+    let url = '/promotions';
+    if (status) {
+      url += `?status=${encodeURIComponent(status)}`;
+    }
     try {
-      const res = await apiClient.get(`/customers/${customerId}/history`) as any;
-      return {
-        orders: res.orders || [],
-        totalSpend: res.totalSpend || 0,
-        orderCount: res.orderCount || 0,
-      };
-    } catch (err) {
-      console.error('Failed to fetch customer history:', err);
-      return { orders: [], totalSpend: 0, orderCount: 0 };
+      const data = await apiClient.get(url);
+      if (!data || !Array.isArray(data)) {
+        console.warn('fetchPromotions received a non-array response:', data);
+        setPromotions([]);
+        return;
+      }
+      const formatted = data.map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        type: p.type || p.discountType || 'Discount',
+        target: p.target || 'All',
+        value: p.discountValue ? `${Number(p.discountValue)}% OFF` : (p.value || 'N/A'),
+        startDate: p.startDate ? p.startDate.split('T')[0] : '',
+        endDate: p.endDate ? p.endDate.split('T')[0] : '',
+        status: p.status === 'Archived' ? 'Ended' : p.status,
+      }));
+      setPromotions(formatted);
+    } catch (error) {
+      console.warn('fetchPromotions: Endpoint offline or returned error');
     }
   };
 
-  const issueVoucher = (customerId: string) => {
-    setCustomers((prev) =>
-      prev.map((c) => (c.id === customerId ? { ...c, vouchersIssued: (c.vouchersIssued || 0) + 1 } : c))
-    );
-  };
-
-  const createCampaign = (
+  const createCampaign = async (
     name: string,
     type: string,
     target: string,
     value: string,
     startDate: string,
-    endDate: string
+    endDate: string,
+    targetCategory?: string,
+    targetProductIds?: string
   ) => {
-    const today = new Date().toISOString().split('T')[0];
-    let status: Promotion['status'] = 'Scheduled';
-    if (today >= startDate && today <= endDate) {
-      status = 'Active';
-    } else if (today > endDate) {
-      status = 'Ended';
-    }
-
-    const newCampaign: Promotion = {
-      id: `pr-${Math.random().toString(36).slice(2, 6)}`,
+    const discountValue = parseFloat(value.replace(/[^0-9.]/g, '')) || 0;
+    await apiClient.post('/promotions', {
       name,
+      discountType: type === 'Fixed amount discount' ? 'fixed' : 'percentage',
+      discountValue,
+      startDate,
+      endDate,
+      status: 'Active',
       type,
       target,
       value,
-      startDate,
-      endDate,
-      status,
-    };
-    setPromotions((prev) => [newCampaign, ...prev]);
+      targetCategory,
+      targetProductIds,
+    });
+    await fetchPromotions();
+  };
+
+  const activatePromotion = async (id: string) => {
+    await apiClient.post(`/promotions/${id}/activate`, {});
+    await fetchPromotions();
+  };
+
+  const deactivatePromotion = async (id: string) => {
+    await apiClient.post(`/promotions/${id}/deactivate`, {});
+    await fetchPromotions();
+  };
+
+  const archivePromotion = async (id: string) => {
+    await apiClient.post(`/promotions/${id}/archive`, {});
+    await fetchPromotions();
+  };
+
+  const fetchPriceRequests = async () => {
+    try {
+      const data = await apiClient.get('/price-requests');
+      if (!data || !Array.isArray(data)) {
+        console.warn('fetchPriceRequests received a non-array response:', data);
+        setPriceRequests([]);
+        return;
+      }
+      setPriceRequests(data);
+    } catch (error) {
+      console.warn('fetchPriceRequests: Endpoint offline or returned error');
+    }
+  };
+
+  const approvePriceRequest = async (id: string) => {
+    await apiClient.post(`/price-requests/${id}/approve`, {});
+    await fetchPriceRequests();
+  };
+
+  const rejectPriceRequest = async (id: string) => {
+    await apiClient.post(`/price-requests/${id}/reject`, {});
+    await fetchPriceRequests();
+  };
+
+  const fetchAuditLogs = async () => {
+    try {
+      const data = await apiClient.get('/audit-logs');
+      if (!data || !Array.isArray(data)) {
+        console.warn('fetchAuditLogs received a non-array response:', data);
+        setAuditLogsList([]);
+        return;
+      }
+      setAuditLogsList(data);
+    } catch (error) {
+      console.warn('fetchAuditLogs: Endpoint offline or returned error');
+    }
   };
 
   const fetchVatSettings = async () => {
@@ -685,17 +774,26 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       loyaltyPolicies,
       customers,
       promotions,
-      fetchCustomers,
-      addCustomer,
-      updateCustomer,
-      adjustCustomerPoints,
-      adjustCustomerBalance,
-      fetchCustomerHistory,
-      fetchLoyaltySettings,
+      priceRequests,
+      auditLogsList,
+      togglePermission,
       updateLoyaltyPolicies,
       issueVoucher,
       createCampaign,
-      togglePermission,
+      fetchCustomers,
+      createCustomer,
+      updateCustomer,
+      adjustCustomerPoints,
+      adjustCustomerCredit,
+      fetchCustomerHistory,
+      fetchPromotions,
+      activatePromotion,
+      deactivatePromotion,
+      archivePromotion,
+      fetchPriceRequests,
+      approvePriceRequest,
+      rejectPriceRequest,
+      fetchAuditLogs,
       staffUsers,
       fetchStaff,
       addStaff,
@@ -710,7 +808,7 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       fetchSalesSummary,
       fetchVatSummary,
     }),
-    [branches, products, batches, purchases, vendors, roles, loyaltyPolicies, customers, promotions, staffUsers]
+    [branches, products, batches, purchases, vendors, roles, loyaltyPolicies, customers, promotions, priceRequests, auditLogsList, staffUsers]
   );
 
   return <HeadOfficeContext.Provider value={contextValue}>{children}</HeadOfficeContext.Provider>;

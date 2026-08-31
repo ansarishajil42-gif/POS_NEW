@@ -33,6 +33,10 @@ import {
   CrmScreen,
   CustomerDetail,
   PromotionsScreen,
+  CrmCustomersScreen,
+  CustomerCrmDetail,
+  PriceRequestsScreen,
+  AuditLogsScreen,
 } from './src/components/roles/HeadOffice';
 import { AggregatorScreen } from './src/components/roles/Aggregator';
 import {
@@ -72,6 +76,7 @@ const roleTabs: Record<string, Tab[]> = {
     { key: 'outlets', label: 'Outlets', icon: 'store' },
     { key: 'catalog', label: 'Catalog', icon: 'box' },
     { key: 'purchasing', label: 'Purchasing', icon: 'cart' },
+    { key: 'crm-customers', label: 'CRM & Customers', icon: 'users' },
     { key: 'more', label: 'More', icon: 'menu' },
   ],
   'store-manager': [
@@ -129,6 +134,7 @@ function RoleRouter({ role }: { role: string }) {
         case 'outlets': return <HeadOfficeOutlets onOpen={(id) => push('outlet', id)} />;
         case 'catalog': return <HeadOfficeCatalog onOpenProduct={(id) => push('product', id)} />;
         case 'purchasing': return <HeadOfficePurchasing />;
+        case 'crm-customers': return <CrmCustomersScreen onOpenCustomer={(id) => push('customer-crm', id)} />;
         case 'more': return <HeadOfficeMore onOpen={(key) => push(key)} />;
       }
     }
@@ -185,9 +191,12 @@ function RoleRouter({ role }: { role: string }) {
       case 'new-po': return <NewPOScreen onBack={back} />;
       case 'rbac': return <RbacScreen onBack={back} />;
       case 'vat': return <VatScreen onBack={back} />;
-      case 'crm': return <CrmScreen onOpenCustomer={(id) => push('customer', id)} />;
-      case 'customer': return <CustomerDetail id={top.param!} onBack={back} />;
+      case 'crm': return <CrmScreen onBack={back} onOpenCustomer={(id) => push('customer-crm', id)} />;
+      case 'customer': return <CustomerCrmDetail id={top.param!} onBack={back} />;
+      case 'customer-crm': return <CustomerCrmDetail id={top.param!} onBack={back} />;
       case 'promotions': return <PromotionsScreen onBack={back} />;
+      case 'price-requests': return <PriceRequestsScreen onBack={back} />;
+      case 'audit-logs': return <AuditLogsScreen onBack={back} />;
       case 'aggregator': return <AggregatorScreen onBack={back} />;
       default: return null;
     }

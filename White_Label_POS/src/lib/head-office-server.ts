@@ -2338,31 +2338,23 @@ export const deleteBlogPostFn = createServerFn({ method: "POST" })
     }
   });
 
-
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
+const supabaseClient = createClient(
+  process.env.SUPABASE_URL || "https://agauuzudkvbxecpukshq.supabase.co",
+  supabaseKey
+);
 
 export const uploadBlogCoverFn = createServerFn({ method: "POST" })
   .validator((d: { base64Data: string; fileName: string; mimeType: string }) => d)
   .handler(async ({ data }) => {
     await getHeadOfficeSession();
     try {
-      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
-      console.log("[RUNTIME WEB UPLOAD KEY CHECK]:");
-      console.log("SUPABASE_URL:", process.env.SUPABASE_URL);
-      console.log("SUPABASE_SERVICE_ROLE_KEY length:", process.env.SUPABASE_SERVICE_ROLE_KEY?.length || 0);
-      console.log("SUPABASE_ANON_KEY length:", process.env.SUPABASE_ANON_KEY?.length || 0);
-      console.log("Using Key Type:", process.env.SUPABASE_SERVICE_ROLE_KEY ? "SERVICE_ROLE" : (process.env.SUPABASE_ANON_KEY ? "ANON" : "NONE"));
-
-      const client = createClient(
-        process.env.SUPABASE_URL || "https://agauuzudkvbxecpukshq.supabase.co",
-        supabaseKey
-      );
-
       const buffer = Buffer.from(data.base64Data, "base64");
       const fileExt = data.fileName.split(".").pop();
       const newFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
       const filePath = `covers/${newFileName}`;
 
-      const { data: uploadData, error } = await client.storage
+      const { data: uploadData, error } = await supabaseClient.storage
         .from("blog-covers")
         .upload(filePath, buffer, {
           contentType: data.mimeType,
@@ -2373,7 +2365,7 @@ export const uploadBlogCoverFn = createServerFn({ method: "POST" })
         throw new Error(error.message);
       }
 
-      const { data: publicUrlData } = client.storage
+      const { data: publicUrlData } = supabaseClient.storage
         .from("blog-covers")
         .getPublicUrl(filePath);
 
