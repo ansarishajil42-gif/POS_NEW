@@ -18,6 +18,9 @@ export const tenants = pgTable("tenants", {
   subdomain: text("subdomain").notNull().unique(),
   plan: text("plan").notNull().default("Starter"),
   status: text("status").notNull().default("Active"),
+  outletLimit: integer("outlet_limit").notNull().default(5),
+  tillLimit: integer("till_limit").notNull().default(10),
+  monthlyOrderLimit: integer("monthly_order_limit").notNull().default(10000),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -28,8 +31,11 @@ export const tenantSettings = pgTable("tenant_settings", {
   vatRate: decimal("vat_rate", { precision: 5, scale: 2 }).notNull().default("5.00"),
   vatInclusive: boolean("vat_inclusive").notNull().default(true),
   loyaltyRedemptionRate: decimal("loyalty_redemption_rate", { precision: 5, scale: 2 }).notNull().default("0.01"), // e.g. 1 point = 0.01 currency
+  loyaltyPointsPerAed: integer("loyalty_points_per_aed").notNull().default(10),
+  loyaltyMinPointsToRedeem: integer("loyalty_min_points_to_redeem").notNull().default(5000),
   currency: text("currency").notNull().default("AED"),
   taxRegistrationNumber: text("trn"),
+  allowInventoryManagerPoDraft: boolean("allow_inventory_manager_po_draft").notNull().default(true),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
@@ -268,6 +274,16 @@ export const orders = pgTable("orders", {
   customerId: uuid("customer_id").references(() => customers.id),
   status: text("status").notNull().default("completed"), // completed, voided, refunded, auto-synced
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  cashReceived: decimal("cash_received", { precision: 12, scale: 2 }),
+  changeGiven: decimal("change_given", { precision: 12, scale: 2 }),
+  idempotencyKey: text("idempotency_key").unique(),
+  invoiceNumber: text("invoice_number"),
+});
+
+// 15.01 invoice_sequences
+export const invoiceSequences = pgTable("invoice_sequences", {
+  tenantId: uuid("tenant_id").primaryKey().references(() => tenants.id, { onDelete: "cascade" }),
+  currentValue: integer("current_value").notNull().default(0),
 });
 
 // 15.1 order_payments

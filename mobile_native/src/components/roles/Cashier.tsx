@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, Keyboard } from 'react-native';
 import { AppHeader, ScreenBody } from '../Shell';
 import { Card, StatCard } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { Button, Sheet, Field } from '../ui/Primitives';
 import { formatCurrency } from '../../lib/utils';
-import { tillQuickProducts } from '../../lib/mockData';
 import { useAuth } from '../../lib/auth';
 import { useCashier } from '../../lib/CashierContext';
-import { Search, Trash2, CreditCard, Banknote, Sparkles, Wallet, Printer, Scale } from 'lucide-react-native';
+import { Toast, type ToastType } from '../ui/Toast';
+import { apiClient } from '../../lib/apiClient';
+import { Search, Trash2, CreditCard, Banknote, Sparkles, Wallet, Printer, Scale, X } from 'lucide-react-native';
 
 export function CashierTill() {
   const { branch } = useAuth();
@@ -20,24 +21,131 @@ export function CashierTill() {
     addToCart,
     updateCartQty,
     removeFromCart,
-    clearCart
+    clearCart,
+    activeShift,
+    tills,
+    catalog,
+    openShift,
   } = useCashier();
+
+  const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
 
   const [q, setQ] = useState('');
   const [payOpen, setPayOpen] = useState(false);
+
+  // Open Shift Form States
+  const [openingFloatVal, setOpeningFloatVal] = useState('500');
+  const [selectedTillId, setSelectedTillId] = useState('');
+  const [tillDropdownOpen, setTillDropdownOpen] = useState(false);
+  const [tillSearch, setTillSearch] = useState('');
 
   const subtotal = cart.reduce((a, i) => a + i.price * i.qty, 0);
   const vat = subtotal * 0.05;
   const total = subtotal + vat;
 
-  const filtered = tillQuickProducts.filter((p) => p.name.toLowerCase().includes(q.toLowerCase()));
+  // Search real catalog instead of mock tillQuickProducts
+  const filtered = catalog.filter((p) => 
+    p.name.toLowerCase().includes(q.toLowerCase()) || 
+    (p.barcode && p.barcode.includes(q))
+  );
+
+  const handleOpenShift = async () => {
+    const floatNum = parseFloat(openingFloatVal);
+    if (isNaN(floatNum) || floatNum < 0) {
+      showToast('Please enter a valid opening float', 'error');
+      return;
+    }
+    if (!selectedTillId) {
+      showToast('Please select a till terminal', 'error');
+      return;
+    }
+    try {
+      await openShift(floatNum, selectedTillId);
+      showToast('Shift opened successfully', 'success');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to open shift', 'error');
+    }
+  };
 
   const handleReadScale = () => {
     // Simulates reading from a scale
-    const banana = tillQuickProducts.find(p => p.id === 'p9') || { id: 'p9', name: 'Bananas 1kg', price: 5.0 };
-    addToCart(banana);
-    Alert.alert('Scale Integrated', 'Reading: 1.240 kg. Added Bananas 1kg.');
+    const banana = catalog.find(p => p.name.toLowerCase().includes('banana') || p.id === 'p9') || { id: 'p9', name: 'Bananas 1kg', basePrice: 5.0 };
+    addToCart({ id: banana.id, name: banana.name, price: Number(banana.priceOverride || banana.basePrice) });
+    showToast('Scale Integrated: 1.240 kg added.', 'success');
   };
+
+  // If shift is not active, render Open Shift form
+  if (!activeShift) {
+    const matchedTills = tills.filter(t => t.name.toLowerCase().includes(tillSearch.toLowerCase()));
+    return (
+      <View style={styles.flex1}>
+        <AppHeader roleLabel="CA" branch={branch} />
+        <ScreenBody>
+          <Text style={styles.mainTitle}>Open Cashier Shift</Text>
+          <Card style={{ padding: 16 }}>
+            <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 16 }}>
+              You must open a shift and declare the opening float to start processing sales.
+            </Text>
+
+            <Field label="Till Terminal">
+              <TextInput
+                style={[styles.searchInput, { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 8 }]}
+                placeholder="Select Till Terminal..."
+                value={tillSearch}
+                onFocus={() => setTillDropdownOpen(true)}
+                onChangeText={(text) => {
+                  setTillSearch(text);
+                  setTillDropdownOpen(true);
+                }}
+              />
+              {tillDropdownOpen && (
+                <View style={{ maxHeight: 150, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, overflow: 'hidden', backgroundColor: '#fff', marginBottom: 12 }}>
+                  <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                    {matchedTills.map((t) => (
+                      <TouchableOpacity
+                        key={t.id}
+                        onPress={() => {
+                          setSelectedTillId(t.id);
+                          setTillSearch(t.name);
+                          setTillDropdownOpen(false);
+                          Keyboard.dismiss();
+                        }}
+                        style={{ padding: 12, backgroundColor: selectedTillId === t.id ? '#e0f2fe' : '#fff', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}
+                      >
+                        <Text style={{ color: '#0f172a', fontWeight: selectedTillId === t.id ? 'bold' : 'normal' }}>{t.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                    {matchedTills.length === 0 && (
+                      <Text style={{ padding: 12, color: '#94a3b8', fontStyle: 'italic' }}>No tills found</Text>
+                    )}
+                  </ScrollView>
+                </View>
+              )}
+            </Field>
+
+            <Field label="Opening Float (AED)">
+              <View style={styles.methodInputWrapper}>
+                <Text style={styles.currencyPrefix}>$</Text>
+                <TextInput
+                  keyboardType="numeric"
+                  value={openingFloatVal}
+                  onChangeText={setOpeningFloatVal}
+                  placeholder="500.00"
+                  style={styles.methodInput}
+                />
+              </View>
+            </Field>
+
+            <Button variant="primary" full style={{ marginTop: 16 }} onClick={handleOpenShift}>
+              Open Shift
+            </Button>
+          </Card>
+        </ScreenBody>
+        {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
+      </View>
+    );
+  }
 
   return (
     <View style={styles.flex1}>
@@ -63,10 +171,15 @@ export function CashierTill() {
         {/* Quick products grid */}
         <View style={styles.quickGrid}>
           {filtered.slice(0, 6).map((p) => (
-            <TouchableOpacity key={p.id} onPress={() => addToCart(p)} style={styles.quickBtn} activeOpacity={0.8}>
-              <Text style={styles.quickEmoji}>{p.emoji}</Text>
+            <TouchableOpacity 
+              key={p.id} 
+              onPress={() => addToCart({ id: p.id, name: p.name, price: Number(p.priceOverride || p.basePrice) })} 
+              style={styles.quickBtn} 
+              activeOpacity={0.8}
+            >
+              <Text style={styles.quickEmoji}>📦</Text>
               <Text style={styles.quickLabel} numberOfLines={1}>{p.name}</Text>
-              <Text style={styles.quickPrice}>${p.price.toFixed(2)}</Text>
+              <Text style={styles.quickPrice}>AED {Number(p.priceOverride || p.basePrice).toFixed(2)}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -85,14 +198,14 @@ export function CashierTill() {
           
           <ScrollView style={styles.cartScroll} nestedScrollEnabled>
             {cart.length === 0 ? (
-              <Text style={styles.emptyCartText}>Scan or tap quick keys to begin</Text>
+              <Text style={styles.emptyCartText}>Scan or search items to begin</Text>
             ) : (
               <View style={styles.cartItemsContainer}>
                 {cart.map((i) => (
                   <View key={i.id} style={styles.cartItemRow}>
                     <View style={styles.flex1}>
                       <Text style={styles.cartItemName} numberOfLines={1}>{i.name}</Text>
-                      <Text style={styles.cartItemMeta}>${i.price.toFixed(2)} each</Text>
+                      <Text style={styles.cartItemMeta}>AED {i.price.toFixed(2)} each</Text>
                     </View>
                     <View style={styles.cartActions}>
                       <TouchableOpacity onPress={() => updateCartQty(i.id, -1)} style={styles.qtyBtn}>
@@ -102,7 +215,7 @@ export function CashierTill() {
                       <TouchableOpacity onPress={() => updateCartQty(i.id, 1)} style={styles.qtyBtn}>
                         <Text style={styles.qtyBtnText}>+</Text>
                       </TouchableOpacity>
-                      <Text style={styles.cartItemPrice}>${(i.price * i.qty).toFixed(2)}</Text>
+                      <Text style={styles.cartItemPrice}>AED {(i.price * i.qty).toFixed(2)}</Text>
                       <TouchableOpacity onPress={() => removeFromCart(i.id)} style={styles.trashIcon}>
                         <Trash2 size={14} color="#cbd5e1" />
                       </TouchableOpacity>
@@ -114,9 +227,9 @@ export function CashierTill() {
           </ScrollView>
 
           <View style={styles.cartTotals}>
-            <View style={styles.totalRow}><Text style={styles.totalLabel}>Subtotal</Text><Text style={styles.totalVal}>${subtotal.toFixed(2)}</Text></View>
-            <View style={styles.totalRow}><Text style={styles.totalLabel}>VAT (5%)</Text><Text style={styles.totalVal}>${vat.toFixed(2)}</Text></View>
-            <View style={[styles.totalRow, styles.grandTotalRow]}><Text style={styles.grandTotalLabel}>Total</Text><Text style={styles.grandTotalVal}>${total.toFixed(2)}</Text></View>
+            <View style={styles.totalRow}><Text style={styles.totalLabel}>Subtotal</Text><Text style={styles.totalVal}>AED {subtotal.toFixed(2)}</Text></View>
+            <View style={styles.totalRow}><Text style={styles.totalLabel}>VAT (5%)</Text><Text style={styles.totalVal}>AED {vat.toFixed(2)}</Text></View>
+            <View style={[styles.totalRow, styles.grandTotalRow]}><Text style={styles.grandTotalLabel}>Total</Text><Text style={styles.grandTotalVal}>AED {total.toFixed(2)}</Text></View>
           </View>
         </Card>
 
@@ -124,45 +237,74 @@ export function CashierTill() {
           <Button variant="secondary" onClick={toggleOffline} style={styles.halfBtn}>
             {offline === 'synced' ? 'Work Offline' : 'Sync Offline'}
           </Button>
-          <Button disabled={cart.length === 0} onClick={() => setPayOpen(true)} style={styles.halfBtn}>Pay ${total.toFixed(2)}</Button>
+          <Button disabled={cart.length === 0} onClick={() => setPayOpen(true)} style={styles.halfBtn}>Pay AED {total.toFixed(2)}</Button>
         </View>
       </ScreenBody>
 
-      <SplitPayment open={payOpen} onClose={() => setPayOpen(false)} total={total} />
+      <SplitPayment open={payOpen} onClose={() => setPayOpen(false)} total={total} showToast={showToast} />
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
 
-function SplitPayment({ open, onClose, total }: { open: boolean; onClose: () => void; total: number }) {
+function SplitPayment({ open, onClose, total, showToast }: { open: boolean; onClose: () => void; total: number; showToast: (msg: string, type?: ToastType) => void }) {
   const { settleTransaction } = useCashier();
   const [cash, setCash] = useState('');
   const [card, setCard] = useState('');
   const [loyalty, setLoyalty] = useState('');
   const [credit, setCredit] = useState('');
 
+  // Customer search inside payment sheet
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [matchedCustomers, setMatchedCustomers] = useState<any[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
+
   const paid = (Number(cash) || 0) + (Number(card) || 0) + (Number(loyalty) || 0) + (Number(credit) || 0);
   const remaining = Math.max(0, total - paid);
 
-  const handleSettle = () => {
-    settleTransaction({
-      cash: Number(cash) || 0,
-      card: Number(card) || 0,
-      loyalty: Number(loyalty) || 0,
-      credit: Number(credit) || 0
-    });
-    setCash('');
-    setCard('');
-    setLoyalty('');
-    setCredit('');
-    onClose();
-    Alert.alert('Sale Completed', 'Transaction completed successfully · receipt printed.');
+  const handleCustomerSearch = async (term: string) => {
+    setCustomerSearch(term);
+    if (term.length >= 2) {
+      try {
+        const res = await apiClient.post('/pos/customers/search', { term }) as any;
+        setMatchedCustomers(res.customers || []);
+      } catch (err) {
+        console.error(err);
+      }
+    } else {
+      setMatchedCustomers([]);
+    }
+  };
+
+  const handleSettle = async () => {
+    try {
+      await settleTransaction({
+        cash: Number(cash) || 0,
+        card: Number(card) || 0,
+        loyalty: Number(loyalty) || 0,
+        credit: Number(credit) || 0
+      }, selectedCustomerId || undefined);
+
+      setCash('');
+      setCard('');
+      setLoyalty('');
+      setCredit('');
+      setSelectedCustomerId('');
+      setSelectedCustomer(null);
+      setCustomerSearch('');
+      onClose();
+      showToast('Sale Completed successfully · receipt printed.', 'success');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to complete checkout', 'error');
+    }
   };
 
   const methods = [
-    { key: 'cash', label: 'Cash', icon: <Banknote size={16} color="#39ff14" />, val: cash, set: setCash },
-    { key: 'card', label: 'Card', icon: <CreditCard size={16} color="#39ff14" />, val: card, set: setCard },
-    { key: 'loyalty', label: 'Loyalty Pts', icon: <Sparkles size={16} color="#39ff14" />, val: loyalty, set: setLoyalty },
-    { key: 'credit', label: 'Store Credit', icon: <Wallet size={16} color="#39ff14" />, val: credit, set: setCredit },
+    { key: 'cash', label: 'Cash', icon: <Banknote size={16} color="#22c55e" />, val: cash, set: setCash },
+    { key: 'card', label: 'Card', icon: <CreditCard size={16} color="#3b82f6" />, val: card, set: setCard },
+    { key: 'loyalty', label: 'Loyalty Pts', icon: <Sparkles size={16} color="#eab308" />, val: loyalty, set: setLoyalty },
+    { key: 'credit', label: 'Store Credit', icon: <Wallet size={16} color="#a855f7" />, val: credit, set: setCredit },
   ];
 
   return (
@@ -183,8 +325,48 @@ function SplitPayment({ open, onClose, total }: { open: boolean; onClose: () => 
       }
     >
       <View style={styles.paymentDueBox}>
-        <View style={styles.receiptLine}><Text style={styles.receiptLabel}>Total due</Text><Text style={styles.receiptVal}>${total.toFixed(2)}</Text></View>
-        <View style={styles.receiptLine}><Text style={styles.receiptLabel}>Paid</Text><Text style={styles.receiptVal}>${paid.toFixed(2)}</Text></View>
+        <View style={styles.receiptLine}><Text style={styles.receiptLabel}>Total due</Text><Text style={styles.receiptVal}>AED {total.toFixed(2)}</Text></View>
+        <View style={styles.receiptLine}><Text style={styles.receiptLabel}>Paid</Text><Text style={styles.receiptVal}>AED {paid.toFixed(2)}</Text></View>
+      </View>
+
+      <View style={{ marginBottom: 16 }}>
+        <Field label="Link Customer (Search by Name/Phone/Email)">
+          <TextInput
+            style={[styles.searchInput, { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }]}
+            placeholder="Search customer..."
+            value={customerSearch}
+            onChangeText={handleCustomerSearch}
+          />
+          {matchedCustomers.length > 0 && (
+            <View style={{ maxHeight: 150, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, overflow: 'hidden', backgroundColor: '#fff', marginTop: 4 }}>
+              <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                {matchedCustomers.map((c) => (
+                  <TouchableOpacity
+                    key={c.id}
+                    onPress={() => {
+                      setSelectedCustomerId(c.id);
+                      setSelectedCustomer(c);
+                      setCustomerSearch(`${c.name} (${c.phone || c.email || ''})`);
+                      setMatchedCustomers([]);
+                      Keyboard.dismiss();
+                    }}
+                    style={{ padding: 12, backgroundColor: selectedCustomerId === c.id ? '#e0f2fe' : '#fff', borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}
+                  >
+                    <Text style={{ color: '#0f172a', fontWeight: selectedCustomerId === c.id ? 'bold' : 'normal' }}>
+                      {c.name} · Pts: {c.points} · Credit: AED {parseFloat(c.storeCredit || 0).toFixed(2)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+          {selectedCustomer && (
+            <View style={{ marginTop: 6, flexDirection: 'row', gap: 12 }}>
+              <Badge variant="success">Pts: {selectedCustomer.points}</Badge>
+              <Badge variant="success">Credit: AED {parseFloat(selectedCustomer.storeCredit || 0).toFixed(2)}</Badge>
+            </View>
+          )}
+        </Field>
       </View>
       
       <View style={styles.methodsList}>
@@ -223,36 +405,53 @@ export function CashierShift() {
     reports,
     recordCashDrop,
     adjustFloat,
-    closeShiftAndPrintZ
+    closeShiftAndPrintZ,
+    activeShift,
   } = useCashier();
+
+  const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
 
   const [openDropSheet, setOpenDropSheet] = useState(false);
   const [openFloatSheet, setOpenFloatSheet] = useState(false);
   const [localDrop, setLocalDrop] = useState('');
   const [localFloat, setLocalFloat] = useState('');
+  const [dropReason, setDropReason] = useState('Mid-shift drop');
 
-  const handleRecordDrop = () => {
+  // Actual Cash Count on closure
+  const [openCloseSheet, setOpenCloseSheet] = useState(false);
+  const [actualCashCount, setActualCashCount] = useState('');
+
+  const handleRecordDrop = async () => {
     const amt = parseFloat(localDrop);
     if (isNaN(amt) || amt <= 0) {
-      Alert.alert('Error', 'Please enter a valid drop amount');
+      showToast('Please enter a valid drop amount', 'error');
       return;
     }
-    recordCashDrop(amt);
-    setLocalDrop('');
-    setOpenDropSheet(false);
-    Alert.alert('Drop Recorded', `Cash drop of ${formatCurrency(amt)} successfully logged.`);
+    try {
+      await recordCashDrop(amt, dropReason);
+      setLocalDrop('');
+      setOpenDropSheet(false);
+      showToast(`Cash drop of AED ${amt} logged successfully.`, 'success');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to record cash drop', 'error');
+    }
   };
 
-  const handleAdjustFloat = () => {
+  const handleAdjustFloat = async () => {
     const amt = parseFloat(localFloat);
     if (isNaN(amt) || amt <= 0) {
-      Alert.alert('Error', 'Please enter a valid float amount');
+      showToast('Please enter a valid float amount', 'error');
       return;
     }
-    adjustFloat(amt);
-    setLocalFloat('');
-    setOpenFloatSheet(false);
-    Alert.alert('Float Adjusted', `Opening float adjusted to ${formatCurrency(amt)}.`);
+    try {
+      await adjustFloat(amt);
+      setLocalFloat('');
+      setOpenFloatSheet(false);
+      showToast(`Opening float adjusted to AED ${amt}.`, 'success');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to adjust float', 'error');
+    }
   };
 
   const handlePrintX = () => {
@@ -262,23 +461,38 @@ export function CashierShift() {
     );
   };
 
-  const handleCloseShift = () => {
-    Alert.alert(
-      'Confirm Close Shift',
-      'This will seal the shift ledger, generate a Z-Report, and post totals to Head Office. Proceed?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Close Shift',
-          style: 'destructive',
-          onPress: () => {
-            closeShiftAndPrintZ();
-            Alert.alert('Shift Closed', 'Z-Report compiled and dispatched to thermal POS printer.');
-          }
-        }
-      ]
-    );
+  const handleCloseShiftSubmit = async () => {
+    const amt = parseFloat(actualCashCount);
+    if (isNaN(amt) || amt < 0) {
+      showToast('Please enter a valid cash count amount', 'error');
+      return;
+    }
+    try {
+      await closeShiftAndPrintZ(amt);
+      setActualCashCount('');
+      setOpenCloseSheet(false);
+      showToast('Shift closed successfully. Z-Report compiled.', 'success');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to close shift', 'error');
+    }
   };
+
+  if (!activeShift) {
+    return (
+      <View style={styles.flex1}>
+        <AppHeader roleLabel="CA" branch={branch} />
+        <ScreenBody>
+          <Text style={styles.mainTitle}>Shift control</Text>
+          <Card style={{ padding: 24, alignItems: 'center' }}>
+            <Text style={{ color: '#64748b', fontSize: 13, fontStyle: 'italic', marginBottom: 16 }}>No active shift open.</Text>
+            <Text style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center' }}>
+              Please go to the Till tab and open a shift to activate shift controls.
+            </Text>
+          </Card>
+        </ScreenBody>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.flex1}>
@@ -288,7 +502,7 @@ export function CashierShift() {
         <Card style={styles.shiftActiveCard}>
           <View>
             <Text style={styles.statusSub}>Shift status</Text>
-            <Text style={styles.shiftActiveVal}>Open · Till 02</Text>
+            <Text style={styles.shiftActiveVal}>Open · Shift active</Text>
           </View>
           <Badge variant="success">Active</Badge>
         </Card>
@@ -317,7 +531,7 @@ export function CashierShift() {
           <Button variant="secondary" onClick={handlePrintX} style={styles.halfBtn}>
             <Printer size={14} color="#0f172a" style={{ marginRight: 6 }} /> Print X
           </Button>
-          <Button variant="danger" onClick={handleCloseShift} style={styles.halfBtn}>Close Shift & Z</Button>
+          <Button variant="danger" onClick={() => setOpenCloseSheet(true)} style={styles.halfBtn}>Close Shift & Z</Button>
         </View>
 
         <Text style={styles.sectionTitle}>Shift History Reports</Text>
@@ -332,7 +546,7 @@ export function CashierShift() {
                   ]}>
                     <Text style={[
                       styles.reportBadgeText,
-                      { color: r.type === 'Z' ? '#39ff14' : '#0369a1' }
+                      { color: r.type === 'Z' ? '#22c55e' : '#3b82f6' }
                     ]}>
                       {r.type}
                     </Text>
@@ -343,15 +557,18 @@ export function CashierShift() {
                   </View>
                 </View>
                 <View style={styles.productPriceCol}>
-                  <Text style={styles.productPrice}>${r.sales.toLocaleString()}</Text>
-                  <TouchableOpacity style={styles.printBtn} onPress={() => Alert.alert('Printing', `Re-sending ${r.number} report to POS printer.`)}>
-                    <Printer size={13} color="#39ff14" />
+                  <Text style={styles.productPrice}>AED {r.sales.toLocaleString()}</Text>
+                  <TouchableOpacity style={styles.printBtn} onPress={() => showToast(`Re-sending ${r.number} report to POS printer.`, 'success')}>
+                    <Printer size={13} color="#22c55e" />
                     <Text style={styles.printBtnText}>Re-print</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             </Card>
           ))}
+          {reports.length === 0 && (
+            <Text style={{ padding: 12, color: '#94a3b8', fontStyle: 'italic', textAlign: 'center' }}>No shifts closed in this session.</Text>
+          )}
         </View>
       </ScreenBody>
       
@@ -375,6 +592,15 @@ export function CashierShift() {
                 style={styles.methodInput}
               />
             </View>
+          </Field>
+          <Field label="Reason">
+            <TextInput
+              value={dropReason}
+              onChangeText={setDropReason}
+              placeholder="Drop reason..."
+              placeholderTextColor="#94a3b8"
+              style={[styles.searchInput, { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }]}
+            />
           </Field>
         </View>
       </Sheet>
@@ -402,6 +628,35 @@ export function CashierShift() {
           </Field>
         </View>
       </Sheet>
+
+      {/* CLOSE SHIFT CASH COUNT SHEET */}
+      <Sheet open={openCloseSheet} onClose={() => setOpenCloseSheet(false)} title="Close Shift & Z-Report" footer={
+        <View style={styles.sheetFooterBtnRow}>
+          <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => setOpenCloseSheet(false)}>Cancel</Button>
+          <Button variant="danger" style={styles.sheetFooterBtn} onClick={handleCloseShiftSubmit}>Close Shift</Button>
+        </View>
+      }>
+        <View style={styles.modalForm}>
+          <Text style={{ fontSize: 12, color: '#64748b' }}>
+            Count the cash in the drawer and declare below to compile the closure variance.
+          </Text>
+          <Field label="Actual Cash Count (AED)">
+            <View style={styles.methodInputWrapper}>
+              <Text style={styles.currencyPrefix}>$</Text>
+              <TextInput
+                value={actualCashCount}
+                onChangeText={setActualCashCount}
+                keyboardType="numeric"
+                placeholder="0.00"
+                placeholderTextColor="#94a3b8"
+                style={styles.methodInput}
+              />
+            </View>
+          </Field>
+        </View>
+      </Sheet>
+
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
@@ -430,10 +685,13 @@ export function CashierHistory() {
                     <Text style={styles.productName}>{t.receipt}</Text>
                     <Text style={styles.productMeta}>{t.time} · {t.items} items · {t.method}</Text>
                   </View>
-                  <Text style={styles.productPrice}>${t.total.toFixed(2)}</Text>
+                  <Text style={styles.productPrice}>AED {t.total.toFixed(2)}</Text>
                 </View>
               </Card>
             ))}
+            {filtered.length === 0 && (
+              <Text style={{ padding: 24, color: '#94a3b8', fontStyle: 'italic', textAlign: 'center' }}>No transactions recorded.</Text>
+            )}
           </View>
         </ScrollView>
       </ScreenBody>
@@ -512,7 +770,7 @@ const styles = StyleSheet.create({
   quickPrice: {
     fontSize: 11,
     fontWeight: 'bold',
-    color: '#39ff14',
+    color: '#22c55e',
     marginTop: 2,
   },
   cartCard: {
@@ -672,7 +930,7 @@ const styles = StyleSheet.create({
     color: '#d97706',
   },
   colorSuccess: {
-    color: '#39ff14',
+    color: '#22c55e',
   },
   paymentDueBox: {
     borderWidth: 1,
@@ -761,7 +1019,7 @@ const styles = StyleSheet.create({
   shiftActiveVal: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#39ff14',
+    color: '#22c55e',
     marginTop: 2,
   },
   shiftListDetails: {

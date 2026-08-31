@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useMemo, type ReactNode } from 'react';
-import { transactions as mockTransactions, reports as mockReports } from './mockData';
+import React, { createContext, useContext, useState, useMemo, useEffect, type ReactNode } from 'react';
+import { apiClient } from './apiClient';
+import { useAuth } from './auth';
 
 export interface CartItem {
   id: string;
@@ -39,61 +40,155 @@ interface CashierContextType {
   expectedDrawer: number;
   transactions: Transaction[];
   reports: Report[];
+  activeShift: any | null;
+  tills: any[];
+  catalog: any[];
+  promotions: any[];
   toggleOffline: () => void;
   addToCart: (product: { id: string; name: string; price: number }) => void;
   removeFromCart: (id: string) => void;
   updateCartQty: (id: string, delta: number) => void;
   clearCart: () => void;
-  settleTransaction: (split: { cash: number; card: number; loyalty: number; credit: number }) => void;
-  recordCashDrop: (amount: number) => void;
-  adjustFloat: (amount: number) => void;
-  closeShiftAndPrintZ: () => void;
+  settleTransaction: (split: { cash: number; card: number; loyalty: number; credit: number }, customerId?: string) => Promise<void>;
+  recordCashDrop: (amount: number, reason: string) => Promise<void>;
+  adjustFloat: (amount: number) => Promise<void>;
+  closeShiftAndPrintZ: (actualCash: number) => Promise<void>;
+  openShift: (openingFloat: number, tillId: string) => Promise<void>;
+  fetchActiveShift: () => Promise<void>;
+  fetchCatalog: () => Promise<void>;
+  fetchTills: () => Promise<void>;
+  fetchTransactions: () => Promise<void>;
 }
 
 const CashierContext = createContext<CashierContextType | null>(null);
 
 export function CashierProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [offline, setOffline] = useState<'synced' | 'buffering'>('synced');
   const [bufferedCount, setBufferedCount] = useState(0);
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [openingFloat, setOpeningFloat] = useState(500);
-  const [cashSales, setCashSales] = useState(841);
-  const [cardSales, setCardSales] = useState(1240);
-  const [cashDrops, setCashDrops] = useState(0);
+
+  const [activeShift, setActiveShift] = useState<any | null>(null);
+  const [tills, setTills] = useState<any[]>([]);
+  const [catalog, setCatalog] = useState<any[]>([]);
+  const [promotions, setPromotions] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [reports, setReports] = useState<Report[]>([]);
+
+  const openingFloat = activeShift ? Number(activeShift.openingFloat) : 0;
+  const cashSales = activeShift ? Number(activeShift.stats?.cashTotal || 0) : 0;
+  const cardSales = activeShift ? Number(activeShift.stats?.cardTotal || 0) : 0;
   
-  const [transactions, setTransactions] = useState<Transaction[]>(mockTransactions as Transaction[]);
-  const [reports, setReports] = useState<Report[]>(mockReports as Report[]);
+  // Calculate cash drops
+  const cashDrops = useMemo(() => {
+    if (!activeShift?.cashDrops) return 0;
+    try {
+      const drops = JSON.parse(activeShift.cashDrops);
+      return drops.reduce((sum: number, d: any) => sum + Number(d.amount), 0);
+    } catch {
+      return 0;
+    }
+  }, [activeShift?.cashDrops]);
 
   const expectedDrawer = useMemo(() => {
     return openingFloat + cashSales - cashDrops;
   }, [openingFloat, cashSales, cashDrops]);
 
+  const fetchActiveShift = async () => {
+    try {
+      const data = await apiClient.get('/pos/shift/active') as any;
+      setActiveShift(data.shift);
+    } catch (err) {
+      console.error('Failed to fetch active shift:', err);
+    }
+  };
+
+  const fetchCatalog = async () => {
+    try {
+      const data = await apiClient.get('/pos/catalog') as any;
+      setCatalog(data.catalog || []);
+      setPromotions(data.promotions || []);
+    } catch (err) {
+      console.error('Failed to fetch POS catalog:', err);
+    }
+  };
+
+  const fetchTills = async () => {
+    try {
+      const data = await apiClient.get('/pos/tills') as any;
+      setTills(data.tills || []);
+    } catch (err) {
+      console.error('Failed to fetch tills:', err);
+    }
+  };
+
+  const fetchTransactions = async () => {
+    if (!user) return;
+    try {
+      const ordersData = await apiClient.get(`/orders?tenantId=${user.tenantId}&branchId=${user.branchId}&limit=30`) as any[];
+      const mapped: Transaction[] = ordersData.map((o) => {
+        const timeStr = new Date(o.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return {
+          id: o.id,
+          receipt: o.invoiceNumber || o.id.split('-')[0].toUpperCase(),
+          time: timeStr,
+          total: parseFloat(o.total),
+          method: o.paymentMethod || 'Split',
+          items: o.items?.length || 0,
+        };
+      });
+      setTransactions(mapped);
+    } catch (err) {
+      console.error('Failed to fetch transaction history:', err);
+    }
+  };
+
+  const openShift = async (floatVal: number, tillId: string) => {
+    await apiClient.post('/pos/shift/open', { openingFloat: floatVal, tillId });
+    await fetchActiveShift();
+    await fetchTills();
+  };
+
+  const closeShiftAndPrintZ = async (actualCash: number) => {
+    if (!activeShift) return;
+    const res = await apiClient.post('/pos/shift/close', { shiftId: activeShift.id, actualCash }) as any;
+    
+    // Add to reports list in memory
+    const reportNum = `Z-${Math.floor(2400 + Math.random() * 100)}`;
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0];
+
+    const newReport: Report = {
+      id: Math.random().toString(),
+      number: reportNum,
+      date: dateStr,
+      sales: cashSales + cardSales,
+      cash: cashSales,
+      card: cardSales,
+      other: 0,
+      type: 'Z',
+    };
+
+    setReports((r) => [newReport, ...r]);
+    await fetchActiveShift();
+  };
+
+  const recordCashDrop = async (amount: number, reason: string) => {
+    if (!activeShift) return;
+    await apiClient.post('/pos/shift/drop', { shiftId: activeShift.id, amount, reason });
+    await fetchActiveShift();
+  };
+
+  const adjustFloat = async (amount: number) => {
+    if (!activeShift) return;
+    await apiClient.post('/pos/shift/float', { shiftId: activeShift.id, amount });
+    await fetchActiveShift();
+  };
+
   const toggleOffline = () => {
     if (offline === 'buffering') {
       setOffline('synced');
-      if (bufferedCount > 0) {
-        // Sync buffered sales to transactions
-        const syncedTxs: Transaction[] = [];
-        let newCashSales = 0;
-        let newCardSales = 0;
-        for (let i = 0; i < bufferedCount; i++) {
-          const receiptNum = `RCP-${Math.floor(50000 + Math.random() * 10000)}`;
-          syncedTxs.push({
-            id: Math.random().toString(),
-            receipt: receiptNum,
-            time: 'Synced',
-            total: 64.50,
-            method: 'Split',
-            items: 3,
-          });
-          newCashSales += 30;
-          newCardSales += 34.50;
-        }
-        setTransactions((t) => [...syncedTxs, ...t]);
-        setCashSales((prev) => prev + newCashSales);
-        setCardSales((prev) => prev + newCardSales);
-        setBufferedCount(0);
-      }
+      setBufferedCount(0);
     } else {
       setOffline('buffering');
     }
@@ -129,64 +224,43 @@ export function CashierProvider({ children }: { children: ReactNode }) {
 
   const clearCart = () => setCart([]);
 
-  const settleTransaction = (split: { cash: number; card: number; loyalty: number; credit: number }) => {
-    const totalAmount = cart.reduce((a, i) => a + i.price * i.qty, 0) * 1.05;
-    const totalItems = cart.reduce((a, i) => a + i.qty, 0);
-    const receiptNum = `RCP-${Math.floor(50000 + Math.random() * 10000)}`;
-    
-    const now = new Date();
-    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const settleTransaction = async (split: { cash: number; card: number; loyalty: number; credit: number }, customerId?: string) => {
+    const subtotal = cart.reduce((a, i) => a + i.price * i.qty, 0);
+    const vat = subtotal * 0.05;
+    const total = subtotal + vat;
 
-    const newTx: Transaction = {
-      id: Math.random().toString(),
-      receipt: receiptNum,
-      time: timeStr,
-      total: totalAmount,
-      method: split.cash > 0 && split.card > 0 ? 'Split' : split.cash > 0 ? 'Cash' : split.card > 0 ? 'Card' : 'Other',
-      items: totalItems,
-    };
+    const payments = [];
+    if (split.cash > 0) payments.push({ method: 'Cash', amount: split.cash });
+    if (split.card > 0) payments.push({ method: 'Card', amount: split.card });
+    if (split.loyalty > 0) payments.push({ method: 'Loyalty Points', amount: split.loyalty });
+    if (split.credit > 0) payments.push({ method: 'Store Credit', amount: split.credit });
 
-    if (offline === 'buffering') {
-      setBufferedCount((b) => b + 1);
-    } else {
-      setTransactions((t) => [newTx, ...t]);
-      setCashSales((prev) => prev + split.cash);
-      setCardSales((prev) => prev + split.card);
-    }
+    const items = cart.map(i => ({ productId: i.id, qty: i.qty, unitPrice: i.price }));
+
+    await apiClient.post('/pos/checkout', {
+      subtotal,
+      vat,
+      total,
+      payments,
+      items,
+      cashReceived: split.cash,
+      changeGiven: Math.max(0, split.cash - (total - (split.card + split.loyalty + split.credit))),
+      customerId: customerId || undefined
+    });
 
     setCart([]);
+    await fetchActiveShift();
+    await fetchTransactions();
   };
 
-  const recordCashDrop = (amount: number) => {
-    setCashDrops((prev) => prev + amount);
-  };
-
-  const adjustFloat = (amount: number) => {
-    setOpeningFloat(amount);
-  };
-
-  const closeShiftAndPrintZ = () => {
-    const shiftTotal = cashSales + cardSales;
-    const reportNum = `Z-${Math.floor(2400 + Math.random() * 100)}`;
-    const now = new Date();
-    const dateStr = now.toISOString().split('T')[0];
-
-    const newReport: Report = {
-      id: Math.random().toString(),
-      number: reportNum,
-      date: dateStr,
-      sales: shiftTotal,
-      cash: cashSales,
-      card: cardSales,
-      other: 0,
-      type: 'Z',
-    };
-
-    setReports((r) => [newReport, ...r]);
-    setCashSales(0);
-    setCardSales(0);
-    setCashDrops(0);
-  };
+  useEffect(() => {
+    if (user?.role === 'cashier') {
+      fetchActiveShift();
+      fetchCatalog();
+      fetchTills();
+      fetchTransactions();
+    }
+  }, [user]);
 
   const value = useMemo(() => ({
     offline,
@@ -199,6 +273,10 @@ export function CashierProvider({ children }: { children: ReactNode }) {
     expectedDrawer,
     transactions,
     reports,
+    activeShift,
+    tills,
+    catalog,
+    promotions,
     toggleOffline,
     addToCart,
     removeFromCart,
@@ -208,7 +286,27 @@ export function CashierProvider({ children }: { children: ReactNode }) {
     recordCashDrop,
     adjustFloat,
     closeShiftAndPrintZ,
-  }), [offline, bufferedCount, cart, openingFloat, cashSales, cardSales, cashDrops, expectedDrawer, transactions, reports]);
+    openShift,
+    fetchActiveShift,
+    fetchCatalog,
+    fetchTills,
+    fetchTransactions,
+  }), [
+    offline,
+    bufferedCount,
+    cart,
+    openingFloat,
+    cashSales,
+    cardSales,
+    cashDrops,
+    expectedDrawer,
+    transactions,
+    reports,
+    activeShift,
+    tills,
+    catalog,
+    promotions
+  ]);
 
   return <CashierContext.Provider value={value}>{children}</CashierContext.Provider>;
 }
