@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { staffUsers, tenants, branches } from "../db/schema.js";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
@@ -17,6 +17,38 @@ router.get("/tenants-branches", async (req, res) => {
     res.json({ tenants: allTenants, branches: allBranches });
   } catch (error) {
     console.error("Fetch tenants and branches error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Search cashiers by email query (for public autocomplete login)
+router.post("/search-cashiers", async (req, res) => {
+  const { email } = req.body;
+  if (!email || email.length < 2) {
+    return res.json([]);
+  }
+  try {
+    const searchStr = `%${email.toLowerCase()}%`;
+    const results = await db
+      .select({
+        id: staffUsers.id,
+        email: staffUsers.email,
+        name: staffUsers.name,
+        branchId: staffUsers.branchId,
+        tenantId: staffUsers.tenantId
+      })
+      .from(staffUsers)
+      .where(
+        and(
+          eq(staffUsers.role, "cashier"),
+          eq(staffUsers.isActive, true),
+          sql`LOWER(${staffUsers.email}) LIKE ${searchStr}`
+        )
+      )
+      .limit(10);
+    res.json(results);
+  } catch (error) {
+    console.error("Search cashiers error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

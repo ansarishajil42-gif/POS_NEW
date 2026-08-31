@@ -35,6 +35,24 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
   const [password, setPassword] = useState('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
+  // Cashier email autocomplete states
+  const [matchedCashierEmails, setMatchedCashierEmails] = useState<any[]>([]);
+
+  const handleEmailChange = async (text: string) => {
+    setEmail(text);
+    if (text.length >= 2) {
+      try {
+        const { apiClient } = require('../lib/apiClient');
+        const res = await apiClient.post('/auth/search-cashiers', { email: text }) as any[];
+        setMatchedCashierEmails(res || []);
+      } catch (err) {
+        console.error('Failed to search cashiers:', err);
+      }
+    } else {
+      setMatchedCashierEmails([]);
+    }
+  };
+
   // PIN login states
   const [tenantsList, setTenantsList] = useState<any[]>([]);
   const [branchesList, setBranchesList] = useState<any[]>([]);
@@ -221,11 +239,34 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
             <Input
               label="Email"
               value={email}
-              onChange={setEmail}
+              onChange={handleEmailChange}
               placeholder="you@company.com"
               type="email"
               prefix={<Mail size={16} color="#94a3b8" />}
             />
+            {matchedCashierEmails.length > 0 && (
+              <View style={[styles.dropdownMenu, { marginTop: -4, marginBottom: 8 }]}>
+                <ScrollView style={{ maxHeight: 150 }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                  {matchedCashierEmails.map((c) => (
+                    <TouchableOpacity
+                      key={c.id}
+                      onPress={() => {
+                        setEmail(c.email);
+                        setSelected('cashier'); // Automatically select Cashier role
+                        setMatchedCashierEmails([]);
+                        Keyboard.dismiss();
+                      }}
+                      style={styles.dropdownItem}
+                    >
+                      <View>
+                        <Text style={{ color: '#0f172a', fontWeight: 'bold', fontSize: 13 }}>{c.email}</Text>
+                        <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{c.name}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
 
             <Input
               label="Password"
