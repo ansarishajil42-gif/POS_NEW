@@ -4286,6 +4286,34 @@ export function PriceRequestsScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
+const formatAuditDetails = (details: any): string => {
+  if (!details) return 'N/A';
+  if (typeof details === 'string') return details;
+  
+  if (details.summary) return details.summary;
+  
+  try {
+    return Object.entries(details)
+      .map(([key, val]) => {
+        // Beautify camelCase keys (e.g. afterValue -> After Value)
+        const displayKey = key
+          .replace(/([A-Z])/g, ' $1')
+          .replace(/^./, (str) => str.toUpperCase());
+        
+        let displayVal = '';
+        if (val && typeof val === 'object') {
+          displayVal = JSON.stringify(val);
+        } else {
+          displayVal = String(val);
+        }
+        return `${displayKey}: ${displayVal}`;
+      })
+      .join('\n');
+  } catch (e) {
+    return String(details);
+  }
+};
+
 // ============================================================================
 // MODULE 4: Audit Logs Screen
 // ============================================================================
@@ -4337,9 +4365,9 @@ export function AuditLogsScreen({ onBack }: { onBack: () => void }) {
                     Entity: {log.entityType} ({log.entityId.slice(0, 8)}...)
                   </Text>
                   {log.details && (
-                    <View style={{ backgroundColor: '#f8fafc', padding: 6, borderRadius: 6, marginTop: 4 }}>
-                      <Text style={{ fontSize: 11, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', color: '#64748b' }}>
-                        {JSON.stringify(log.details)}
+                    <View style={{ backgroundColor: '#f8fafc', padding: 8, borderRadius: 8, marginTop: 4 }}>
+                      <Text style={{ fontSize: 11, color: '#475569', lineHeight: 16 }}>
+                        {formatAuditDetails(log.details)}
                       </Text>
                     </View>
                   )}

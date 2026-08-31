@@ -6,13 +6,9 @@ const db = drizzle(sqlClient);
 
 async function check() {
   try {
-    const tables = await db.execute(sql`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name`);
-    console.log('--- DATABASE TABLES ---');
-    console.log(tables.map(t => t.table_name));
-
-    const promotionsRows = await db.execute(sql`SELECT * FROM promotions`);
-    console.log('--- PROMOTIONS ROWS ---');
-    console.log(promotionsRows);
+    const audits = await db.execute(sql`SELECT action, details FROM audit_logs ORDER BY created_at DESC LIMIT 20`);
+    console.log('--- AUDIT LOG DETAILS ---');
+    console.log(JSON.stringify(audits, null, 2));
   } catch (error) {
     console.error(error);
   } finally {
