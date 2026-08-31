@@ -54,13 +54,7 @@ import {
   InventoryValuation,
   InventoryLedger,
 } from './src/components/roles/InventoryManager';
-import {
-  PurchasingHome,
-  PurchasingPOs,
-  NewPOScreen,
-  PurchasingGRNs,
-  PurchasingVendors,
-} from './src/components/roles/PurchasingOfficer';
+// Consolidated into HeadOffice components
 import { CashierTill, CashierShift, CashierHistory } from './src/components/roles/Cashier';
 import { VendorHome, VendorOrders, VendorInvoices } from './src/components/roles/Vendor';
 
@@ -97,10 +91,7 @@ const roleTabs: Record<string, Tab[]> = {
     { key: 'ledger', label: 'Ledger', icon: 'file' },
   ],
   'purchasing-officer': [
-    { key: 'home', label: 'Home', icon: 'home' },
-    { key: 'pos', label: 'POs', icon: 'clipboard' },
-    { key: 'grns', label: 'GRNs', icon: 'check' },
-    { key: 'vendors', label: 'Vendors', icon: 'truck' },
+    { key: 'purchasing', label: 'Purchasing', icon: 'cart' },
   ],
   cashier: [
     { key: 'till', label: 'Till', icon: 'cart' },
@@ -163,10 +154,7 @@ function RoleRouter({ role }: { role: string }) {
     }
     if (role === 'purchasing-officer') {
       switch (active) {
-        case 'home': return <PurchasingHome />;
-        case 'pos': return <PurchasingPOs onNew={() => push('new-po')} />;
-        case 'grns': return <PurchasingGRNs />;
-        case 'vendors': return <PurchasingVendors />;
+        case 'purchasing': return <HeadOfficePurchasing />;
       }
     }
     if (role === 'cashier') {
@@ -194,7 +182,7 @@ function RoleRouter({ role }: { role: string }) {
       case 'tenant': return <TenantDetail id={top.param!} onBack={back} />;
       case 'outlet': return <OutletDetail id={top.param!} onBack={back} />;
       case 'product': return <ProductDetail id={top.param!} onBack={back} />;
-      case 'new-po': return <NewPOScreen onBack={back} />;
+      case 'new-po': return null;
       case 'rbac': return <RbacScreen onBack={back} />;
       case 'vat': return <VatScreen onBack={back} />;
       case 'crm': return <CrmScreen onBack={back} onOpenCustomer={(id) => push('customer-crm', id)} />;

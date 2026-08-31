@@ -627,7 +627,8 @@ export function ProductDetail({ id, onBack }: { id: string; onBack: () => void }
 }
 
 export function HeadOfficePurchasing() {
-  const { branch } = useAuth();
+  const { branch, role } = useAuth();
+  const roleLabel = role === 'purchasing-officer' ? 'PO' : 'HO';
   const { purchases, vendors, products, branches, createPurchaseOrder, recordGRN, convertToInvoice, addVendor, updateVendor, deleteVendor } = useHeadOffice();
 
   const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
@@ -1047,7 +1048,7 @@ export function HeadOfficePurchasing() {
 
   return (
     <View style={styles.flex1}>
-      <AppHeader roleLabel="HO" branch={branch} />
+      <AppHeader roleLabel={roleLabel} branch={branch} />
       <ScreenBody>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <Text style={[styles.mainTitle, { marginBottom: 0 }]}>Purchasing</Text>
