@@ -1098,7 +1098,7 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
                 <Card key={po.id}>
                   <View style={styles.cardHeaderRow}>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.productName}>{po.id}</Text>
+                      <Text style={styles.productName}>{po.id.split('-')[0].toUpperCase()}</Text>
                       <Text style={styles.productMeta}>{po.vendor} · {po.date}</Text>
                       <Badge variant="neutral" style={{ marginTop: 4, alignSelf: 'flex-start' }}>{po.po?.status}</Badge>
                     </View>
@@ -1170,7 +1170,7 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
                     <Card style={{ marginBottom: 8 }}>
                       <View style={styles.cardHeaderRow}>
                         <View>
-                          <Text style={styles.productName}>{inv.invoice?.invoiceNumber || inv.id}</Text>
+                          <Text style={styles.productName}>{inv.invoice?.invoiceNumber || inv.id.split('-')[0].toUpperCase()}</Text>
                           <Text style={styles.productMeta}>{inv.vendor} · {inv.date}</Text>
                         </View>
                         <View style={styles.productPriceCol}>
