@@ -611,3 +611,49 @@ export const stockAdjustmentsRelations = relations(stockAdjustments, ({ one }) =
   product: one(products, { fields: [stockAdjustments.productId], references: [products.id] }),
   staff: one(staffUsers, { fields: [stockAdjustments.adjustedBy], references: [staffUsers.id] }),
 }));
+
+export const stockTransfers = pgTable("stock_transfers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id")
+    .notNull()
+    .references(() => tenants.id, { onDelete: "cascade" }),
+  productId: uuid("product_id")
+    .notNull()
+    .references(() => products.id, { onDelete: "cascade" }),
+  sourceBranchId: uuid("source_branch_id")
+    .notNull()
+    .references(() => branches.id, { onDelete: "cascade" }),
+  destinationBranchId: uuid("destination_branch_id")
+    .notNull()
+    .references(() => branches.id, { onDelete: "cascade" }),
+  quantity: integer("quantity").notNull(),
+  transferredBy: uuid("transferred_by").references(() => staffUsers.id),
+  status: text("status").notNull().default("Completed"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const inventoryLedger = pgTable("inventory_ledger", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id")
+    .notNull()
+    .references(() => tenants.id, { onDelete: "cascade" }),
+  branchId: uuid("branch_id")
+    .notNull()
+    .references(() => branches.id, { onDelete: "cascade" }),
+  productId: uuid("product_id")
+    .notNull()
+    .references(() => products.id),
+  batchId: uuid("batch_id").references(() => batches.id),
+  transactionType: text("transaction_type").notNull(), // 'Sale', 'GRN', 'Adjustment', 'Transfer'
+  previousQuantity: integer("previous_quantity").notNull(),
+  changedQuantity: integer("changed_quantity").notNull(),
+  newQuantity: integer("new_quantity").notNull(),
+  referenceId: text("reference_id"),
+  createdBy: uuid("created_by").references(() => staffUsers.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  tenantIdx: index("inventory_ledger_tenant_idx").on(table.tenantId),
+  branchIdx: index("inventory_ledger_branch_idx").on(table.branchId),
+  productIdx: index("inventory_ledger_product_idx").on(table.productId),
+  createdAtIdx: index("inventory_ledger_created_at_idx").on(table.createdAt),
+}));

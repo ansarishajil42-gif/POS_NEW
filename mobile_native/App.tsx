@@ -51,6 +51,8 @@ import {
   InventoryBatches,
   InventoryTransfers,
   InventoryAlerts,
+  InventoryValuation,
+  InventoryLedger,
 } from './src/components/roles/InventoryManager';
 import {
   PurchasingHome,
@@ -91,6 +93,8 @@ const roleTabs: Record<string, Tab[]> = {
     { key: 'batches', label: 'Batches', icon: 'layers' },
     { key: 'transfers', label: 'Transfers', icon: 'truck' },
     { key: 'alerts', label: 'Alerts', icon: 'bell' },
+    { key: 'valuation', label: 'Valuation', icon: 'chart' },
+    { key: 'ledger', label: 'Ledger', icon: 'file' },
   ],
   'purchasing-officer': [
     { key: 'home', label: 'Home', icon: 'home' },
@@ -153,6 +157,8 @@ function RoleRouter({ role }: { role: string }) {
         case 'batches': return <InventoryBatches />;
         case 'transfers': return <InventoryTransfers />;
         case 'alerts': return <InventoryAlerts />;
+        case 'valuation': return <InventoryValuation />;
+        case 'ledger': return <InventoryLedger />;
       }
     }
     if (role === 'purchasing-officer') {

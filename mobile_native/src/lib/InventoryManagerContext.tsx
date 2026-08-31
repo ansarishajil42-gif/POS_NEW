@@ -1,112 +1,225 @@
-import React, { createContext, useContext, useState, useMemo, type ReactNode } from 'react';
+import React, { createContext, useContext, useState, useMemo, useEffect, type ReactNode } from 'react';
+import { apiClient } from './apiClient';
 
 export interface InventoryProduct {
   id: string;
+  productId: string;
   name: string;
   sku: string;
   category: string;
   stock: number;
   reorder: number;
   branch: string;
+  branchId: string;
   unit: string;
+  costPrice?: string;
 }
 
 export interface StockTransfer {
   id: string;
+  transferId: string;
   item: string;
   qty: number;
   from: string;
   to: string;
   date: string;
-  status: 'In Transit' | 'Received' | 'Pending';
+  status: string;
 }
 
 export interface FEFOBatch {
   id: string;
+  productId: string;
+  batchNumber: string;
   product: string;
   qty: number;
   expiry: string;
   status: 'urgent' | 'near' | 'fresh';
-  clearancePrice?: number;
+  branchId?: string;
+  branchName?: string;
+}
+
+export interface LedgerRecord {
+  id: string;
+  transactionType: string;
+  previousQuantity: number;
+  changedQuantity: number;
+  newQuantity: number;
+  createdAt: string;
+  productName: string;
+  branchName: string;
+  batchNumber?: string;
+}
+
+export interface BranchInfo {
+  id: string;
+  name: string;
+  tenantId: string;
+}
+
+export interface VendorInfo {
+  id: string;
+  name: string;
 }
 
 interface InventoryManagerContextProps {
   products: InventoryProduct[];
   transfers: StockTransfer[];
   batches: FEFOBatch[];
-  startStockCount: () => void;
-  addTransfer: (item: string, qty: number, from: string, to: string) => void;
-  updateClearancePrice: (batchId: string, price: number) => void;
-  raisePoDraft: (productName: string) => void;
+  ledger: LedgerRecord[];
+  branches: BranchInfo[];
+  allTenantBranches: BranchInfo[];
+  vendors: VendorInfo[];
+  loading: boolean;
+  fetchData: () => Promise<void>;
+  addTransfer: (productId: string, sourceBranchId: string, targetBranchId: string, quantity: number) => Promise<void>;
+  updateClearancePrice: (productId: string, discountPct: number) => Promise<void>;
+  raisePoDraft: (vendorId: string, branchId: string, productId: string, qty: number) => Promise<void>;
+  adjustStock: (productId: string, branchId: string, batchId: string | null, quantityChange: number, reason: string) => Promise<void>;
 }
 
 const InventoryManagerContext = createContext<InventoryManagerContextProps | null>(null);
 
-const initialProducts: InventoryProduct[] = [
-  { id: '1', name: 'Almarai Fresh Milk Full Fat 2L', sku: '100244', category: 'Dairy', stock: 12, reorder: 50, branch: 'Al Barsha', unit: 'pcs' },
-  { id: '2', name: 'Oman Chips 50g x 24', sku: '100246', category: 'Dry Goods', stock: 140, reorder: 50, branch: 'Al Barsha', unit: 'pcs' },
-  { id: '3', name: 'Lipton Yellow Label 100s', sku: '100248', category: 'Beverages', stock: 8, reorder: 10, branch: 'Deira', unit: 'pcs' },
-  { id: '4', name: 'Almarai Fresh Laban 1L', sku: '100250', category: 'Dairy', stock: 450, reorder: 100, branch: 'Al Barsha', unit: 'pcs' },
-  { id: '5', name: 'Nutella Hazelnut Spread 400g', sku: '100252', category: 'Pantry', stock: 110, reorder: 50, branch: 'Corniche', unit: 'pcs' },
-  { id: '6', name: 'Local Bananas Class A (Kg)', sku: '100254', category: 'Produce', stock: 50, reorder: 60, branch: 'Al Barsha', unit: 'kg' },
-];
-
-const initialTransfers: StockTransfer[] = [
-  { id: 'TRN-8802', item: 'Almarai Fresh Milk Full Fat 2L', qty: 240, from: 'Central Warehouse', to: 'Al Barsha', date: '2026-08-18', status: 'In Transit' },
-  { id: 'TRN-8801', item: 'Oman Chips 50g x 24', qty: 2, from: 'Deira', to: 'Corniche', date: '2026-08-17', status: 'Received' },
-];
-
-const initialBatches: FEFOBatch[] = [
-  { id: 'BAT-9041', product: 'Almarai Fresh Milk Full Fat 2L', qty: 45, expiry: '2026-08-25', status: 'urgent' },
-  { id: 'BAT-9042', product: 'Almarai Fresh Laban 1L', qty: 90, expiry: '2026-09-02', status: 'near' },
-  { id: 'BAT-9043', product: 'Oman Chips 50g x 24', qty: 320, expiry: '2026-12-15', status: 'fresh' },
-];
-
 export function InventoryManagerProvider({ children }: { children: ReactNode }) {
-  const [products, setProducts] = useState<InventoryProduct[]>(initialProducts);
-  const [transfers, setTransfers] = useState<StockTransfer[]>(initialTransfers);
-  const [batches, setBatches] = useState<FEFOBatch[]>(initialBatches);
+  const [products, setProducts] = useState<InventoryProduct[]>([]);
+  const [transfers, setTransfers] = useState<StockTransfer[]>([]);
+  const [batches, setBatches] = useState<FEFOBatch[]>([]);
+  const [ledger, setLedger] = useState<LedgerRecord[]>([]);
+  const [branches, setBranches] = useState<BranchInfo[]>([]);
+  const [allTenantBranches, setAllTenantBranches] = useState<BranchInfo[]>([]);
+  const [vendors, setVendors] = useState<VendorInfo[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const startStockCount = () => {
-    // Simply return success log triggers
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      // 1. Fetch main dashboard data
+      const dataRes = await apiClient.get('/inventory/data') as any;
+      
+      const mappedProducts = (dataRes.stockLevels || []).map((s: any) => ({
+        id: s.id,
+        productId: s.productId,
+        name: s.productName,
+        sku: s.sku || s.barcode || '',
+        category: s.category || 'General',
+        stock: s.stock,
+        reorder: s.reorderLevel,
+        branch: s.branchName,
+        branchId: s.branchId,
+        unit: s.unit || 'pcs',
+        costPrice: s.costPrice,
+      }));
+
+      const mappedBatches = (dataRes.batches || []).map((b: any) => {
+        const now = new Date();
+        const thirtyDaysFromNow = new Date();
+        thirtyDaysFromNow.setDate(now.getDate() + 30);
+        const expDate = b.expiryDate ? new Date(b.expiryDate) : null;
+        let status: 'urgent' | 'near' | 'fresh' = 'fresh';
+        if (expDate) {
+          if (expDate <= now) status = 'urgent';
+          else if (expDate <= thirtyDaysFromNow) status = 'near';
+        }
+        return {
+          id: b.id,
+          productId: b.productId,
+          batchNumber: b.batchNumber,
+          product: b.productName,
+          qty: b.stock,
+          expiry: b.expiryDate ? new Date(b.expiryDate).toLocaleDateString() : 'N/A',
+          status,
+          branchId: b.branchId,
+          branchName: b.branchName,
+        };
+      });
+
+      const mappedTransfers = (dataRes.transfers || []).map((t: any) => ({
+        id: t.id.slice(0, 8).toUpperCase(),
+        transferId: t.id,
+        item: t.productName,
+        qty: t.quantity,
+        from: t.sourceBranchName,
+        to: t.destinationBranchName,
+        date: new Date(t.createdAt).toLocaleDateString(),
+        status: t.status,
+      }));
+
+      setProducts(mappedProducts);
+      setBatches(mappedBatches);
+      setTransfers(mappedTransfers);
+      setBranches(dataRes.branches || []);
+      setAllTenantBranches(dataRes.allTenantBranches || []);
+      setVendors(dataRes.vendors || []);
+
+      // 2. Fetch ledger history
+      const ledgerRes = await apiClient.get('/inventory/ledger') as any;
+      setLedger(ledgerRes.ledger || []);
+    } catch (e) {
+      console.warn('fetchData (InventoryManager): Endpoint offline or returned error', e);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const addTransfer = (item: string, qty: number, from: string, to: string) => {
-    const newTrn: StockTransfer = {
-      id: `TRN-${Math.floor(8000 + Math.random() * 2000)}`,
-      item,
+  const addTransfer = async (productId: string, sourceBranchId: string, targetBranchId: string, quantity: number) => {
+    await apiClient.post('/inventory/transfer', {
+      productId,
+      sourceBranchId,
+      targetBranchId,
+      quantity,
+    });
+    await fetchData();
+  };
+
+  const updateClearancePrice = async (productId: string, discountPct: number) => {
+    await apiClient.post('/inventory/clearance', {
+      productId,
+      discountPct,
+    });
+    await fetchData();
+  };
+
+  const raisePoDraft = async (vendorId: string, branchId: string, productId: string, qty: number) => {
+    await apiClient.post('/inventory/draft-po', {
+      vendorId,
+      branchId,
+      productId,
       qty,
-      from,
-      to,
-      date: new Date().toISOString().split('T')[0],
-      status: 'Pending',
-    };
-    setTransfers((prev) => [newTrn, ...prev]);
+    });
+    await fetchData();
   };
 
-  const updateClearancePrice = (batchId: string, price: number) => {
-    setBatches((prev) =>
-      prev.map((b) => (b.id === batchId ? { ...b, clearancePrice: price } : b))
-    );
+  const adjustStock = async (productId: string, branchId: string, batchId: string | null, quantityChange: number, reason: string) => {
+    await apiClient.post('/inventory/adjust', {
+      productId,
+      branchId,
+      batchId,
+      quantityChange,
+      reason,
+    });
+    await fetchData();
   };
 
-  const raisePoDraft = (productName: string) => {
-    setProducts((prev) =>
-      prev.map((p) => (p.name === productName ? { ...p, stock: p.stock + 50 } : p))
-    );
-  };
+  useEffect(() => {
+    fetchData();
+  }, []);
 
   const contextValue = useMemo(
     () => ({
       products,
       transfers,
       batches,
-      startStockCount,
+      ledger,
+      branches,
+      allTenantBranches,
+      vendors,
+      loading,
+      fetchData,
       addTransfer,
       updateClearancePrice,
       raisePoDraft,
+      adjustStock,
     }),
-    [products, transfers, batches]
+    [products, transfers, batches, ledger, branches, allTenantBranches, vendors, loading]
   );
 
   return <InventoryManagerContext.Provider value={contextValue}>{children}</InventoryManagerContext.Provider>;
