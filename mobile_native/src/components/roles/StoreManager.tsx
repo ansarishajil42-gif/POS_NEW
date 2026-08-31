@@ -6,6 +6,7 @@ import { Badge } from '../ui/Badge';
 import { Button, Sheet, Field } from '../ui/Primitives';
 import { useAuth } from '../../lib/auth';
 import { useStoreManager, PricingRequest } from '../../lib/StoreManagerContext';
+import { Toast, type ToastType } from '../ui/Toast';
 import {
   DollarSign,
   Users,
@@ -16,30 +17,43 @@ import {
   Download,
   Search,
   Plus,
-  Clock,
   Trash2,
-  Edit,
-  Key,
-  ChevronDown
+  Edit
 } from 'lucide-react-native';
 
 export function StoreManagerHome() {
   const { branch: authBranch } = useAuth();
-  const { orders, staff, tills, stock, fetchData, loading } = useStoreManager();
+  const { orders, shifts, tills, stock, fetchData, loading } = useStoreManager();
+  
+  // Toast state
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
 
   useEffect(() => {
     fetchData();
   }, []);
 
   const handleExportZReport = () => {
-    Alert.alert('Export Successful', 'Latest Daily Z-Reports compiled and exported to files.');
+    showToast('Daily Z-Reports compiled and exported successfully', 'success');
   };
 
   const todayStr = new Date().toISOString().split('T')[0];
-  const todayOrders = orders.filter((o) => o.createdAt?.startsWith(todayStr));
-  const totalSalesToday = todayOrders.reduce((sum, o) => sum + parseFloat(o.total || 0), 0);
-  const activeTillsCount = tills.filter((t) => t.status === 'Open').length;
-  const activeStaffCount = staff.filter((s) => s.status === 'Open').length;
+  
+  const todayOrders = useMemo(() => {
+    return orders.filter((o) => o.createdAt?.startsWith(todayStr));
+  }, [orders, todayStr]);
+
+  const totalSalesToday = useMemo(() => {
+    return todayOrders.reduce((sum, o) => sum + parseFloat(o.total || 0), 0);
+  }, [todayOrders]);
+
+  const activeTillsCount = useMemo(() => {
+    return tills.filter((t) => t.status === 'Open').length;
+  }, [tills]);
+
+  const activeStaffCount = useMemo(() => {
+    return shifts.filter((s) => s.status === 'Open').length;
+  }, [shifts]);
 
   return (
     <View style={styles.flex1}>
@@ -99,11 +113,12 @@ export function StoreManagerHome() {
               Total Products: <Text style={{ fontWeight: 'bold', color: '#0f172a' }}>{stock.length}</Text>
             </Text>
             <Text style={{ fontSize: 13, color: '#475569' }}>
-              Pending Overrides: <Text style={{ fontWeight: 'bold', color: '#0f172a' }}>{orders.length}</Text>
+              Branch Tills Total: <Text style={{ fontWeight: 'bold', color: '#0f172a' }}>{tills.length}</Text>
             </Text>
           </View>
         </Card>
       </ScreenBody>
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
@@ -111,6 +126,7 @@ export function StoreManagerHome() {
 export function StoreManagerStaff() {
   const { branch } = useAuth();
   const {
+    shifts,
     staff,
     tills,
     addStaff,
@@ -121,6 +137,10 @@ export function StoreManagerStaff() {
     closeShift,
     fetchData
   } = useStoreManager();
+
+  // Toast state
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
 
   useEffect(() => {
     fetchData();
@@ -140,6 +160,13 @@ export function StoreManagerStaff() {
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('17:00');
   const [notes, setNotes] = useState('');
+
+  // Dropdown search queries
+  const [cashierSearch, setCashierSearch] = useState('');
+  const [tillSearch, setTillSearch] = useState('');
+  const [dropShiftSearch, setDropShiftSearch] = useState('');
+  const [closeShiftSearch, setCloseShiftSearch] = useState('');
+  const [pinCashierSearch, setPinCashierSearch] = useState('');
 
   // Till form states
   const [tillName, setTillName] = useState('');
@@ -161,91 +188,128 @@ export function StoreManagerStaff() {
   const [actualCash, setActualCash] = useState('');
 
   const cashiersList = useMemo(() => {
-    // Get unique cashiers who are active
-    const users = staff.map(s => ({ id: s.cashierId, name: s.cashierName || s.cashierEmail }));
-    const uniqueIds = Array.from(new Set(users.map(u => u.id))).filter(Boolean);
-    return uniqueIds.map(id => users.find(u => u.id === id));
+    return staff.filter((s) => s.role === 'cashier');
   }, [staff]);
 
+  const filteredCashiers = useMemo(() => {
+    return cashiersList.filter((c) => {
+      const name = c.name || c.email || '';
+      return name.toLowerCase().includes(cashierSearch.toLowerCase());
+    });
+  }, [cashiersList, cashierSearch]);
+
+  const filteredTills = useMemo(() => {
+    return tills.filter((t) => {
+      const name = t.name || '';
+      return name.toLowerCase().includes(tillSearch.toLowerCase());
+    });
+  }, [tills, tillSearch]);
+
   const activeShifts = useMemo(() => {
-    return staff.filter(s => s.status === 'Open');
-  }, [staff]);
+    return shifts.filter(s => s.status === 'Open');
+  }, [shifts]);
+
+  const filteredDropShifts = useMemo(() => {
+    return activeShifts.filter((s) => {
+      const name = s.cashierName || s.cashierEmail || '';
+      return name.toLowerCase().includes(dropShiftSearch.toLowerCase());
+    });
+  }, [activeShifts, dropShiftSearch]);
+
+  const filteredCloseShifts = useMemo(() => {
+    return activeShifts.filter((s) => {
+      const name = s.cashierName || s.cashierEmail || '';
+      return name.toLowerCase().includes(closeShiftSearch.toLowerCase());
+    });
+  }, [activeShifts, closeShiftSearch]);
+
+  const filteredPinCashiers = useMemo(() => {
+    return cashiersList.filter((c) => {
+      const name = c.name || c.email || '';
+      return name.toLowerCase().includes(pinCashierSearch.toLowerCase());
+    });
+  }, [cashiersList, pinCashierSearch]);
 
   const handleAddRoster = async () => {
     if (!cashierId || !tillId || !shiftDate || !startTime || !endTime) {
-      Alert.alert('Error', 'Please fill all required fields');
+      showToast('Please fill all required fields', 'error');
       return;
     }
     try {
       await addStaff(cashierId, tillId, shiftDate, startTime, endTime, notes);
-      Alert.alert('Success', 'Staff scheduled successfully.');
+      showToast('Staff scheduled successfully.', 'success');
       setAddStaffOpen(false);
       setCashierId('');
       setTillId('');
       setNotes('');
+      setCashierSearch('');
+      setTillSearch('');
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to schedule shift');
+      showToast(e.message || 'Failed to schedule shift', 'error');
     }
   };
 
   const handleCreateTill = async () => {
     if (!tillName.trim()) {
-      Alert.alert('Error', 'Please enter a till name/number');
+      showToast('Please enter a till name/number', 'error');
       return;
     }
     try {
       await createTill(tillName, tillDesc, parseFloat(tillFloat || '0'));
-      Alert.alert('Success', `Till ${tillName} created.`);
+      showToast(`Till ${tillName} created successfully.`, 'success');
       setAddTillOpen(false);
       setTillName('');
       setTillDesc('');
       setTillFloat('200.00');
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to create till');
+      showToast(e.message || 'Failed to create till', 'error');
     }
   };
 
   const handleResetPin = async () => {
     if (!pinCashierId || !newPin || !confirmPin) {
-      Alert.alert('Error', 'Please fill all fields');
+      showToast('Please fill all fields', 'error');
       return;
     }
     try {
       await resetCashierPin(pinCashierId, newPin, confirmPin);
-      Alert.alert('Success', 'Cashier credentials updated.');
+      showToast('Cashier security credentials updated.', 'success');
       setResetPinOpen(false);
       setNewPin('');
       setConfirmPin('');
       setPinCashierId('');
+      setPinCashierSearch('');
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to reset PIN');
+      showToast(e.message || 'Failed to reset PIN', 'error');
     }
   };
 
   const handleCashDrop = async () => {
     if (!dropShiftId || !dropAmount) {
-      Alert.alert('Error', 'Please fill drop shift and amount');
+      showToast('Please select cashier shift and enter amount', 'error');
       return;
     }
     try {
       await recordCashDrop(dropShiftId, parseFloat(dropAmount), dropNote);
-      Alert.alert('Success', 'Cash drop registered.');
+      showToast('Cash drop registered successfully.', 'success');
       setCashDropOpen(false);
       setDropShiftId('');
       setDropAmount('');
       setDropNote('');
+      setDropShiftSearch('');
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to record drop');
+      showToast(e.message || 'Failed to record drop', 'error');
     }
   };
 
   const handleCloseShift = async () => {
     if (!closeShiftId || !actualCash) {
-      Alert.alert('Error', 'Please fill close shift and actual cash count');
+      showToast('Please select shift and enter cash count', 'error');
       return;
     }
     try {
       const receipt = await closeShift(closeShiftId, parseFloat(actualCash));
+      // Z-Report receipt is an exception (safety audit log receipt) and will remain in Alert.alert to avoid disappearing
       Alert.alert(
         'Shift Closed Successfully',
         `Receipt details:\nOpening Float: AED ${receipt.openingFloat}\nExpected Cash: AED ${receipt.expectedCash}\nActual Cash: AED ${receipt.actualCash}\nVariance: AED ${receipt.variance}`,
@@ -254,15 +318,23 @@ export function StoreManagerStaff() {
       setCloseShiftOpen(false);
       setCloseShiftId('');
       setActualCash('');
+      setCloseShiftSearch('');
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to close shift');
+      showToast(e.message || 'Failed to close shift', 'error');
     }
   };
 
   const handleCancelRoster = (id: string, name: string) => {
     Alert.alert('Delete Shift', `Are you sure you want to cancel the shift for ${name || 'Cashier'}?`, [
       { text: 'No', style: 'cancel' },
-      { text: 'Yes', style: 'destructive', onPress: () => deleteRosterShift(id) }
+      { text: 'Yes', style: 'destructive', onPress: async () => {
+        try {
+          await deleteRosterShift(id);
+          showToast('Shift cancelled successfully.', 'success');
+        } catch (e: any) {
+          showToast('Failed to cancel shift', 'error');
+        }
+      }}
     ]);
   };
 
@@ -284,7 +356,7 @@ export function StoreManagerStaff() {
         <Text style={styles.mainTitle}>Staff Roster & Shifts</Text>
         <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
           <View style={styles.listContainer}>
-            {staff.map((s) => (
+            {shifts.map((s) => (
               <Card key={s.id}>
                 <View style={styles.cardHeaderRow}>
                   <View style={styles.staffItemLeft}>
@@ -314,6 +386,9 @@ export function StoreManagerStaff() {
                 </View>
               </Card>
             ))}
+            {shifts.length === 0 && (
+              <Text style={styles.noDataText}>No scheduled or active shifts rostered.</Text>
+            )}
           </View>
         </ScrollView>
       </ScreenBody>
@@ -322,27 +397,44 @@ export function StoreManagerStaff() {
       <Sheet open={addStaffOpen} onClose={() => setAddStaffOpen(false)} title="Schedule Cashier Shift">
         <View style={styles.modalForm}>
           <Field label="Select Cashier">
+            <TextInput
+              placeholder="Search cashier name/email..."
+              placeholderTextColor="#94a3b8"
+              value={cashierSearch}
+              onChangeText={setCashierSearch}
+              style={styles.dropdownSearchInput}
+            />
             <View style={styles.productPickerScrollContainer}>
               <ScrollView style={styles.productPickerScroll} nestedScrollEnabled>
-                {cashiersList.map((c) => c && (
+                {filteredCashiers.map((c) => c && (
                   <TouchableOpacity
                     key={c.id}
                     style={[styles.pickerItem, cashierId === c.id && styles.pickerItemActive]}
                     onPress={() => setCashierId(c.id)}
                   >
                     <Text style={[styles.pickerItemText, cashierId === c.id && styles.pickerItemTextActive]}>
-                      {c.name}
+                      {c.name || c.email} ({c.email})
                     </Text>
                   </TouchableOpacity>
                 ))}
+                {filteredCashiers.length === 0 && (
+                  <Text style={styles.noDataText}>No matching cashiers found.</Text>
+                )}
               </ScrollView>
             </View>
           </Field>
 
           <Field label="Select Till">
+            <TextInput
+              placeholder="Search tills..."
+              placeholderTextColor="#94a3b8"
+              value={tillSearch}
+              onChangeText={setTillSearch}
+              style={styles.dropdownSearchInput}
+            />
             <View style={styles.productPickerScrollContainer}>
               <ScrollView style={styles.productPickerScroll} nestedScrollEnabled>
-                {tills.map((t) => (
+                {filteredTills.map((t) => (
                   <TouchableOpacity
                     key={t.id}
                     style={[styles.pickerItem, tillId === t.id && styles.pickerItemActive]}
@@ -353,6 +445,9 @@ export function StoreManagerStaff() {
                     </Text>
                   </TouchableOpacity>
                 ))}
+                {filteredTills.length === 0 && (
+                  <Text style={styles.noDataText}>No registers found.</Text>
+                )}
               </ScrollView>
             </View>
           </Field>
@@ -402,16 +497,23 @@ export function StoreManagerStaff() {
       <Sheet open={resetPinOpen} onClose={() => setResetPinOpen(false)} title="Reset Cashier Credentials">
         <View style={styles.modalForm}>
           <Field label="Select Cashier">
+            <TextInput
+              placeholder="Search cashier name/email..."
+              placeholderTextColor="#94a3b8"
+              value={pinCashierSearch}
+              onChangeText={setPinCashierSearch}
+              style={styles.dropdownSearchInput}
+            />
             <View style={styles.productPickerScrollContainer}>
               <ScrollView style={styles.productPickerScroll} nestedScrollEnabled>
-                {cashiersList.map((c) => c && (
+                {filteredPinCashiers.map((c) => c && (
                   <TouchableOpacity
                     key={c.id}
                     style={[styles.pickerItem, pinCashierId === c.id && styles.pickerItemActive]}
                     onPress={() => setPinCashierId(c.id)}
                   >
                     <Text style={[styles.pickerItemText, pinCashierId === c.id && styles.pickerItemTextActive]}>
-                      {c.name}
+                      {c.name || c.email} ({c.email})
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -432,9 +534,16 @@ export function StoreManagerStaff() {
       <Sheet open={cashDropOpen} onClose={() => setCashDropOpen(false)} title="Record Cash Drop">
         <View style={styles.modalForm}>
           <Field label="Select Active Shift">
+            <TextInput
+              placeholder="Search open cashier shift..."
+              placeholderTextColor="#94a3b8"
+              value={dropShiftSearch}
+              onChangeText={setDropShiftSearch}
+              style={styles.dropdownSearchInput}
+            />
             <View style={styles.productPickerScrollContainer}>
               <ScrollView style={styles.productPickerScroll} nestedScrollEnabled>
-                {activeShifts.map((s) => (
+                {filteredDropShifts.map((s) => (
                   <TouchableOpacity
                     key={s.id}
                     style={[styles.pickerItem, dropShiftId === s.id && styles.pickerItemActive]}
@@ -462,9 +571,16 @@ export function StoreManagerStaff() {
       <Sheet open={closeShiftOpen} onClose={() => setCloseShiftOpen(false)} title="Close Shift & Evaluate variance">
         <View style={styles.modalForm}>
           <Field label="Select Cashier Shift to Close">
+            <TextInput
+              placeholder="Search open cashier shift..."
+              placeholderTextColor="#94a3b8"
+              value={closeShiftSearch}
+              onChangeText={setCloseShiftSearch}
+              style={styles.dropdownSearchInput}
+            />
             <View style={styles.productPickerScrollContainer}>
               <ScrollView style={styles.productPickerScroll} nestedScrollEnabled>
-                {activeShifts.map((s) => (
+                {filteredCloseShifts.map((s) => (
                   <TouchableOpacity
                     key={s.id}
                     style={[styles.pickerItem, closeShiftId === s.id && styles.pickerItemActive]}
@@ -484,6 +600,8 @@ export function StoreManagerStaff() {
           <Button variant="primary" full onClick={handleCloseShift}>Evaluate & Close Shift</Button>
         </View>
       </Sheet>
+
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
@@ -491,6 +609,10 @@ export function StoreManagerStaff() {
 export function StoreManagerStock() {
   const { branch } = useAuth();
   const { stock, adjustHistory, adjustStock, fetchData } = useStoreManager();
+
+  // Toast state
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
 
   useEffect(() => {
     fetchData();
@@ -525,18 +647,18 @@ export function StoreManagerStock() {
 
   const handleAdjustStock = async () => {
     if (!selectedProduct || !quantityChange) {
-      Alert.alert('Error', 'Please fill quantity change');
+      showToast('Please enter quantity change', 'error');
       return;
     }
     try {
       await adjustStock(selectedProduct.productId, parseInt(quantityChange), reason, note);
-      Alert.alert('Success', 'Stock adjusted successfully.');
+      showToast('Stock adjusted successfully.', 'success');
       setAdjustOpen(false);
       setQuantityChange('');
       setNote('');
       setSelectedProduct(null);
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to adjust stock');
+      showToast(e.message || 'Failed to adjust stock', 'error');
     }
   };
 
@@ -664,6 +786,8 @@ export function StoreManagerStock() {
           )}
         </View>
       </Sheet>
+
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
@@ -671,6 +795,10 @@ export function StoreManagerStock() {
 export function StoreManagerPricing() {
   const { branch } = useAuth();
   const { pricingRequests, stock, addPricingRequest, editPricingRequest, deletePricingRequest, fetchData } = useStoreManager();
+
+  // Toast state
+  const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
 
   useEffect(() => {
     fetchData();
@@ -686,25 +814,34 @@ export function StoreManagerPricing() {
   const [reqPrice, setReqPrice] = useState('');
   const [stdPrice, setStdPrice] = useState('0');
   const [reason, setReason] = useState('');
+  const [productSearch, setProductSearch] = useState('');
 
   // Form states - Edit Override
   const [editPriceVal, setEditPriceVal] = useState('');
 
+  const filteredProductsList = useMemo(() => {
+    return stock.filter((p) => {
+      const name = p.productName || '';
+      return name.toLowerCase().includes(productSearch.toLowerCase());
+    });
+  }, [stock, productSearch]);
+
   const handleRequestOverride = async () => {
     if (!selectedProductId || !reqPrice || !reason) {
-      Alert.alert('Error', 'Please fill all required fields');
+      showToast('Please fill all required fields', 'error');
       return;
     }
     try {
       await addPricingRequest(selectedProductId, parseFloat(reqPrice), reason);
-      Alert.alert('Requested', 'Price override request submitted successfully.');
+      showToast('Price override request submitted successfully.', 'success');
       setSelectedProductId('');
       setReqPrice('');
       setStdPrice('0');
       setReason('');
+      setProductSearch('');
       setRequestOpen(false);
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to submit override request');
+      showToast(e.message || 'Failed to submit override request', 'error');
     }
   };
 
@@ -712,17 +849,17 @@ export function StoreManagerPricing() {
     if (!activeRequest) return;
     const requestedVal = parseFloat(editPriceVal);
     if (isNaN(requestedVal) || requestedVal <= 0) {
-      Alert.alert('Error', 'Please enter a valid price');
+      showToast('Please enter a valid price', 'error');
       return;
     }
     try {
       await editPricingRequest(activeRequest.id, requestedVal);
-      Alert.alert('Updated', 'Price override request updated.');
+      showToast('Price override request updated.', 'success');
       setEditPriceVal('');
       setActiveRequest(null);
       setEditOpen(false);
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to update request');
+      showToast(e.message || 'Failed to update request', 'error');
     }
   };
 
@@ -738,9 +875,9 @@ export function StoreManagerPricing() {
           onPress: async () => {
             try {
               await deletePricingRequest(pr.id);
-              Alert.alert('Cancelled', 'Override request removed.');
+              showToast('Override request removed.', 'success');
             } catch (e: any) {
-              Alert.alert('Error', e.message || 'Failed to cancel request');
+              showToast(e.message || 'Failed to cancel request', 'error');
             }
           },
         },
@@ -818,9 +955,16 @@ export function StoreManagerPricing() {
       <Sheet open={requestOpen} onClose={() => setRequestOpen(false)} title="Request Price Override">
         <View style={styles.modalForm}>
           <Field label="Select Product">
+            <TextInput
+              placeholder="Search product..."
+              placeholderTextColor="#94a3b8"
+              value={productSearch}
+              onChangeText={setProductSearch}
+              style={styles.dropdownSearchInput}
+            />
             <View style={styles.productPickerScrollContainer}>
               <ScrollView style={styles.productPickerScroll} nestedScrollEnabled>
-                {stock.map((p) => (
+                {filteredProductsList.map((p) => (
                   <TouchableOpacity
                     key={p.id}
                     style={[styles.pickerItem, selectedProductId === p.productId && styles.pickerItemActive]}
@@ -834,6 +978,9 @@ export function StoreManagerPricing() {
                     </Text>
                   </TouchableOpacity>
                 ))}
+                {filteredProductsList.length === 0 && (
+                  <Text style={styles.noDataText}>No products found.</Text>
+                )}
               </ScrollView>
             </View>
           </Field>
@@ -893,21 +1040,23 @@ export function StoreManagerPricing() {
           )}
         </View>
       </Sheet>
+
+      {toast && <Toast message={toast.message} type={toast.type} onHide={() => setToast(null)} />}
     </View>
   );
 }
 
 export function StoreManagerReports() {
   const { branch } = useAuth();
-  const { staff, fetchData } = useStoreManager();
+  const { shifts, fetchData } = useStoreManager();
 
   useEffect(() => {
     fetchData();
   }, []);
 
   const closedShifts = useMemo(() => {
-    return staff.filter(s => s.status === 'Closed');
-  }, [staff]);
+    return shifts.filter(s => s.status === 'Closed');
+  }, [shifts]);
 
   return (
     <View style={styles.flex1}>
@@ -1231,5 +1380,16 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     textAlign: 'center',
     paddingVertical: 24,
+  },
+  dropdownSearchInput: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 12,
+    color: '#0f172a',
+    marginBottom: 4,
   },
 });

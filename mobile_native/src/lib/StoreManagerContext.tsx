@@ -14,7 +14,8 @@ interface StoreManagerContextProps {
   loading: boolean;
   branch: any;
   stock: any[];
-  staff: any[]; // Shift list
+  shifts: any[]; // Shift list (shifts table)
+  staff: any[]; // Staff users list (staff_users table)
   orders: any[];
   pricingRequests: PricingRequest[];
   tills: any[];
@@ -38,6 +39,7 @@ export function StoreManagerProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [branch, setBranch] = useState<any>(null);
   const [stock, setStock] = useState<any[]>([]);
+  const [shifts, setShifts] = useState<any[]>([]);
   const [staff, setStaff] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [pricingRequests, setPricingRequests] = useState<PricingRequest[]>([]);
@@ -51,7 +53,8 @@ export function StoreManagerProvider({ children }: { children: ReactNode }) {
       if (res) {
         setBranch(res.branch || null);
         setStock(res.stock || []);
-        setStaff(res.shifts || []);
+        setShifts(res.shifts || []);
+        setStaff(res.staff || []);
         setOrders(res.orders || []);
         setTills(res.tills || []);
         
@@ -172,6 +175,7 @@ export function StoreManagerProvider({ children }: { children: ReactNode }) {
       loading,
       branch,
       stock,
+      shifts,
       staff,
       orders,
       pricingRequests,
@@ -189,7 +193,7 @@ export function StoreManagerProvider({ children }: { children: ReactNode }) {
       closeShift,
       adjustStock,
     }),
-    [loading, branch, stock, staff, orders, pricingRequests, tills, adjustHistory]
+    [loading, branch, stock, shifts, staff, orders, pricingRequests, tills, adjustHistory]
   );
 
   return <StoreManagerContext.Provider value={contextValue}>{children}</StoreManagerContext.Provider>;

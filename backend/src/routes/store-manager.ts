@@ -535,7 +535,8 @@ router.get("/stock/adjust/history", async (req, res) => {
       .innerJoin(products, eq(stockAdjustments.productId, products.id))
       .leftJoin(staffUsers, eq(stockAdjustments.adjustedBy, staffUsers.id))
       .where(eq(stockAdjustments.branchId, branchId))
-      .orderBy(desc(stockAdjustments.createdAt));
+      .orderBy(desc(stockAdjustments.createdAt))
+      .limit(50);
 
     res.json(history);
   } catch (error) {
