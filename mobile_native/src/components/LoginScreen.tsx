@@ -56,13 +56,46 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
   // PIN login states
   const [tenantsList, setTenantsList] = useState<any[]>([]);
   const [branchesList, setBranchesList] = useState<any[]>([]);
+  const [cashiersList, setCashiersList] = useState<any[]>([]);
+  const [tillsList, setTillsList] = useState<any[]>([]);
+
   const [selectedTenantId, setSelectedTenantId] = useState('');
   const [selectedBranchId, setSelectedBranchId] = useState('');
+  const [selectedCashierId, setSelectedCashierId] = useState('');
+  const [selectedTillId, setSelectedTillId] = useState('');
+
   const [tenantSearch, setTenantSearch] = useState('');
   const [branchSearch, setBranchSearch] = useState('');
+  const [cashierSearch, setCashierSearch] = useState('');
+  const [tillSearch, setTillSearch] = useState('');
+
   const [tenantDropdownOpen, setTenantDropdownOpen] = useState(false);
   const [branchDropdownOpen, setBranchDropdownOpen] = useState(false);
+  const [cashierDropdownOpen, setCashierDropdownOpen] = useState(false);
+  const [tillDropdownOpen, setTillDropdownOpen] = useState(false);
+
   const [pin, setPin] = useState('');
+
+  const handleBranchSelect = async (branchId: string, branchName: string) => {
+    setSelectedBranchId(branchId);
+    setBranchSearch(branchName);
+    setBranchDropdownOpen(false);
+
+    // Clear cashier/till selection
+    setSelectedCashierId('');
+    setCashierSearch('');
+    setSelectedTillId('');
+    setTillSearch('');
+
+    try {
+      const { apiClient } = require('../lib/apiClient');
+      const res = await apiClient.get(`/auth/branch-cashiers-tills?branchId=${branchId}`) as any;
+      setCashiersList(res.cashiers || []);
+      setTillsList(res.tills || []);
+    } catch (err) {
+      console.error('Failed to load branch cashiers/tills:', err);
+    }
+  };
 
   // Chevron rotation animation
   const rotateAnim = useRef(new Animated.Value(0)).current;
@@ -155,8 +188,8 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
   };
 
   const submitPin = async () => {
-    if (!selectedTenantId || !selectedBranchId || !pin) {
-      alert('Please select Tenant, Branch and enter PIN');
+    if (!selectedTenantId || !selectedBranchId || !selectedCashierId || !selectedTillId || !pin) {
+      alert('Please select Tenant, Branch, Cashier, Till and enter PIN');
       return;
     }
     setIsLoading(true);
@@ -165,6 +198,7 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
       const res = await apiClient.post('/auth/pin-login', {
         tenantId: selectedTenantId,
         branchId: selectedBranchId,
+        cashierId: selectedCashierId,
         pin
       }) as any;
       
@@ -172,7 +206,7 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
         await storage.setToken(res.token);
       }
       if (res.user) {
-        await storage.setUser(res.user);
+        await storage.setUser({ ...res.user, selectedTillId });
       }
       signIn('cashier', res.user);
     } catch (err: any) {
@@ -388,6 +422,8 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
                 onFocus={() => {
                   setBranchDropdownOpen(true);
                   setTenantDropdownOpen(false);
+                  setCashierDropdownOpen(false);
+                  setTillDropdownOpen(false);
                 }}
                 onChangeText={(text) => {
                   setBranchSearch(text);
@@ -402,14 +438,96 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
                       <TouchableOpacity
                         key={b.id}
                         onPress={() => {
-                          setSelectedBranchId(b.id);
-                          setBranchSearch(b.name);
-                          setBranchDropdownOpen(false);
+                          handleBranchSelect(b.id, b.name);
                           Keyboard.dismiss();
                         }}
                         style={[styles.dropdownItem, selectedBranchId === b.id && styles.dropdownItemActive]}
                       >
                         <Text style={{ color: '#334155', fontWeight: selectedBranchId === b.id ? 'bold' : 'normal' }}>{b.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+            </View>
+
+            {/* Cashier / Staff Selector */}
+            <View style={styles.selectGroup}>
+              <Text style={styles.selectLabel}>Cashier / Staff</Text>
+              <TextInput
+                style={[styles.searchInput, { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#f8fafc' }]}
+                placeholder="Select Cashier..."
+                placeholderTextColor="#94a3b8"
+                value={cashierSearch}
+                onFocus={() => {
+                  setCashierDropdownOpen(true);
+                  setTenantDropdownOpen(false);
+                  setBranchDropdownOpen(false);
+                  setTillDropdownOpen(false);
+                }}
+                onChangeText={(text) => {
+                  setCashierSearch(text);
+                  setCashierDropdownOpen(true);
+                }}
+                editable={!!selectedBranchId}
+              />
+              {cashierDropdownOpen && (
+                <View style={styles.dropdownMenu}>
+                  <ScrollView style={{ maxHeight: 150 }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                    {cashiersList.filter(c => c.name.toLowerCase().includes(cashierSearch.toLowerCase()) || c.email.toLowerCase().includes(cashierSearch.toLowerCase())).map((c) => (
+                      <TouchableOpacity
+                        key={c.id}
+                        onPress={() => {
+                          setSelectedCashierId(c.id);
+                          setCashierSearch(c.name || c.email);
+                          setCashierDropdownOpen(false);
+                          Keyboard.dismiss();
+                        }}
+                        style={[styles.dropdownItem, selectedCashierId === c.id && styles.dropdownItemActive]}
+                      >
+                        <Text style={{ color: '#334155', fontWeight: selectedCashierId === c.id ? 'bold' : 'normal' }}>{c.name || c.email}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+            </View>
+
+            {/* Till Terminal Selector */}
+            <View style={styles.selectGroup}>
+              <Text style={styles.selectLabel}>Till Terminal</Text>
+              <TextInput
+                style={[styles.searchInput, { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#f8fafc' }]}
+                placeholder="Select Till Terminal..."
+                placeholderTextColor="#94a3b8"
+                value={tillSearch}
+                onFocus={() => {
+                  setTillDropdownOpen(true);
+                  setTenantDropdownOpen(false);
+                  setBranchDropdownOpen(false);
+                  setCashierDropdownOpen(false);
+                }}
+                onChangeText={(text) => {
+                  setTillSearch(text);
+                  setTillDropdownOpen(true);
+                }}
+                editable={!!selectedBranchId}
+              />
+              {tillDropdownOpen && (
+                <View style={styles.dropdownMenu}>
+                  <ScrollView style={{ maxHeight: 150 }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                    {tillsList.filter(t => t.name.toLowerCase().includes(tillSearch.toLowerCase())).map((t) => (
+                      <TouchableOpacity
+                        key={t.id}
+                        onPress={() => {
+                          setSelectedTillId(t.id);
+                          setTillSearch(t.name);
+                          setTillDropdownOpen(false);
+                          Keyboard.dismiss();
+                        }}
+                        style={[styles.dropdownItem, selectedTillId === t.id && styles.dropdownItemActive]}
+                      >
+                        <Text style={{ color: '#334155', fontWeight: selectedTillId === t.id ? 'bold' : 'normal' }}>{t.name}</Text>
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
@@ -429,7 +547,7 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
             <Button
               full
               onClick={submitPin}
-              disabled={!selectedTenantId || !selectedBranchId || !pin || isLoading}
+              disabled={!selectedTenantId || !selectedBranchId || !selectedCashierId || !selectedTillId || !pin || isLoading}
               style={styles.submitBtn}
             >
               {isLoading ? 'Accessing Till...' : 'Access Till'}

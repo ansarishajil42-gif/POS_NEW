@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
-import { staffUsers, tenants, branches } from "../db/schema.js";
+import { staffUsers, tenants, branches, tills } from "../db/schema.js";
 import { eq, and, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -123,34 +123,86 @@ router.post("/login", async (req, res) => {
   }
 });
 
+// Fetch cashiers and tills for selected branch (public PIN login selectors)
+router.get("/branch-cashiers-tills", async (req, res) => {
+  const { branchId } = req.query;
+  if (!branchId) {
+    return res.status(400).json({ error: "branchId query parameter is required" });
+  }
+  try {
+    const cashiers = await db
+      .select({
+        id: staffUsers.id,
+        name: staffUsers.name,
+        email: staffUsers.email,
+      })
+      .from(staffUsers)
+      .where(
+        and(
+          eq(staffUsers.branchId, branchId as string),
+          eq(staffUsers.role, "cashier"),
+          eq(staffUsers.isActive, true)
+        )
+      );
+
+    const branchTills = await db
+      .select()
+      .from(tills)
+      .where(eq(tills.branchId, branchId as string));
+
+    res.json({ cashiers, tills: branchTills });
+  } catch (error) {
+    console.error("Fetch branch details error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Cashier login with PIN code
 router.post("/pin-login", async (req, res) => {
-  const { tenantId, branchId, pin } = req.body;
+  const { tenantId, branchId, pin, cashierId } = req.body;
 
   if (!tenantId || !branchId || !pin) {
     return res.status(400).json({ error: "Tenant, branch, and PIN are required" });
   }
 
   try {
-    // Find all cashiers in this branch
-    const branchCashiers = await db.select().from(staffUsers).where(
-      and(
-        eq(staffUsers.tenantId, tenantId),
-        eq(staffUsers.branchId, branchId),
-        eq(staffUsers.role, "cashier"),
-        eq(staffUsers.isActive, true)
-      )
-    );
-
     let authenticatedUser = null;
 
-    // Verify PIN against each cashier's pinHash
-    for (const cashier of branchCashiers) {
-      if (cashier.pinHash) {
+    if (cashierId) {
+      const cashier = await db.query.staffUsers.findFirst({
+        where: and(
+          eq(staffUsers.id, cashierId),
+          eq(staffUsers.tenantId, tenantId),
+          eq(staffUsers.branchId, branchId),
+          eq(staffUsers.role, "cashier"),
+          eq(staffUsers.isActive, true)
+        )
+      });
+      if (cashier && cashier.pinHash) {
         const isValidPin = await bcrypt.compare(pin, cashier.pinHash);
         if (isValidPin) {
           authenticatedUser = cashier;
-          break;
+        }
+      }
+    } else {
+      // Find all cashiers in this branch
+      const branchCashiers = await db.select().from(staffUsers).where(
+        and(
+          eq(staffUsers.tenantId, tenantId),
+          eq(staffUsers.branchId, branchId),
+          eq(staffUsers.role, "cashier"),
+          eq(staffUsers.isActive, true)
+        )
+      );
+
+      // Verify PIN against each cashier's pinHash
+      for (const cashier of branchCashiers) {
+        if (cashier.pinHash) {
+          const isValidPin = await bcrypt.compare(pin, cashier.pinHash);
+          if (isValidPin) {
+            authenticatedUser = cashier;
+            break;
+          }
         }
       }
     }
