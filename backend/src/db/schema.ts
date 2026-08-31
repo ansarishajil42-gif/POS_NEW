@@ -246,6 +246,11 @@ export const shifts = pgTable("shifts", {
   expectedCash: decimal("expected_cash", { precision: 12, scale: 2 }),
   actualCash: decimal("actual_cash", { precision: 12, scale: 2 }),
   status: text("status").notNull().default("Open"), // Open, Closed
+  tillId: text("till_id"),
+  startTime: text("start_time"),
+  endTime: text("end_time"),
+  shiftDate: text("shift_date"),
+  notes: text("notes"),
 });
 
 // 15. orders
@@ -427,6 +432,7 @@ export const shiftsRelations = relations(shifts, ({ one }) => ({
   tenant: one(tenants, { fields: [shifts.tenantId], references: [tenants.id] }),
   branch: one(branches, { fields: [shifts.branchId], references: [branches.id] }),
   cashier: one(staffUsers, { fields: [shifts.cashierId], references: [staffUsers.id] }),
+  till: one(tills, { fields: [shifts.tillId], references: [tills.id] }),
 }));
 
 export const orderPaymentsRelations = relations(orderPayments, ({ one }) => ({
@@ -553,4 +559,55 @@ export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
   tenant: one(tenants, { fields: [auditLogs.tenantId], references: [tenants.id] }),
   branch: one(branches, { fields: [auditLogs.branchId], references: [branches.id] }),
   user: one(staffUsers, { fields: [auditLogs.userId], references: [staffUsers.id] }),
+}));
+
+export const tills = pgTable(
+  "tills",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    branchId: uuid("branch_id")
+      .notNull()
+      .references(() => branches.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    status: text("status").notNull().default("Closed"), // Open, Closed
+    openingFloat: decimal("opening_float", { precision: 12, scale: 2 }).notNull().default("0.00"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    createdBy: uuid("created_by").references(() => staffUsers.id),
+  },
+  (t) => [unique("till_branch_unique").on(t.branchId, t.name)],
+);
+
+export const tillsRelations = relations(tills, ({ one }) => ({
+  tenant: one(tenants, { fields: [tills.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [tills.branchId], references: [branches.id] }),
+  creator: one(staffUsers, { fields: [tills.createdBy], references: [staffUsers.id] }),
+}));
+
+export const stockAdjustments = pgTable("stock_adjustments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id")
+    .notNull()
+    .references(() => tenants.id, { onDelete: "cascade" }),
+  branchId: uuid("branch_id")
+    .notNull()
+    .references(() => branches.id, { onDelete: "cascade" }),
+  productId: uuid("product_id")
+    .notNull()
+    .references(() => products.id, { onDelete: "cascade" }),
+  batchId: uuid("batch_id").references(() => batches.id),
+  previousQuantity: integer("previous_quantity").notNull(),
+  quantityChange: integer("quantity_change").notNull(),
+  newQuantity: integer("new_quantity").notNull(),
+  reason: text("reason").notNull(),
+  adjustedBy: uuid("adjusted_by").references(() => staffUsers.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const stockAdjustmentsRelations = relations(stockAdjustments, ({ one }) => ({
+  product: one(products, { fields: [stockAdjustments.productId], references: [products.id] }),
+  staff: one(staffUsers, { fields: [stockAdjustments.adjustedBy], references: [staffUsers.id] }),
 }));

@@ -16,6 +16,7 @@ import customersRouter from "./routes/customers.js";
 import promotionsRouter from "./routes/promotions.js";
 import priceRequestsRouter from "./routes/price-requests.js";
 import auditLogsRouter from "./routes/audit-logs.js";
+import storeManagerRouter from "./routes/store-manager.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -60,6 +61,7 @@ app.use("/api/customers", customersRouter);
 app.use("/api/promotions", promotionsRouter);
 app.use("/api/price-requests", priceRequestsRouter);
 app.use("/api/audit-logs", auditLogsRouter);
+app.use("/api/store-manager", storeManagerRouter);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

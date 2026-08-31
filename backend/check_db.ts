@@ -6,9 +6,9 @@ const db = drizzle(sqlClient);
 
 async function check() {
   try {
-    const audits = await db.execute(sql`SELECT action, details FROM audit_logs ORDER BY created_at DESC LIMIT 20`);
-    console.log('--- AUDIT LOG DETAILS ---');
-    console.log(JSON.stringify(audits, null, 2));
+    const columns = await db.execute(sql`SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'stock_adjustments'`);
+    console.log('--- STOCK_ADJUSTMENTS COLUMNS ---');
+    console.log(columns);
   } catch (error) {
     console.error(error);
   } finally {

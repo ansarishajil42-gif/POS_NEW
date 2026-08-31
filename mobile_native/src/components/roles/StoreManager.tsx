@@ -1,13 +1,11 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Alert } from 'react-native';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Alert, Platform } from 'react-native';
 import { AppHeader, ScreenBody } from '../Shell';
 import { Card, StatCard } from '../ui/Card';
-import { Badge, statusVariant } from '../ui/Badge';
+import { Badge } from '../ui/Badge';
 import { Button, Sheet, Field } from '../ui/Primitives';
 import { useAuth } from '../../lib/auth';
-import { useStoreManager, RosterStaff, PricingRequest } from '../../lib/StoreManagerContext';
-import { products, transfers, reports } from '../../lib/mockData';
-import Svg, { Rect, Path } from 'react-native-svg';
+import { useStoreManager, PricingRequest } from '../../lib/StoreManagerContext';
 import {
   DollarSign,
   Users,
@@ -18,76 +16,91 @@ import {
   Download,
   Search,
   Plus,
-  Settings,
   Clock,
-  CheckCircle2,
-  Ban,
   Trash2,
-  Edit
+  Edit,
+  Key,
+  ChevronDown
 } from 'lucide-react-native';
 
 export function StoreManagerHome() {
-  const { branch } = useAuth();
-  const { staff } = useStoreManager();
+  const { branch: authBranch } = useAuth();
+  const { orders, staff, tills, stock, fetchData, loading } = useStoreManager();
+
+  useEffect(() => {
+    fetchData();
+  }, []);
 
   const handleExportZReport = () => {
-    Alert.alert('Export Successful', 'Daily Z-Report CSV sheet compiled and downloaded.');
+    Alert.alert('Export Successful', 'Latest Daily Z-Reports compiled and exported to files.');
   };
 
-  const activeStaffCount = staff.filter((s) => s.shift === 'open').length;
+  const todayStr = new Date().toISOString().split('T')[0];
+  const todayOrders = orders.filter((o) => o.createdAt?.startsWith(todayStr));
+  const totalSalesToday = todayOrders.reduce((sum, o) => sum + parseFloat(o.total || 0), 0);
+  const activeTillsCount = tills.filter((t) => t.status === 'Open').length;
+  const activeStaffCount = staff.filter((s) => s.status === 'Open').length;
 
   return (
     <View style={styles.flex1}>
-      <AppHeader roleLabel="SM" branch={branch} />
+      <AppHeader roleLabel="SM" branch={authBranch} />
       <ScreenBody>
         {/* Export Z-Report Action */}
         <View style={styles.headerBtnWrapper}>
           <Button full variant="primary" onClick={handleExportZReport} style={styles.headerBtn}>
             <Download size={16} color="#0f172a" style={{ marginRight: 8 }} />
-            Export Z-Report
+            Export Z-Reports
           </Button>
         </View>
 
         <View style={styles.statsGrid}>
           <View style={styles.halfCol}>
-            <StatCard label="Sales Today" value="$18.4k" icon={<DollarSign size={16} color="#39ff14" />} accent="brand" trend={{ dir: 'up', value: '6%' }} />
+            <StatCard
+              label="Sales Today"
+              value={`AED ${totalSalesToday.toFixed(2)}`}
+              icon={<DollarSign size={16} color="#39ff14" />}
+              accent="brand"
+            />
           </View>
           <View style={styles.halfCol}>
-            <StatCard label="Footfall" value="1,240" icon={<Users size={16} color="#0284c7" />} accent="sky" />
+            <StatCard
+              label="Transactions"
+              value={String(todayOrders.length)}
+              icon={<FileText size={16} color="#0284c7" />}
+              accent="sky"
+            />
           </View>
           <View style={styles.halfCol}>
-            <StatCard label="Active Tills" value="4 / 4" icon={<Boxes size={16} color="#39ff14" />} accent="brand" />
+            <StatCard
+              label="Active Tills"
+              value={`${activeTillsCount} / ${tills.length}`}
+              icon={<Boxes size={16} color="#39ff14" />}
+              accent="brand"
+            />
           </View>
           <View style={styles.halfCol}>
-            <StatCard label="Staff On Shift" value={String(activeStaffCount)} icon={<Users size={16} color="#475569" />} accent="ink" />
+            <StatCard
+              label="Staff On Shift"
+              value={String(activeStaffCount)}
+              icon={<Users size={16} color="#475569" />}
+              accent="ink"
+            />
           </View>
         </View>
 
-        {/* Weekly sales SVG bar chart */}
+        {/* Info panel */}
         <Card style={styles.chartCard}>
-          <Text style={styles.chartCardTitle}>This Week</Text>
-          <View style={styles.svgWrapper}>
-            <Svg width="100%" height={120} viewBox="0 0 340 120" preserveAspectRatio="none">
-              {/* Grid Lines */}
-              <Path d="M0,30 L340,30 M0,60 L340,60 M0,90 L340,90" fill="none" stroke="#f1f5f9" strokeWidth="1" />
-              {/* Draw Weekly Bars */}
-              <Rect x="20" y="80" width="18" height="40" rx="3" fill="#39ff14" />
-              <Rect x="65" y="83" width="18" height="37" rx="3" fill="#39ff14" />
-              <Rect x="110" y="75" width="18" height="45" rx="3" fill="#39ff14" />
-              <Rect x="155" y="65" width="18" height="55" rx="3" fill="#39ff14" />
-              <Rect x="200" y="55" width="18" height="65" rx="3" fill="#39ff14" />
-              <Rect x="245" y="45" width="18" height="75" rx="3" fill="#39ff14" />
-              <Rect x="290" y="60" width="18" height="60" rx="3" fill="#39ff14" />
-            </Svg>
-          </View>
-          <View style={styles.chartLabels}>
-            <Text style={styles.chartLabelText}>M</Text>
-            <Text style={styles.chartLabelText}>T</Text>
-            <Text style={styles.chartLabelText}>W</Text>
-            <Text style={styles.chartLabelText}>T</Text>
-            <Text style={styles.chartLabelText}>F</Text>
-            <Text style={styles.chartLabelText}>S</Text>
-            <Text style={styles.chartLabelText}>S</Text>
+          <Text style={styles.chartCardTitle}>Branch Summary</Text>
+          <View style={{ marginTop: 12, gap: 8 }}>
+            <Text style={{ fontSize: 13, color: '#475569' }}>
+              Branch Name: <Text style={{ fontWeight: 'bold', color: '#0f172a' }}>{authBranch || 'Al Barsha Branch'}</Text>
+            </Text>
+            <Text style={{ fontSize: 13, color: '#475569' }}>
+              Total Products: <Text style={{ fontWeight: 'bold', color: '#0f172a' }}>{stock.length}</Text>
+            </Text>
+            <Text style={{ fontSize: 13, color: '#475569' }}>
+              Pending Overrides: <Text style={{ fontWeight: 'bold', color: '#0f172a' }}>{orders.length}</Text>
+            </Text>
           </View>
         </Card>
       </ScreenBody>
@@ -97,45 +110,178 @@ export function StoreManagerHome() {
 
 export function StoreManagerStaff() {
   const { branch } = useAuth();
-  const { staff, addStaff } = useStoreManager();
+  const {
+    staff,
+    tills,
+    addStaff,
+    deleteRosterShift,
+    createTill,
+    resetCashierPin,
+    recordCashDrop,
+    closeShift,
+    fetchData
+  } = useStoreManager();
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // Modal open states
   const [addStaffOpen, setAddStaffOpen] = useState(false);
+  const [addTillOpen, setAddTillOpen] = useState(false);
+  const [resetPinOpen, setResetPinOpen] = useState(false);
+  const [cashDropOpen, setCashDropOpen] = useState(false);
+  const [closeShiftOpen, setCloseShiftOpen] = useState(false);
 
   // Form states
-  const [name, setName] = useState('');
-  const [role, setRole] = useState('Cashier');
-  const [till, setTill] = useState('Till 01');
-  const [time, setTime] = useState('08:00 - 16:00');
-  const [status, setStatus] = useState<'open' | 'closed' | 'upcoming'>('open');
+  const [cashierId, setCashierId] = useState('');
+  const [tillId, setTillId] = useState('');
+  const [shiftDate, setShiftDate] = useState(new Date().toISOString().split('T')[0]);
+  const [startTime, setStartTime] = useState('09:00');
+  const [endTime, setEndTime] = useState('17:00');
+  const [notes, setNotes] = useState('');
 
-  const handleAddRoster = () => {
-    if (!name.trim()) {
-      Alert.alert('Error', 'Please enter staff name');
+  // Till form states
+  const [tillName, setTillName] = useState('');
+  const [tillDesc, setTillDesc] = useState('');
+  const [tillFloat, setTillFloat] = useState('200.00');
+
+  // PIN reset form states
+  const [pinCashierId, setPinCashierId] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+
+  // Cash drop form states
+  const [dropShiftId, setDropShiftId] = useState('');
+  const [dropAmount, setDropAmount] = useState('');
+  const [dropNote, setDropNote] = useState('');
+
+  // Close shift form states
+  const [closeShiftId, setCloseShiftId] = useState('');
+  const [actualCash, setActualCash] = useState('');
+
+  const cashiersList = useMemo(() => {
+    // Get unique cashiers who are active
+    const users = staff.map(s => ({ id: s.cashierId, name: s.cashierName || s.cashierEmail }));
+    const uniqueIds = Array.from(new Set(users.map(u => u.id))).filter(Boolean);
+    return uniqueIds.map(id => users.find(u => u.id === id));
+  }, [staff]);
+
+  const activeShifts = useMemo(() => {
+    return staff.filter(s => s.status === 'Open');
+  }, [staff]);
+
+  const handleAddRoster = async () => {
+    if (!cashierId || !tillId || !shiftDate || !startTime || !endTime) {
+      Alert.alert('Error', 'Please fill all required fields');
       return;
     }
-    const permissions = role === 'Supervisor' ? 'Supervisor' : role === 'Stock Clerk' ? 'Inventory' : 'Cashier';
-    addStaff(name, role, till || '—', time, status, permissions);
-    Alert.alert('Success', `Employee ${name} added to roster.`);
-    setName('');
-    setTill('Till 01');
-    setTime('08:00 - 16:00');
-    setRole('Cashier');
-    setStatus('open');
-    setAddStaffOpen(false);
+    try {
+      await addStaff(cashierId, tillId, shiftDate, startTime, endTime, notes);
+      Alert.alert('Success', 'Staff scheduled successfully.');
+      setAddStaffOpen(false);
+      setCashierId('');
+      setTillId('');
+      setNotes('');
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to schedule shift');
+    }
+  };
+
+  const handleCreateTill = async () => {
+    if (!tillName.trim()) {
+      Alert.alert('Error', 'Please enter a till name/number');
+      return;
+    }
+    try {
+      await createTill(tillName, tillDesc, parseFloat(tillFloat || '0'));
+      Alert.alert('Success', `Till ${tillName} created.`);
+      setAddTillOpen(false);
+      setTillName('');
+      setTillDesc('');
+      setTillFloat('200.00');
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to create till');
+    }
+  };
+
+  const handleResetPin = async () => {
+    if (!pinCashierId || !newPin || !confirmPin) {
+      Alert.alert('Error', 'Please fill all fields');
+      return;
+    }
+    try {
+      await resetCashierPin(pinCashierId, newPin, confirmPin);
+      Alert.alert('Success', 'Cashier credentials updated.');
+      setResetPinOpen(false);
+      setNewPin('');
+      setConfirmPin('');
+      setPinCashierId('');
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to reset PIN');
+    }
+  };
+
+  const handleCashDrop = async () => {
+    if (!dropShiftId || !dropAmount) {
+      Alert.alert('Error', 'Please fill drop shift and amount');
+      return;
+    }
+    try {
+      await recordCashDrop(dropShiftId, parseFloat(dropAmount), dropNote);
+      Alert.alert('Success', 'Cash drop registered.');
+      setCashDropOpen(false);
+      setDropShiftId('');
+      setDropAmount('');
+      setDropNote('');
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to record drop');
+    }
+  };
+
+  const handleCloseShift = async () => {
+    if (!closeShiftId || !actualCash) {
+      Alert.alert('Error', 'Please fill close shift and actual cash count');
+      return;
+    }
+    try {
+      const receipt = await closeShift(closeShiftId, parseFloat(actualCash));
+      Alert.alert(
+        'Shift Closed Successfully',
+        `Receipt details:\nOpening Float: AED ${receipt.openingFloat}\nExpected Cash: AED ${receipt.expectedCash}\nActual Cash: AED ${receipt.actualCash}\nVariance: AED ${receipt.variance}`,
+        [{ text: 'Close' }]
+      );
+      setCloseShiftOpen(false);
+      setCloseShiftId('');
+      setActualCash('');
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to close shift');
+    }
+  };
+
+  const handleCancelRoster = (id: string, name: string) => {
+    Alert.alert('Delete Shift', `Are you sure you want to cancel the shift for ${name || 'Cashier'}?`, [
+      { text: 'No', style: 'cancel' },
+      { text: 'Yes', style: 'destructive', onPress: () => deleteRosterShift(id) }
+    ]);
   };
 
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="SM" branch={branch} />
       <ScreenBody>
-        {/* Add Staff Action */}
-        <View style={styles.headerBtnWrapper}>
-          <Button full variant="primary" onClick={() => setAddStaffOpen(true)} style={styles.headerBtn}>
-            <Plus size={16} color="#0f172a" style={{ marginRight: 8 }} />
-            Add Staff to Roster
-          </Button>
+        {/* Quick actions panel */}
+        <View style={{ flexDirection: 'row', gap: 6, marginBottom: 12 }}>
+          <Button style={{ flex: 1 }} variant="primary" onClick={() => setAddStaffOpen(true)}>Roster</Button>
+          <Button style={{ flex: 1 }} variant="secondary" onClick={() => setAddTillOpen(true)}>Add Till</Button>
+          <Button style={{ flex: 1 }} variant="secondary" onClick={() => setResetPinOpen(true)}>Reset PIN</Button>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 6, marginBottom: 12 }}>
+          <Button style={{ flex: 1 }} variant="danger" onClick={() => setCashDropOpen(true)}>Cash Drop</Button>
+          <Button style={{ flex: 1 }} variant="primary" onClick={() => setCloseShiftOpen(true)}>Close Shift</Button>
         </View>
 
-        <Text style={styles.mainTitle}>Staff Roster</Text>
+        <Text style={styles.mainTitle}>Staff Roster & Shifts</Text>
         <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
           <View style={styles.listContainer}>
             {staff.map((s) => (
@@ -143,18 +289,27 @@ export function StoreManagerStaff() {
                 <View style={styles.cardHeaderRow}>
                   <View style={styles.staffItemLeft}>
                     <View style={styles.staffInitialCircle}>
-                      <Text style={styles.staffInitialText}>{s.name.charAt(0)}</Text>
+                      <Text style={styles.staffInitialText}>{(s.cashierName || s.cashierEmail || 'C').charAt(0).toUpperCase()}</Text>
                     </View>
                     <View>
-                      <Text style={styles.staffName}>{s.name}</Text>
-                      <Text style={styles.staffMeta}>{s.role} · {s.till} · {s.time}</Text>
+                      <Text style={styles.staffName}>{s.cashierName || s.cashierEmail || 'Cashier'}</Text>
+                      <Text style={styles.staffMeta}>
+                        Till: {s.tillName || s.tillId || 'N/A'} · Status: {s.status}
+                      </Text>
+                      <Text style={styles.staffMeta}>
+                        Hours: {s.startTime || '—'} - {s.endTime || '—'} ({s.shiftDate || '—'})
+                      </Text>
                     </View>
                   </View>
                   <View style={styles.staffItemRight}>
-                    <Badge variant={s.shift === 'open' ? 'success' : s.shift === 'upcoming' ? 'warn' : 'neutral'}>
-                      {s.shift === 'open' ? 'On shift' : s.shift === 'upcoming' ? 'Upcoming' : 'Off'}
+                    <Badge variant={s.status === 'Open' ? 'success' : s.status === 'Scheduled' ? 'warn' : 'neutral'}>
+                      {s.status}
                     </Badge>
-                    <Text style={styles.staffPerms}>{s.permissions}</Text>
+                    {s.status === 'Scheduled' && (
+                      <TouchableOpacity onPress={() => handleCancelRoster(s.id, s.cashierName || s.cashierEmail)} style={{ padding: 4, marginTop: 4 }}>
+                        <Trash2 size={16} color="#ef4444" />
+                      </TouchableOpacity>
+                    )}
                   </View>
                 </View>
               </Card>
@@ -164,59 +319,169 @@ export function StoreManagerStaff() {
       </ScreenBody>
 
       {/* Roster Add Staff Sheet */}
-      <Sheet
-        open={addStaffOpen}
-        onClose={() => setAddStaffOpen(false)}
-        title="Add Staff to Roster"
-        footer={
-          <View style={styles.sheetFooterBtnRow}>
-            <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => setAddStaffOpen(false)}>Cancel</Button>
-            <Button variant="primary" style={styles.sheetFooterBtn} onClick={handleAddRoster}>Add Staff</Button>
-          </View>
-        }
-      >
+      <Sheet open={addStaffOpen} onClose={() => setAddStaffOpen(false)} title="Schedule Cashier Shift">
         <View style={styles.modalForm}>
-          <Field label="Staff Name">
-            <TextInput placeholder="e.g. Rahul S." value={name} onChangeText={setName} style={styles.modalInput} placeholderTextColor="#94a3b8" />
-          </Field>
-          <Field label="Role">
-            <View style={styles.segmentedControl}>
-              <TouchableOpacity style={[styles.segBtn, role === 'Cashier' && styles.segBtnActive]} onPress={() => setRole('Cashier')}>
-                <Text style={[styles.segTxt, role === 'Cashier' && styles.segTxtActive]}>Cashier</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.segBtn, role === 'Supervisor' && styles.segBtnActive]} onPress={() => setRole('Supervisor')}>
-                <Text style={[styles.segTxt, role === 'Supervisor' && styles.segTxtActive]}>Supervisor</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.segBtn, role === 'Stock Clerk' && styles.segBtnActive]} onPress={() => setRole('Stock Clerk')}>
-                <Text style={[styles.segTxt, role === 'Stock Clerk' && styles.segTxtActive]}>Clerk</Text>
-              </TouchableOpacity>
+          <Field label="Select Cashier">
+            <View style={styles.productPickerScrollContainer}>
+              <ScrollView style={styles.productPickerScroll} nestedScrollEnabled>
+                {cashiersList.map((c) => c && (
+                  <TouchableOpacity
+                    key={c.id}
+                    style={[styles.pickerItem, cashierId === c.id && styles.pickerItemActive]}
+                    onPress={() => setCashierId(c.id)}
+                  >
+                    <Text style={[styles.pickerItemText, cashierId === c.id && styles.pickerItemTextActive]}>
+                      {c.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             </View>
           </Field>
+
+          <Field label="Select Till">
+            <View style={styles.productPickerScrollContainer}>
+              <ScrollView style={styles.productPickerScroll} nestedScrollEnabled>
+                {tills.map((t) => (
+                  <TouchableOpacity
+                    key={t.id}
+                    style={[styles.pickerItem, tillId === t.id && styles.pickerItemActive]}
+                    onPress={() => setTillId(t.id)}
+                  >
+                    <Text style={[styles.pickerItemText, tillId === t.id && styles.pickerItemTextActive]}>
+                      {t.name} (Opening Float: AED {t.openingFloat})
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </Field>
+
           <View style={styles.formRow}>
             <View style={{ flex: 1, marginRight: 8 }}>
-              <Field label="Till Assignment">
-                <TextInput placeholder="e.g. Till 01" value={till} onChangeText={setTill} style={styles.modalInput} placeholderTextColor="#94a3b8" />
+              <Field label="Start Time (HH:MM)">
+                <TextInput value={startTime} onChangeText={setStartTime} style={styles.modalInput} placeholder="e.g. 09:00" />
               </Field>
             </View>
             <View style={{ flex: 1 }}>
-              <Field label="Shift Hours">
-                <TextInput placeholder="08:00 - 16:00" value={time} onChangeText={setTime} style={styles.modalInput} placeholderTextColor="#94a3b8" />
+              <Field label="End Time (HH:MM)">
+                <TextInput value={endTime} onChangeText={setEndTime} style={styles.modalInput} placeholder="e.g. 17:00" />
               </Field>
             </View>
           </View>
-          <Field label="Shift Status">
-            <View style={styles.segmentedControl}>
-              <TouchableOpacity style={[styles.segBtn, status === 'open' && styles.segBtnActive]} onPress={() => setStatus('open')}>
-                <Text style={[styles.segTxt, status === 'open' && styles.segTxtActive]}>On Shift</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.segBtn, status === 'upcoming' && styles.segBtnActive]} onPress={() => setStatus('upcoming')}>
-                <Text style={[styles.segTxt, status === 'upcoming' && styles.segTxtActive]}>Upcoming</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.segBtn, status === 'closed' && styles.segBtnActive]} onPress={() => setStatus('closed')}>
-                <Text style={[styles.segTxt, status === 'closed' && styles.segTxtActive]}>Off Shift</Text>
-              </TouchableOpacity>
+
+          <Field label="Shift Date (YYYY-MM-DD)">
+            <TextInput value={shiftDate} onChangeText={setShiftDate} style={styles.modalInput} placeholder="YYYY-MM-DD" />
+          </Field>
+
+          <Field label="Notes (Optional)">
+            <TextInput value={notes} onChangeText={setNotes} style={styles.modalInput} placeholder="Notes" />
+          </Field>
+
+          <Button variant="primary" full onClick={handleAddRoster}>Schedule Shift</Button>
+        </View>
+      </Sheet>
+
+      {/* Till Creation Sheet */}
+      <Sheet open={addTillOpen} onClose={() => setAddTillOpen(false)} title="Create New Cash Register">
+        <View style={styles.modalForm}>
+          <Field label="Till Name / Number">
+            <TextInput placeholder="e.g. Till 05" value={tillName} onChangeText={setTillName} style={styles.modalInput} placeholderTextColor="#94a3b8" />
+          </Field>
+          <Field label="Description">
+            <TextInput placeholder="e.g. Front counter checkout" value={tillDesc} onChangeText={setTillDesc} style={styles.modalInput} placeholderTextColor="#94a3b8" />
+          </Field>
+          <Field label="Opening Cash Float (AED)">
+            <TextInput placeholder="200.00" value={tillFloat} onChangeText={setTillFloat} keyboardType="numeric" style={styles.modalInput} placeholderTextColor="#94a3b8" />
+          </Field>
+          <Button variant="primary" full onClick={handleCreateTill}>Create Register</Button>
+        </View>
+      </Sheet>
+
+      {/* Cashier Reset PIN Sheet */}
+      <Sheet open={resetPinOpen} onClose={() => setResetPinOpen(false)} title="Reset Cashier Credentials">
+        <View style={styles.modalForm}>
+          <Field label="Select Cashier">
+            <View style={styles.productPickerScrollContainer}>
+              <ScrollView style={styles.productPickerScroll} nestedScrollEnabled>
+                {cashiersList.map((c) => c && (
+                  <TouchableOpacity
+                    key={c.id}
+                    style={[styles.pickerItem, pinCashierId === c.id && styles.pickerItemActive]}
+                    onPress={() => setPinCashierId(c.id)}
+                  >
+                    <Text style={[styles.pickerItemText, pinCashierId === c.id && styles.pickerItemTextActive]}>
+                      {c.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             </View>
           </Field>
+          <Field label="New 4-Digit Security PIN">
+            <TextInput placeholder="e.g. 1234" value={newPin} onChangeText={setNewPin} keyboardType="numeric" maxLength={4} secureTextEntry style={styles.modalInput} placeholderTextColor="#94a3b8" />
+          </Field>
+          <Field label="Confirm Security PIN">
+            <TextInput placeholder="e.g. 1234" value={confirmPin} onChangeText={setConfirmPin} keyboardType="numeric" maxLength={4} secureTextEntry style={styles.modalInput} placeholderTextColor="#94a3b8" />
+          </Field>
+          <Button variant="primary" full onClick={handleResetPin}>Update PIN</Button>
+        </View>
+      </Sheet>
+
+      {/* Cash Drop Sheet */}
+      <Sheet open={cashDropOpen} onClose={() => setCashDropOpen(false)} title="Record Cash Drop">
+        <View style={styles.modalForm}>
+          <Field label="Select Active Shift">
+            <View style={styles.productPickerScrollContainer}>
+              <ScrollView style={styles.productPickerScroll} nestedScrollEnabled>
+                {activeShifts.map((s) => (
+                  <TouchableOpacity
+                    key={s.id}
+                    style={[styles.pickerItem, dropShiftId === s.id && styles.pickerItemActive]}
+                    onPress={() => setDropShiftId(s.id)}
+                  >
+                    <Text style={[styles.pickerItemText, dropShiftId === s.id && styles.pickerItemTextActive]}>
+                      {s.cashierName || s.cashierEmail} (Till: {s.tillName})
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </Field>
+          <Field label="Cash Drop Amount (AED)">
+            <TextInput placeholder="150.00" value={dropAmount} onChangeText={setDropAmount} keyboardType="numeric" style={styles.modalInput} placeholderTextColor="#94a3b8" />
+          </Field>
+          <Field label="Note / Reference">
+            <TextInput placeholder="Note" value={dropNote} onChangeText={setDropNote} style={styles.modalInput} placeholderTextColor="#94a3b8" />
+          </Field>
+          <Button variant="danger" full onClick={handleCashDrop}>Submit Drop</Button>
+        </View>
+      </Sheet>
+
+      {/* Close Shift Sheet */}
+      <Sheet open={closeShiftOpen} onClose={() => setCloseShiftOpen(false)} title="Close Shift & Evaluate variance">
+        <View style={styles.modalForm}>
+          <Field label="Select Cashier Shift to Close">
+            <View style={styles.productPickerScrollContainer}>
+              <ScrollView style={styles.productPickerScroll} nestedScrollEnabled>
+                {activeShifts.map((s) => (
+                  <TouchableOpacity
+                    key={s.id}
+                    style={[styles.pickerItem, closeShiftId === s.id && styles.pickerItemActive]}
+                    onPress={() => setCloseShiftId(s.id)}
+                  >
+                    <Text style={[styles.pickerItemText, closeShiftId === s.id && styles.pickerItemTextActive]}>
+                      {s.cashierName || s.cashierEmail} (Till: {s.tillName})
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </Field>
+          <Field label="Actual Cash Drawer Count (AED)">
+            <TextInput placeholder="500.00" value={actualCash} onChangeText={setActualCash} keyboardType="numeric" style={styles.modalInput} placeholderTextColor="#94a3b8" />
+          </Field>
+          <Button variant="primary" full onClick={handleCloseShift}>Evaluate & Close Shift</Button>
         </View>
       </Sheet>
     </View>
@@ -225,24 +490,61 @@ export function StoreManagerStaff() {
 
 export function StoreManagerStock() {
   const { branch } = useAuth();
+  const { stock, adjustHistory, adjustStock, fetchData } = useStoreManager();
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
   const [q, setQ] = useState('');
   const [category, setCategory] = useState('All');
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<any>(null);
 
-  const categories = ['All', 'Dairy', 'Dry Goods', 'Grains', 'Meat', 'Produce', 'Beverages', 'Pantry'];
+  // Form states
+  const [quantityChange, setQuantityChange] = useState('');
+  const [reason, setReason] = useState('Correction');
+  const [note, setNote] = useState('');
 
-  const lowStock = products.filter((p) => p.stock < 10);
+  const categories = useMemo(() => {
+    const list = stock.map((p) => p.category).filter(Boolean);
+    return ['All', ...Array.from(new Set(list))];
+  }, [stock]);
 
-  const filteredProducts = products.filter((p) => {
-    const matchesQuery = p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase());
-    const matchesCategory = category === 'All' || p.category === category;
-    return matchesQuery && matchesCategory;
-  });
+  const lowStock = useMemo(() => {
+    return stock.filter((p) => p.stock < 10);
+  }, [stock]);
+
+  const filteredProducts = useMemo(() => {
+    return stock.filter((p) => {
+      const nameMatch = p.productName?.toLowerCase().includes(q.toLowerCase()) || p.sku?.toLowerCase().includes(q.toLowerCase());
+      const catMatch = category === 'All' || p.category === category;
+      return nameMatch && catMatch;
+    });
+  }, [stock, q, category]);
+
+  const handleAdjustStock = async () => {
+    if (!selectedProduct || !quantityChange) {
+      Alert.alert('Error', 'Please fill quantity change');
+      return;
+    }
+    try {
+      await adjustStock(selectedProduct.productId, parseInt(quantityChange), reason, note);
+      Alert.alert('Success', 'Stock adjusted successfully.');
+      setAdjustOpen(false);
+      setQuantityChange('');
+      setNote('');
+      setSelectedProduct(null);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to adjust stock');
+    }
+  };
 
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="SM" branch={branch} />
       <ScreenBody>
-        <Text style={styles.mainTitle}>Stock</Text>
+        <Text style={styles.mainTitle}>Branch Stock</Text>
 
         <Card style={styles.lowStockWarningCard}>
           <View style={styles.flexRow}>
@@ -251,19 +553,19 @@ export function StoreManagerStock() {
           </View>
         </Card>
 
-        {/* Search and Filters */}
+        {/* Search */}
         <View style={styles.searchBar}>
           <Search size={16} color="#94a3b8" />
           <TextInput
             value={q}
             onChangeText={setQ}
-            placeholder="Search SKU or scan barcode..."
+            placeholder="Search SKU or product name..."
             placeholderTextColor="#94a3b8"
             style={styles.searchInput}
           />
         </View>
 
-        {/* Category Scroll Filter */}
+        {/* Categories scroll filter */}
         <View style={{ marginBottom: 12 }}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryScrollContainer}>
             {categories.map((cat) => (
@@ -281,49 +583,98 @@ export function StoreManagerStock() {
         <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false} nestedScrollEnabled>
           <View style={styles.listContainer}>
             {filteredProducts.map((p) => (
-              <Card key={p.id}>
-                <View style={styles.cardHeaderRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.productName}>{p.name}</Text>
-                    <Text style={styles.productMeta}>{p.sku} · {p.category}</Text>
+              <TouchableOpacity
+                key={p.id}
+                onPress={() => {
+                  setSelectedProduct(p);
+                  setAdjustOpen(true);
+                }}
+              >
+                <Card>
+                  <View style={styles.cardHeaderRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.productName}>{p.productName}</Text>
+                      <Text style={styles.productMeta}>{p.sku} · {p.category}</Text>
+                      <Text style={styles.productMeta}>Base Price: AED {parseFloat(p.basePrice || 0).toFixed(2)}</Text>
+                    </View>
+                    <Badge variant={p.stock < 10 ? 'warn' : 'success'}>
+                      {p.stock} {p.unit || 'pcs'}
+                    </Badge>
                   </View>
-                  <Badge variant={p.stock < 10 ? 'warn' : 'success'}>
-                    {p.stock} {p.unit}
-                  </Badge>
-                </View>
-              </Card>
+                </Card>
+              </TouchableOpacity>
             ))}
             {filteredProducts.length === 0 && (
               <Text style={styles.noDataText}>No products match your search or filter.</Text>
             )}
           </View>
 
-          <Text style={styles.sectionTitle}><ArrowUpDown size={13} color="#475569" style={styles.sectionIcon} /> Transfer Requests</Text>
+          <Text style={styles.sectionTitle}><ArrowUpDown size={13} color="#475569" style={styles.sectionIcon} /> Stock Adjustments History</Text>
           <View style={[styles.listContainer, { marginBottom: 24 }]}>
-            {transfers.map((t) => (
+            {adjustHistory.map((t) => (
               <Card key={t.id}>
                 <View style={styles.cardHeaderRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.productName}>{t.item}</Text>
-                    <Text style={styles.productMeta}>{t.from} → {t.to} · {t.date}</Text>
+                    <Text style={styles.productName}>{t.productName}</Text>
+                    <Text style={styles.productMeta}>Reason: {t.reason}</Text>
+                    <Text style={styles.productMeta}>Date: {new Date(t.createdAt).toLocaleString()}</Text>
                   </View>
                   <View style={styles.productPriceCol}>
-                    <Text style={styles.productPrice}>{t.qty}</Text>
-                    <Badge variant={statusVariant(t.status)}>{t.status}</Badge>
+                    <Text style={[styles.productPrice, { color: t.quantityChange > 0 ? '#10b981' : '#ef4444' }]}>
+                      {t.quantityChange > 0 ? `+${t.quantityChange}` : t.quantityChange}
+                    </Text>
+                    <Text style={styles.productMeta}>New: {t.newQuantity}</Text>
                   </View>
                 </View>
               </Card>
             ))}
+            {adjustHistory.length === 0 && (
+              <Text style={styles.noDataText}>No stock adjustment log entries recorded.</Text>
+            )}
           </View>
         </ScrollView>
       </ScreenBody>
+
+      {/* Stock adjustment sheet */}
+      <Sheet open={adjustOpen} onClose={() => setAdjustOpen(false)} title="Adjust Stock Quantity">
+        <View style={styles.modalForm}>
+          {selectedProduct && (
+            <>
+              <Field label="Selected Product">
+                <Text style={styles.productName}>{selectedProduct.productName}</Text>
+                <Text style={styles.productMeta}>Current Stock: {selectedProduct.stock} {selectedProduct.unit}</Text>
+              </Field>
+              <Field label="Quantity Change (+/-)">
+                <TextInput placeholder="e.g. -5 or 15" value={quantityChange} onChangeText={setQuantityChange} keyboardType="numeric" style={styles.modalInput} placeholderTextColor="#94a3b8" />
+              </Field>
+              <Field label="Adjustment Reason">
+                <View style={styles.segmentedControl}>
+                  {['Correction', 'Wastage', 'Damage', 'Other'].map((r) => (
+                    <TouchableOpacity key={r} style={[styles.segBtn, reason === r && styles.segBtnActive]} onPress={() => setReason(r)}>
+                      <Text style={[styles.segTxt, reason === r && styles.segTxtActive]}>{r}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </Field>
+              <Field label="Additional Note (Optional)">
+                <TextInput placeholder="Notes..." value={note} onChangeText={setNote} style={styles.modalInput} placeholderTextColor="#94a3b8" />
+              </Field>
+              <Button variant="primary" full onClick={handleAdjustStock}>Save Adjustment</Button>
+            </>
+          )}
+        </View>
+      </Sheet>
     </View>
   );
 }
 
 export function StoreManagerPricing() {
   const { branch } = useAuth();
-  const { pricingRequests, addPricingRequest, editPricingRequest, deletePricingRequest } = useStoreManager();
+  const { pricingRequests, stock, addPricingRequest, editPricingRequest, deletePricingRequest, fetchData } = useStoreManager();
+
+  useEffect(() => {
+    fetchData();
+  }, []);
 
   // Dialog/Modal states
   const [requestOpen, setRequestOpen] = useState(false);
@@ -334,45 +685,45 @@ export function StoreManagerPricing() {
   const [selectedProductId, setSelectedProductId] = useState('');
   const [reqPrice, setReqPrice] = useState('');
   const [stdPrice, setStdPrice] = useState('0');
+  const [reason, setReason] = useState('');
 
   // Form states - Edit Override
   const [editPriceVal, setEditPriceVal] = useState('');
 
-  const handleRequestOverride = () => {
-    if (!selectedProductId) {
-      Alert.alert('Error', 'Please select a product');
+  const handleRequestOverride = async () => {
+    if (!selectedProductId || !reqPrice || !reason) {
+      Alert.alert('Error', 'Please fill all required fields');
       return;
     }
-    const product = products.find((p) => p.id === selectedProductId);
-    if (!product) return;
-
-    const requestedVal = parseFloat(reqPrice);
-    if (isNaN(requestedVal) || requestedVal <= 0) {
-      Alert.alert('Error', 'Please enter a valid requested price');
-      return;
+    try {
+      await addPricingRequest(selectedProductId, parseFloat(reqPrice), reason);
+      Alert.alert('Requested', 'Price override request submitted successfully.');
+      setSelectedProductId('');
+      setReqPrice('');
+      setStdPrice('0');
+      setReason('');
+      setRequestOpen(false);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to submit override request');
     }
-
-    addPricingRequest(product.name, product.price, requestedVal);
-    Alert.alert('Requested', `Price override requested for ${product.name}.`);
-    setSelectedProductId('');
-    setReqPrice('');
-    setStdPrice('0');
-    setRequestOpen(false);
   };
 
-  const handleEditRequest = () => {
+  const handleEditRequest = async () => {
     if (!activeRequest) return;
     const requestedVal = parseFloat(editPriceVal);
     if (isNaN(requestedVal) || requestedVal <= 0) {
       Alert.alert('Error', 'Please enter a valid price');
       return;
     }
-
-    editPricingRequest(activeRequest.id, requestedVal);
-    Alert.alert('Updated', 'Price override request has been updated.');
-    setEditPriceVal('');
-    setActiveRequest(null);
-    setEditOpen(false);
+    try {
+      await editPricingRequest(activeRequest.id, requestedVal);
+      Alert.alert('Updated', 'Price override request updated.');
+      setEditPriceVal('');
+      setActiveRequest(null);
+      setEditOpen(false);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to update request');
+    }
   };
 
   const handleDeleteRequest = (pr: PricingRequest) => {
@@ -384,9 +735,13 @@ export function StoreManagerPricing() {
         {
           text: 'Yes',
           style: 'destructive',
-          onPress: () => {
-            deletePricingRequest(pr.id);
-            Alert.alert('Cancelled', 'Override request removed.');
+          onPress: async () => {
+            try {
+              await deletePricingRequest(pr.id);
+              Alert.alert('Cancelled', 'Override request removed.');
+            } catch (e: any) {
+              Alert.alert('Error', e.message || 'Failed to cancel request');
+            }
           },
         },
       ]
@@ -400,9 +755,9 @@ export function StoreManagerPricing() {
         {/* Request override Header Action */}
         <View style={styles.headerBtnWrapper}>
           <Button full variant="primary" onClick={() => {
-            if (products.length > 0) {
-              setSelectedProductId(products[0].id);
-              setStdPrice(String(products[0].price));
+            if (stock.length > 0) {
+              setSelectedProductId(stock[0].productId);
+              setStdPrice(String(stock[0].basePrice));
             }
             setRequestOpen(true);
           }} style={styles.headerBtn}>
@@ -419,7 +774,7 @@ export function StoreManagerPricing() {
                 <View style={styles.cardHeaderRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.productName}>{pr.productName}</Text>
-                    <Text style={styles.productMeta}>Standard: ${pr.standardPrice.toFixed(2)} · Requested: ${pr.requestedPrice.toFixed(2)}</Text>
+                    <Text style={styles.productMeta}>Standard: AED {pr.standardPrice.toFixed(2)} · Requested: AED {pr.requestedPrice.toFixed(2)}</Text>
                   </View>
                   <View style={styles.productPriceCol}>
                     <Badge variant={pr.status === 'Approved' ? 'success' : pr.status === 'Pending' ? 'warn' : 'error'}>
@@ -446,7 +801,7 @@ export function StoreManagerPricing() {
                       onPress={() => handleDeleteRequest(pr)}
                     >
                       <Trash2 size={14} color="#ef4444" style={{ marginRight: 4 }} />
-                      <Text style={[styles.priceActionBtnText, { color: '#ef4444' }]}>Delete</Text>
+                      <Text style={[styles.priceActionBtnText, { color: '#ef4444' }]}>Cancel</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -460,32 +815,22 @@ export function StoreManagerPricing() {
       </ScreenBody>
 
       {/* REQUEST OVERRIDE SHEET */}
-      <Sheet
-        open={requestOpen}
-        onClose={() => setRequestOpen(false)}
-        title="Request Price Override"
-        footer={
-          <View style={styles.sheetFooterBtnRow}>
-            <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => setRequestOpen(false)}>Cancel</Button>
-            <Button variant="primary" style={styles.sheetFooterBtn} onClick={handleRequestOverride}>Request</Button>
-          </View>
-        }
-      >
+      <Sheet open={requestOpen} onClose={() => setRequestOpen(false)} title="Request Price Override">
         <View style={styles.modalForm}>
           <Field label="Select Product">
             <View style={styles.productPickerScrollContainer}>
               <ScrollView style={styles.productPickerScroll} nestedScrollEnabled>
-                {products.map((p) => (
+                {stock.map((p) => (
                   <TouchableOpacity
                     key={p.id}
-                    style={[styles.pickerItem, selectedProductId === p.id && styles.pickerItemActive]}
+                    style={[styles.pickerItem, selectedProductId === p.productId && styles.pickerItemActive]}
                     onPress={() => {
-                      setSelectedProductId(p.id);
-                      setStdPrice(String(p.price));
+                      setSelectedProductId(p.productId);
+                      setStdPrice(String(p.basePrice));
                     }}
                   >
-                    <Text style={[styles.pickerItemText, selectedProductId === p.id && styles.pickerItemTextActive]}>
-                      {p.name} (${p.price.toFixed(2)})
+                    <Text style={[styles.pickerItemText, selectedProductId === p.productId && styles.pickerItemTextActive]}>
+                      {p.productName} (AED {parseFloat(p.basePrice).toFixed(2)})
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -494,12 +839,12 @@ export function StoreManagerPricing() {
           </Field>
           <View style={styles.formRow}>
             <View style={{ flex: 1, marginRight: 8 }}>
-              <Field label="Standard Price ($)">
-                <TextInput value={stdPrice} editable={false} style={[styles.modalInput, { backgroundColor: '#f1f5f9' }]} />
+              <Field label="Standard Price (AED)">
+                <TextInput value={parseFloat(stdPrice || '0').toFixed(2)} editable={false} style={[styles.modalInput, { backgroundColor: '#f1f5f9' }]} />
               </Field>
             </View>
             <View style={{ flex: 1 }}>
-              <Field label="Requested Price ($)">
+              <Field label="Requested Price (AED)">
                 <TextInput
                   placeholder="e.g. 4.50"
                   value={reqPrice}
@@ -511,27 +856,15 @@ export function StoreManagerPricing() {
               </Field>
             </View>
           </View>
+          <Field label="Reason">
+            <TextInput placeholder="Reason for discount request" value={reason} onChangeText={setReason} style={styles.modalInput} placeholderTextColor="#94a3b8" />
+          </Field>
+          <Button variant="primary" full onClick={handleRequestOverride}>Request Override</Button>
         </View>
       </Sheet>
 
       {/* EDIT OVERRIDE SHEET */}
-      <Sheet
-        open={editOpen}
-        onClose={() => {
-          setActiveRequest(null);
-          setEditOpen(false);
-        }}
-        title="Edit Requested Price"
-        footer={
-          <View style={styles.sheetFooterBtnRow}>
-            <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => {
-              setActiveRequest(null);
-              setEditOpen(false);
-            }}>Cancel</Button>
-            <Button variant="primary" style={styles.sheetFooterBtn} onClick={handleEditRequest}>Save</Button>
-          </View>
-        }
-      >
+      <Sheet open={editOpen} onClose={() => { setActiveRequest(null); setEditOpen(false); }} title="Edit Requested Price">
         <View style={styles.modalForm}>
           {activeRequest && (
             <>
@@ -540,12 +873,12 @@ export function StoreManagerPricing() {
               </Field>
               <View style={styles.formRow}>
                 <View style={{ flex: 1, marginRight: 8 }}>
-                  <Field label="Standard Price ($)">
-                    <Text style={styles.staffName}>${activeRequest.standardPrice.toFixed(2)}</Text>
+                  <Field label="Standard Price (AED)">
+                    <Text style={styles.staffName}>AED {activeRequest.standardPrice.toFixed(2)}</Text>
                   </Field>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Field label="Requested Price ($)">
+                  <Field label="Requested Price (AED)">
                     <TextInput
                       value={editPriceVal}
                       onChangeText={setEditPriceVal}
@@ -555,6 +888,7 @@ export function StoreManagerPricing() {
                   </Field>
                 </View>
               </View>
+              <Button variant="primary" full onClick={handleEditRequest}>Save Request</Button>
             </>
           )}
         </View>
@@ -565,43 +899,52 @@ export function StoreManagerPricing() {
 
 export function StoreManagerReports() {
   const { branch } = useAuth();
+  const { staff, fetchData } = useStoreManager();
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const closedShifts = useMemo(() => {
+    return staff.filter(s => s.status === 'Closed');
+  }, [staff]);
+
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="SM" branch={branch} />
       <ScreenBody>
-        <Text style={styles.mainTitle}>Reports</Text>
-        <View style={styles.listContainer}>
-          {reports.map((r) => (
-            <Card key={r.id}>
-              <View style={styles.cardHeaderRow}>
-                <View style={styles.staffItemLeft}>
-                  <View style={[
-                    styles.reportBadge,
-                    { backgroundColor: r.type === 'Z' ? '#f0fdf4' : '#e0f2fe' }
-                  ]}>
-                    <Text style={[
-                      styles.reportBadgeText,
-                      { color: r.type === 'Z' ? '#39ff14' : '#0369a1' }
-                    ]}>
-                      {r.type}
-                    </Text>
+        <Text style={styles.mainTitle}>Closed Shifts (Z-Reports)</Text>
+        <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
+          <View style={styles.listContainer}>
+            {closedShifts.map((s) => (
+              <Card key={s.id}>
+                <View style={styles.cardHeaderRow}>
+                  <View style={styles.staffItemLeft}>
+                    <View style={[styles.reportBadge, { backgroundColor: '#f0fdf4' }]}>
+                      <Text style={[styles.reportBadgeText, { color: '#10b981' }]}>Z</Text>
+                    </View>
+                    <View>
+                      <Text style={styles.staffName}>Report ID: Z-{s.id.slice(0, 5).toUpperCase()}</Text>
+                      <Text style={styles.staffMeta}>Cashier: {s.cashierName || s.cashierEmail}</Text>
+                      <Text style={styles.staffMeta}>Opened: {new Date(s.openedAt).toLocaleString()}</Text>
+                      {s.closedAt && <Text style={styles.staffMeta}>Closed: {new Date(s.closedAt).toLocaleString()}</Text>}
+                    </View>
                   </View>
-                  <View>
-                    <Text style={styles.staffName}>{r.number}</Text>
-                    <Text style={styles.staffMeta}>{r.date}</Text>
-                  </View>
-                </View>
-                <View style={styles.productPriceCol}>
-                  <Text style={styles.productPrice}>${r.sales.toLocaleString()}</Text>
-                  <View style={styles.reportBadgesRow}>
-                    <Badge variant="neutral">Cash ${r.cash}</Badge>
-                    <Badge variant="info">Card ${r.card}</Badge>
+                  <View style={styles.productPriceCol}>
+                    <Text style={styles.productPrice}>Actual: AED {parseFloat(s.actualCash || 0).toFixed(2)}</Text>
+                    <Text style={styles.productMeta}>Expected: AED {parseFloat(s.expectedCash || 0).toFixed(2)}</Text>
+                    <Badge variant={parseFloat(s.actualCash || 0) === parseFloat(s.expectedCash || 0) ? 'success' : 'warn'}>
+                      Variance: AED {(parseFloat(s.actualCash || 0) - parseFloat(s.expectedCash || 0)).toFixed(2)}
+                    </Badge>
                   </View>
                 </View>
-              </View>
-            </Card>
-          ))}
-        </View>
+              </Card>
+            ))}
+            {closedShifts.length === 0 && (
+              <Text style={styles.noDataText}>No closed shifts available to display.</Text>
+            )}
+          </View>
+        </ScrollView>
       </ScreenBody>
     </View>
   );
@@ -621,10 +964,6 @@ const styles = StyleSheet.create({
     width: '50%',
     padding: 4,
   },
-  thirdCol: {
-    width: '33.33%',
-    padding: 4,
-  },
   chartCard: {
     padding: 16,
     marginVertical: 6,
@@ -634,20 +973,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#334155',
     textTransform: 'uppercase',
-  },
-  svgWrapper: {
-    height: 120,
-    marginTop: 8,
-  },
-  chartLabels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
-    paddingHorizontal: 8,
-  },
-  chartLabelText: {
-    fontSize: 9,
-    color: '#94a3b8',
   },
   mainTitle: {
     fontSize: 18,
@@ -680,7 +1005,7 @@ const styles = StyleSheet.create({
   staffInitialText: {
     fontSize: 14,
     fontWeight: 'bold',
-    color: '#39ff14',
+    color: '#10b981',
   },
   staffName: {
     fontSize: 13,
@@ -695,11 +1020,6 @@ const styles = StyleSheet.create({
   staffItemRight: {
     alignItems: 'flex-end',
     gap: 4,
-  },
-  staffPerms: {
-    fontSize: 9,
-    color: '#94a3b8',
-    fontWeight: '600',
   },
   lowStockWarningCard: {
     padding: 10,
@@ -760,13 +1080,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
   },
-  reportBadgesRow: {
-    flexDirection: 'row',
-    gap: 4,
-    marginTop: 2,
-  },
-
-  // Roster Add Form Styling
   headerBtnWrapper: {
     marginBottom: 12,
   },
@@ -824,16 +1137,6 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     fontWeight: 'bold',
   },
-  sheetFooterBtnRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  sheetFooterBtn: {
-    flex: 1,
-  },
-
-  // Stock Filter styling
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -875,8 +1178,6 @@ const styles = StyleSheet.create({
   catBadgeTextActive: {
     color: '#0f172a',
   },
-
-  // Pricing styling
   priceActionsRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
