@@ -24,12 +24,17 @@ import {
   FileText,
   DollarSign,
   Download,
+  Edit,
+  Trash,
 } from "lucide-react";
 import {
   getInventoryDataServerFn,
   stockTransferServerFn,
   draftPurchaseOrderServerFn,
-  getInventoryLedgerFn, applyClearanceFn,
+  getInventoryLedgerFn,
+  applyClearanceFn,
+  editStockTransferServerFn,
+  deleteStockTransferServerFn,
 } from "@/lib/inventory-manager-server";
 
 export const Route = createFileRoute("/inventory-manager")({
@@ -92,6 +97,52 @@ function InventoryManager() {
   });
 
   const [searchQuery, setSearchQuery] = useState("");
+
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingTransfer, setEditingTransfer] = useState<any>(null);
+  const [editQty, setEditQty] = useState(1);
+
+  const handleEditTransfer = (t: any) => {
+    setEditingTransfer(t);
+    setEditQty(t.quantity);
+    setEditModalOpen(true);
+  };
+
+  const handleEditSubmit = async () => {
+    if (!editQty || editQty <= 0) {
+      toast.error("Quantity must be a positive number greater than 0");
+      return;
+    }
+    setIsEditing(true);
+    try {
+      await editStockTransferServerFn({ data: { id: editingTransfer.id, quantity: Number(editQty) } });
+      toast.success("Stock transfer updated successfully!");
+      setEditModalOpen(false);
+      router.invalidate();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to update stock transfer");
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
+  const handleDeleteTransfer = async (t: any) => {
+    const confirmed = window.confirm(
+      t.status === "Completed"
+        ? `Are you sure you want to delete this completed stock transfer? Stock levels will be rolled back (reversed) from target and source branches.`
+        : `Are you sure you want to delete this stock transfer?`
+    );
+    if (!confirmed) return;
+
+    try {
+      await deleteStockTransferServerFn({ data: { id: t.id } });
+      toast.success("Stock transfer deleted successfully!");
+      router.invalidate();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to delete stock transfer");
+    }
+  };
   const applyClearance = async (productId: string) => {
     try {
       await applyClearanceFn({ data: { productId, discountPct: 20 } });
@@ -369,13 +420,14 @@ function InventoryManager() {
                     <th className="px-4 py-3 font-medium">Origin</th>
                     <th className="px-4 py-3 font-medium">Destination</th>
                     <th className="px-4 py-3 font-medium">Items</th>
-                    <th className="px-4 py-3 font-medium text-right">Status</th>
+                    <th className="px-4 py-3 font-medium">Status</th>
+                    <th className="px-4 py-3 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {transfers.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                      <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
                         No recent transfers.
                       </td>
                     </tr>
@@ -394,10 +446,34 @@ function InventoryManager() {
                         <div className="font-medium text-ink">{t.quantity} units</div>
                         <div className="text-xs">{t.productName}</div>
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3">
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-xs font-bold text-success">
                           <CheckCircle2 className="h-3 w-3" /> {t.status}
                         </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex justify-end items-center gap-1.5">
+                          {t.status !== "Completed" && (
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-ink"
+                              onClick={() => handleEditTransfer(t)}
+                              title="Edit Transfer"
+                            >
+                              <Edit className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                            onClick={() => handleDeleteTransfer(t)}
+                            title="Delete Transfer"
+                          >
+                            <Trash className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -881,6 +957,42 @@ function InventoryManager() {
                   {isDraftingPo ? "Processing..." : "Create Draft"}
                 </Button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Edit Stock Transfer Modal */}
+      {editModalOpen && editingTransfer && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="panel max-w-md w-full space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <h3 className="font-bold text-ink">Edit Stock Transfer</h3>
+              <button onClick={() => setEditModalOpen(false)} className="text-muted-foreground hover:text-ink">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-4 py-2">
+              <div className="text-sm text-muted-foreground">
+                Editing transfer quantity for <span className="font-semibold text-ink">{editingTransfer.productName}</span> from <span className="font-semibold text-ink">{editingTransfer.sourceBranchName}</span> to <span className="font-semibold text-ink">{editingTransfer.destinationBranchName}</span>.
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-muted-foreground">Transfer Quantity</label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={editQty}
+                  onChange={(e) => setEditQty(Number(e.target.value))}
+                  className="h-10"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-border pt-3">
+              <Button variant="outline" onClick={() => setEditModalOpen(false)} disabled={isEditing}>
+                Cancel
+              </Button>
+              <Button onClick={handleEditSubmit} disabled={isEditing}>
+                {isEditing ? "Saving..." : "Save Changes"}
+              </Button>
             </div>
           </div>
         </div>

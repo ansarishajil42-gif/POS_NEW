@@ -519,4 +519,149 @@ router.get("/ledger", async (req, res) => {
   }
 });
 
+// 7. Edit Stock Transfer
+router.patch("/transfer/:id", async (req, res) => {
+  const { id } = req.params;
+  const { quantity } = req.body;
+
+  if (!quantity || isNaN(Number(quantity)) || Number(quantity) <= 0) {
+    return res.status(400).json({ error: "Quantity must be a positive number greater than 0" });
+  }
+
+  try {
+    const { tenantId, branchScope } = await getInventoryContext(req as AuthRequest);
+
+    const [transfer] = await db
+      .select()
+      .from(stockTransfers)
+      .where(and(eq(stockTransfers.id, id), eq(stockTransfers.tenantId, tenantId)));
+
+    if (!transfer) {
+      return res.status(404).json({ error: "Stock transfer not found" });
+    }
+
+    if (branchScope) {
+      const hasSourceAccess = branchScope.includes(transfer.sourceBranchId);
+      const hasTargetAccess = branchScope.includes(transfer.destinationBranchId);
+      if (!hasSourceAccess && !hasTargetAccess) {
+        return res.status(403).json({ error: "Forbidden: Unauthorized branch scope" });
+      }
+    }
+
+    if (transfer.status === "Completed") {
+      return res.status(400).json({ error: "Cannot edit a completed stock transfer" });
+    }
+
+    await db
+      .update(stockTransfers)
+      .set({ quantity: Number(quantity) })
+      .where(eq(stockTransfers.id, id));
+
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("Edit stock transfer error:", error);
+    res.status(500).json({ error: error.message || "Internal server error" });
+  }
+});
+
+// 8. Delete Stock Transfer (with safety rollback)
+router.delete("/transfer/:id", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const { tenantId, branchScope, userId } = await getInventoryContext(req as AuthRequest);
+
+    const [transfer] = await db
+      .select()
+      .from(stockTransfers)
+      .where(and(eq(stockTransfers.id, id), eq(stockTransfers.tenantId, tenantId)));
+
+    if (!transfer) {
+      return res.status(404).json({ error: "Stock transfer not found" });
+    }
+
+    if (branchScope) {
+      const hasSourceAccess = branchScope.includes(transfer.sourceBranchId);
+      const hasTargetAccess = branchScope.includes(transfer.destinationBranchId);
+      if (!hasSourceAccess && !hasTargetAccess) {
+        return res.status(403).json({ error: "Forbidden: Unauthorized branch scope" });
+      }
+    }
+
+    await db.transaction(async (tx) => {
+      if (transfer.status === "Completed") {
+        // Rollback stock levels
+        const [destStock] = await tx
+          .select()
+          .from(stockLevels)
+          .where(and(eq(stockLevels.productId, transfer.productId), eq(stockLevels.branchId, transfer.destinationBranchId)))
+          .limit(1);
+
+        if (!destStock || destStock.stock < transfer.quantity) {
+          throw new Error("Insufficient stock at destination branch to rollback transfer");
+        }
+
+        // Decrement destination
+        await tx
+          .update(stockLevels)
+          .set({ stock: sql`${stockLevels.stock} - ${transfer.quantity}` })
+          .where(eq(stockLevels.id, destStock.id));
+
+        // Increment source
+        const [sourceStock] = await tx
+          .select()
+          .from(stockLevels)
+          .where(and(eq(stockLevels.productId, transfer.productId), eq(stockLevels.branchId, transfer.sourceBranchId)))
+          .limit(1);
+
+        if (sourceStock) {
+          await tx
+            .update(stockLevels)
+            .set({ stock: sql`${stockLevels.stock} + ${transfer.quantity}` })
+            .where(eq(stockLevels.id, sourceStock.id));
+        } else {
+          await tx.insert(stockLevels).values({
+            productId: transfer.productId,
+            branchId: transfer.sourceBranchId,
+            stock: transfer.quantity,
+            reorderLevel: 10,
+          });
+        }
+
+        // Ledger reversal entries
+        await tx.insert(inventoryLedger).values({
+          tenantId,
+          branchId: transfer.destinationBranchId,
+          productId: transfer.productId,
+          transactionType: "Transfer Rollback Out",
+          previousQuantity: destStock.stock,
+          changedQuantity: -Number(transfer.quantity),
+          newQuantity: destStock.stock - Number(transfer.quantity),
+          createdBy: userId,
+        });
+
+        const prevSourceQty = sourceStock ? sourceStock.stock : 0;
+        await tx.insert(inventoryLedger).values({
+          tenantId,
+          branchId: transfer.sourceBranchId,
+          productId: transfer.productId,
+          transactionType: "Transfer Rollback In",
+          previousQuantity: prevSourceQty,
+          changedQuantity: Number(transfer.quantity),
+          newQuantity: prevSourceQty + Number(transfer.quantity),
+          createdBy: userId,
+        });
+      }
+
+      // Delete the transfer record
+      await tx.delete(stockTransfers).where(eq(stockTransfers.id, id));
+    });
+
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("Delete stock transfer error:", error);
+    res.status(500).json({ error: error.message || "Internal server error" });
+  }
+});
+
 export default router;

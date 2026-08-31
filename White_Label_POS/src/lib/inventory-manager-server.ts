@@ -528,3 +528,130 @@ export const getInventoryLedgerFn = createServerFn({ method: 'GET' })
     }
   });
 
+export const editStockTransferServerFn = createServerFn({ method: "POST" })
+  .validator((d: { id: string; quantity: number }) => d)
+  .handler(async ({ data }) => {
+    const { tenantId, branchScope } = await getInventoryManagerContext();
+
+    const [transfer] = await db
+      .select()
+      .from(stockTransfers)
+      .where(and(eq(stockTransfers.id, data.id), eq(stockTransfers.tenantId, tenantId)));
+
+    if (!transfer) throw new Error("Stock transfer not found");
+
+    if (branchScope) {
+      const hasSourceAccess = branchScope.includes(transfer.sourceBranchId);
+      const hasTargetAccess = branchScope.includes(transfer.destinationBranchId);
+      if (!hasSourceAccess && !hasTargetAccess) {
+        throw new Error("Forbidden: Unauthorized branch scope");
+      }
+    }
+
+    if (transfer.status === "Completed") {
+      throw new Error("Cannot edit a completed stock transfer");
+    }
+
+    await db
+      .update(stockTransfers)
+      .set({ quantity: data.quantity })
+      .where(eq(stockTransfers.id, data.id));
+
+    return { success: true };
+  });
+
+export const deleteStockTransferServerFn = createServerFn({ method: "POST" })
+  .validator((d: { id: string }) => d)
+  .handler(async ({ data }) => {
+    const { tenantId, branchScope } = await getInventoryManagerContext();
+    const session = await getSessionServerFn();
+    const userId = session.session?.id;
+    if (!userId) throw new Error("Unauthorized");
+
+    const [transfer] = await db
+      .select()
+      .from(stockTransfers)
+      .where(and(eq(stockTransfers.id, data.id), eq(stockTransfers.tenantId, tenantId)));
+
+    if (!transfer) throw new Error("Stock transfer not found");
+
+    if (branchScope) {
+      const hasSourceAccess = branchScope.includes(transfer.sourceBranchId);
+      const hasTargetAccess = branchScope.includes(transfer.destinationBranchId);
+      if (!hasSourceAccess && !hasTargetAccess) {
+        throw new Error("Forbidden: Unauthorized branch scope");
+      }
+    }
+
+    await db.transaction(async (tx) => {
+      if (transfer.status === "Completed") {
+        // Rollback stock levels
+        const [destStock] = await tx
+          .select()
+          .from(stockLevels)
+          .where(and(eq(stockLevels.productId, transfer.productId), eq(stockLevels.branchId, transfer.destinationBranchId)))
+          .limit(1);
+
+        if (!destStock || destStock.stock < transfer.quantity) {
+          throw new Error("Insufficient stock at destination branch to rollback transfer");
+        }
+
+        // Decrement destination
+        await tx
+          .update(stockLevels)
+          .set({ stock: sql`${stockLevels.stock} - ${transfer.quantity}` })
+          .where(eq(stockLevels.id, destStock.id));
+
+        // Increment source
+        const [sourceStock] = await tx
+          .select()
+          .from(stockLevels)
+          .where(and(eq(stockLevels.productId, transfer.productId), eq(stockLevels.branchId, transfer.sourceBranchId)))
+          .limit(1);
+
+        if (sourceStock) {
+          await tx
+            .update(stockLevels)
+            .set({ stock: sql`${stockLevels.stock} + ${transfer.quantity}` })
+            .where(eq(stockLevels.id, sourceStock.id));
+        } else {
+          await tx.insert(stockLevels).values({
+            productId: transfer.productId,
+            branchId: transfer.sourceBranchId,
+            stock: transfer.quantity,
+            reorderLevel: 10,
+          });
+        }
+
+        // Ledger reversal entries
+        await tx.insert(schema.inventoryLedger).values({
+          tenantId,
+          branchId: transfer.destinationBranchId,
+          productId: transfer.productId,
+          transactionType: "Transfer Rollback Out",
+          previousQuantity: destStock.stock,
+          changedQuantity: -Number(transfer.quantity),
+          newQuantity: destStock.stock - Number(transfer.quantity),
+          createdBy: userId,
+        });
+
+        const prevSourceQty = sourceStock ? sourceStock.stock : 0;
+        await tx.insert(schema.inventoryLedger).values({
+          tenantId,
+          branchId: transfer.sourceBranchId,
+          productId: transfer.productId,
+          transactionType: "Transfer Rollback In",
+          previousQuantity: prevSourceQty,
+          changedQuantity: Number(transfer.quantity),
+          newQuantity: prevSourceQty + Number(transfer.quantity),
+          createdBy: userId,
+        });
+      }
+
+      // Delete the transfer record
+      await tx.delete(stockTransfers).where(eq(stockTransfers.id, data.id));
+    });
+
+    return { success: true };
+  });
+

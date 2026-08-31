@@ -503,7 +503,7 @@ export function InventoryBatches() {
 
 export function InventoryTransfers() {
   const { branch } = useAuth();
-  const { products, transfers, branches, allTenantBranches, addTransfer } = useInventoryManager();
+  const { products, transfers, branches, allTenantBranches, addTransfer, editTransfer, deleteTransfer } = useInventoryManager();
 
   // Toast notifications state
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
@@ -515,6 +515,14 @@ export function InventoryTransfers() {
   const [qtyVal, setQtyVal] = useState('');
   const [originId, setOriginId] = useState('');
   const [destinationId, setDestinationId] = useState('');
+
+  // Edit transfer states
+  const [editTransferOpen, setEditTransferOpen] = useState(false);
+  const [editingTransferId, setEditingTransferId] = useState('');
+  const [editQtyVal, setEditQtyVal] = useState('');
+  const [editingProductLabel, setEditingProductLabel] = useState('');
+  const [editingOriginLabel, setEditingOriginLabel] = useState('');
+  const [editingDestLabel, setEditingDestLabel] = useState('');
 
   // Dropdowns filters searches
   const [productSearch, setProductSearch] = useState('');
@@ -552,6 +560,56 @@ export function InventoryTransfers() {
     } catch (e: any) {
       showToast(e.message || 'Failed to initiate transfer', 'error');
     }
+  };
+
+  const handleEditClick = (t: any) => {
+    setEditingTransferId(t.transferId);
+    setEditQtyVal(String(t.qty));
+    setEditingProductLabel(t.item);
+    setEditingOriginLabel(t.from);
+    setEditingDestLabel(t.to);
+    setEditTransferOpen(true);
+  };
+
+  const handleEditSubmit = async () => {
+    const qty = parseInt(editQtyVal);
+    if (isNaN(qty) || qty <= 0) {
+      showToast('Please enter a valid transfer quantity.', 'error');
+      return;
+    }
+    try {
+      await editTransfer(editingTransferId, qty);
+      showToast('Stock transfer updated successfully.', 'success');
+      setEditTransferOpen(false);
+      setEditingTransferId('');
+      setEditQtyVal('');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to update transfer', 'error');
+    }
+  };
+
+  const handleDeleteClick = (t: any) => {
+    Alert.alert(
+      'Delete Transfer',
+      t.status === 'Completed'
+        ? `Are you sure you want to delete this completed stock transfer? Stock levels will be rolled back (reversed) from source and destination branches.`
+        : `Are you sure you want to delete this stock transfer?`,
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteTransfer(t.transferId);
+              showToast('Stock transfer deleted successfully.', 'success');
+            } catch (e: any) {
+              showToast(e.message || 'Failed to delete transfer', 'error');
+            }
+          },
+        },
+      ]
+    );
   };
 
   // Search filter list computation
@@ -611,6 +669,16 @@ export function InventoryTransfers() {
                     </Badge>
                   </View>
                 </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 8, borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingTop: 8 }}>
+                  {t.status !== 'Completed' && (
+                    <Button variant="secondary" style={{ paddingVertical: 4, paddingHorizontal: 10 }} onClick={() => handleEditClick(t)}>
+                      Edit
+                    </Button>
+                  )}
+                  <Button variant="danger" style={{ paddingVertical: 4, paddingHorizontal: 10 }} onClick={() => handleDeleteClick(t)}>
+                    Delete
+                  </Button>
+                </View>
               </Card>
             ))}
             {transfers.length === 0 && (
@@ -619,6 +687,36 @@ export function InventoryTransfers() {
           </View>
         </ScrollView>
       </ScreenBody>
+
+      {/* Edit Transfer Sheet Modal */}
+      <Sheet
+        open={editTransferOpen}
+        onClose={() => setEditTransferOpen(false)}
+        title="Edit Stock Transfer"
+        footer={
+          <View style={styles.sheetFooterBtnRow}>
+            <Button variant="secondary" style={styles.sheetFooterBtn} onClick={() => setEditTransferOpen(false)}>Cancel</Button>
+            <Button variant="primary" style={styles.sheetFooterBtn} onClick={handleEditSubmit}>Save</Button>
+          </View>
+        }
+      >
+        <View style={styles.modalForm}>
+          <Field label="Product">
+            <Text style={styles.productName}>{editingProductLabel}</Text>
+            <Text style={styles.productMeta}>From: {editingOriginLabel} → To: {editingDestLabel}</Text>
+          </Field>
+          <Field label="Quantity to Move">
+            <TextInput
+              placeholder="e.g. 50"
+              value={editQtyVal}
+              onChangeText={setEditQtyVal}
+              keyboardType="numeric"
+              placeholderTextColor="#94a3b8"
+              style={styles.modalInput}
+            />
+          </Field>
+        </View>
+      </Sheet>
 
       {/* New Transfer Wizard */}
       <Sheet

@@ -75,6 +75,8 @@ interface InventoryManagerContextProps {
   updateClearancePrice: (productId: string, discountPct: number) => Promise<void>;
   raisePoDraft: (vendorId: string, branchId: string, productId: string, qty: number) => Promise<void>;
   adjustStock: (productId: string, branchId: string, batchId: string | null, quantityChange: number, reason: string) => Promise<void>;
+  editTransfer: (id: string, quantity: number) => Promise<void>;
+  deleteTransfer: (id: string) => Promise<void>;
 }
 
 const InventoryManagerContext = createContext<InventoryManagerContextProps | null>(null);
@@ -199,6 +201,16 @@ export function InventoryManagerProvider({ children }: { children: ReactNode }) 
     await fetchData();
   };
 
+  const editTransfer = async (id: string, quantity: number) => {
+    await apiClient.patch(`/inventory/transfer/${id}`, { quantity });
+    await fetchData();
+  };
+
+  const deleteTransfer = async (id: string) => {
+    await apiClient.delete(`/inventory/transfer/${id}`);
+    await fetchData();
+  };
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -218,6 +230,8 @@ export function InventoryManagerProvider({ children }: { children: ReactNode }) 
       updateClearancePrice,
       raisePoDraft,
       adjustStock,
+      editTransfer,
+      deleteTransfer,
     }),
     [products, transfers, batches, ledger, branches, allTenantBranches, vendors, loading]
   );
