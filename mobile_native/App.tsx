@@ -239,7 +239,7 @@ function AppInner() {
     <PhoneFrame>
       {role === 'super-admin' ? (
         <SuperAdminProvider>{content}</SuperAdminProvider>
-      ) : role === 'head-office' ? (
+      ) : (role === 'head-office' || role === 'purchasing-officer') ? (
         <HeadOfficeProvider>{content}</HeadOfficeProvider>
       ) : role === 'store-manager' ? (
         <StoreManagerProvider>{content}</StoreManagerProvider>
