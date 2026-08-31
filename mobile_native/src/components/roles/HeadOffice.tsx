@@ -3842,10 +3842,21 @@ export function PromotionsScreen({ onBack }: { onBack: () => void }) {
   const handleArchive = async (id: string) => {
     try {
       await archivePromotion(id);
-      showToast('Promotion archived successfully.', 'success');
+      showToast('Promotion deleted successfully.', 'success');
     } catch (e: any) {
-      showToast(e.message || 'Failed to archive promotion', 'error');
+      showToast(e.message || 'Failed to delete promotion', 'error');
     }
+  };
+
+  const handleDelete = (id: string, name: string) => {
+    Alert.alert(
+      "Delete Promotion",
+      `Are you sure you want to delete the promotion "${name}"?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: () => handleArchive(id) }
+      ]
+    );
   };
 
   return (
@@ -3893,9 +3904,9 @@ export function PromotionsScreen({ onBack }: { onBack: () => void }) {
                         <Button
                           variant="danger"
                           style={{ paddingVertical: 4, paddingHorizontal: 6 }}
-                          onClick={() => handleArchive(p.id)}
+                          onClick={() => handleDelete(p.id, p.name)}
                         >
-                          Archive
+                          Delete
                         </Button>
                       </View>
                     </View>

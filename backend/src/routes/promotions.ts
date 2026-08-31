@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { promotions } from "../db/schema.js";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, ne } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middleware/auth.js";
 import { logAuditAction } from "./audit-helper.js";
 
@@ -16,12 +16,12 @@ router.get("/", async (req, res) => {
   const status = req.query.status ? String(req.query.status) : null; // Active, Inactive, Archived
 
   try {
-    let whereClause = eq(promotions.tenantId, tenantId);
+    let whereClause;
     if (status) {
-      whereClause = and(eq(promotions.tenantId, tenantId), eq(promotions.status, status)) as any;
+      whereClause = and(eq(promotions.tenantId, tenantId), eq(promotions.status, status));
     } else {
-      // By default show all except Archived if status filter is empty
-      whereClause = and(eq(promotions.tenantId, tenantId)) as any;
+      // By default show all except Archived if status filter is empty (align with Web app)
+      whereClause = and(eq(promotions.tenantId, tenantId), ne(promotions.status, "Archived"));
     }
 
     const results = await db
@@ -70,12 +70,14 @@ router.post("/", async (req, res) => {
   if (!startDate || !endDate) return res.status(400).json({ error: "Start and end dates are required" });
 
   try {
+    const normalizedType = String(discountType).toLowerCase() === "fixed" ? "Fixed" : "Percentage";
+
     const newPromo = await db
       .insert(promotions)
       .values({
         tenantId,
         name: name.trim(),
-        discountType,
+        discountType: normalizedType,
         discountValue: Number(discountValue).toFixed(2),
         startDate: new Date(startDate),
         endDate: new Date(endDate),

@@ -620,16 +620,22 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
         setPromotions([]);
         return;
       }
-      const formatted = data.map((p: any) => ({
-        id: p.id,
-        name: p.name,
-        type: p.type || p.discountType || 'Discount',
-        target: p.target || 'All',
-        value: p.discountValue ? `${Number(p.discountValue)}% OFF` : (p.value || 'N/A'),
-        startDate: p.startDate ? p.startDate.split('T')[0] : '',
-        endDate: p.endDate ? p.endDate.split('T')[0] : '',
-        status: p.status === 'Archived' ? 'Ended' : p.status,
-      }));
+      const formatted = data.map((p: any) => {
+        const isFixed = p.discountType?.toLowerCase() === 'fixed';
+        const displayValue = isFixed 
+          ? `AED ${Number(p.discountValue || 0).toFixed(2)}` 
+          : `${Number(p.discountValue || 0)}% OFF`;
+        return {
+          id: p.id,
+          name: p.name,
+          type: p.type || p.discountType || 'Discount',
+          target: p.target || 'All',
+          value: displayValue,
+          startDate: p.startDate ? p.startDate.split('T')[0] : '',
+          endDate: p.endDate ? p.endDate.split('T')[0] : '',
+          status: p.status === 'Archived' ? 'Ended' : p.status,
+        };
+      });
       setPromotions(formatted);
     } catch (error) {
       console.warn('fetchPromotions: Endpoint offline or returned error');

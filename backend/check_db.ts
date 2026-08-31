@@ -6,14 +6,13 @@ const db = drizzle(sqlClient);
 
 async function check() {
   try {
-    const overrides = await db.execute(sql`SELECT count(*) FROM price_override_requests`);
-    console.log('price_override_requests count:', overrides);
+    const tables = await db.execute(sql`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name`);
+    console.log('--- DATABASE TABLES ---');
+    console.log(tables.map(t => t.table_name));
 
-    const audits = await db.execute(sql`SELECT count(*) FROM audit_logs`);
-    console.log('audit_logs count:', audits);
-
-    const customerCols = await db.execute(sql`SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'customers'`);
-    console.log('customers columns:', customerCols);
+    const promotionsRows = await db.execute(sql`SELECT * FROM promotions`);
+    console.log('--- PROMOTIONS ROWS ---');
+    console.log(promotionsRows);
   } catch (error) {
     console.error(error);
   } finally {
