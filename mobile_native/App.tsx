@@ -91,7 +91,11 @@ const roleTabs: Record<string, Tab[]> = {
     { key: 'ledger', label: 'Ledger', icon: 'file' },
   ],
   'purchasing-officer': [
-    { key: 'purchasing', label: 'Purchasing', icon: 'cart' },
+    { key: 'pos', label: 'POs', icon: 'clipboard' },
+    { key: 'grns', label: 'GRNs', icon: 'check' },
+    { key: 'invoices', label: 'Invoices', icon: 'receipt' },
+    { key: 'payable', label: 'Payables', icon: 'wallet' },
+    { key: 'vendors', label: 'Vendors', icon: 'truck' },
   ],
   cashier: [
     { key: 'till', label: 'Till', icon: 'cart' },
@@ -154,7 +158,11 @@ function RoleRouter({ role }: { role: string }) {
     }
     if (role === 'purchasing-officer') {
       switch (active) {
-        case 'purchasing': return <HeadOfficePurchasing />;
+        case 'pos': return <HeadOfficePurchasing stepOverride="po" />;
+        case 'grns': return <HeadOfficePurchasing stepOverride="grn" />;
+        case 'invoices': return <HeadOfficePurchasing stepOverride="invoice" />;
+        case 'payable': return <HeadOfficePurchasing stepOverride="invoice" />;
+        case 'vendors': return <HeadOfficePurchasing stepOverride="vendors" />;
       }
     }
     if (role === 'cashier') {

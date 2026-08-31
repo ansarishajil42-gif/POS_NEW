@@ -626,7 +626,7 @@ export function ProductDetail({ id, onBack }: { id: string; onBack: () => void }
   );
 }
 
-export function HeadOfficePurchasing() {
+export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | 'grn' | 'invoice' | 'vendors' }) {
   const { branch, role } = useAuth();
   const roleLabel = role === 'purchasing-officer' ? 'PO' : 'HO';
   const { purchases, vendors, products, branches, createPurchaseOrder, recordGRN, convertToInvoice, addVendor, updateVendor, deleteVendor } = useHeadOffice();
@@ -634,7 +634,9 @@ export function HeadOfficePurchasing() {
   const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
   const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
 
-  const [step, setStep] = useState<'po' | 'grn' | 'invoice' | 'vendors'>('po');
+  const [localStep, setLocalStep] = useState<'po' | 'grn' | 'invoice' | 'vendors'>('po');
+  const step = stepOverride || localStep;
+  const setStep = stepOverride ? () => {} : setLocalStep;
 
   // PO Form
   const [poOpen, setPoOpen] = useState(false);
@@ -1070,22 +1072,24 @@ export function HeadOfficePurchasing() {
           )}
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-          <View style={styles.tabButtonsRow}>
-            <TouchableOpacity onPress={() => setStep('po')} style={[styles.tabBtn, step === 'po' && styles.tabBtnActive, { minWidth: 80 }]}>
-              <Text style={[styles.tabBtnText, step === 'po' && styles.tabBtnTextActive]}>1. POs</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setStep('grn')} style={[styles.tabBtn, step === 'grn' && styles.tabBtnActive, { minWidth: 80 }]}>
-              <Text style={[styles.tabBtnText, step === 'grn' && styles.tabBtnTextActive]}>2. GRNs</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setStep('invoice')} style={[styles.tabBtn, step === 'invoice' && styles.tabBtnActive, { minWidth: 80 }]}>
-              <Text style={[styles.tabBtnText, step === 'invoice' && styles.tabBtnTextActive]}>3. Invoices</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setStep('vendors')} style={[styles.tabBtn, step === 'vendors' && styles.tabBtnActive, { minWidth: 80 }]}>
-              <Text style={[styles.tabBtnText, step === 'vendors' && styles.tabBtnTextActive]}>Vendors</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
+        {!stepOverride && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+            <View style={styles.tabButtonsRow}>
+              <TouchableOpacity onPress={() => setStep('po')} style={[styles.tabBtn, step === 'po' && styles.tabBtnActive, { minWidth: 80 }]}>
+                <Text style={[styles.tabBtnText, step === 'po' && styles.tabBtnTextActive]}>1. POs</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setStep('grn')} style={[styles.tabBtn, step === 'grn' && styles.tabBtnActive, { minWidth: 80 }]}>
+                <Text style={[styles.tabBtnText, step === 'grn' && styles.tabBtnTextActive]}>2. GRNs</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setStep('invoice')} style={[styles.tabBtn, step === 'invoice' && styles.tabBtnActive, { minWidth: 80 }]}>
+                <Text style={[styles.tabBtnText, step === 'invoice' && styles.tabBtnTextActive]}>3. Invoices</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setStep('vendors')} style={[styles.tabBtn, step === 'vendors' && styles.tabBtnActive, { minWidth: 80 }]}>
+                <Text style={[styles.tabBtnText, step === 'vendors' && styles.tabBtnTextActive]}>Vendors</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        )}
 
         {step === 'po' && (
           <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false}>
