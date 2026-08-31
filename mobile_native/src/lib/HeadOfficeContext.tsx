@@ -128,6 +128,9 @@ interface HeadOfficeContextProps {
   purchases: PurchaseItem[];
   fetchPurchasing: () => Promise<void>;
   createPurchaseOrder: (vendorId: string, branchId: string, items: any[], total: number) => Promise<void>;
+  submitPurchaseOrder: (id: string) => Promise<void>;
+  deletePurchaseOrder: (id: string) => Promise<void>;
+  updatePurchaseOrder: (id: string, vendorId: string, branchId: string, items: any[], total: number) => Promise<void>;
   recordGRN: (poId: string, grnNumber: string, items: any[]) => Promise<void>;
   convertToInvoice: (grnId: string, invoiceNumber: string, dueDate: string, total: number) => Promise<void>;
   vendors: Vendor[];
@@ -527,6 +530,21 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
     await fetchPurchasing();
   };
 
+  const submitPurchaseOrder = async (id: string) => {
+    await apiClient.patch(`/purchasing/pos/${id}`, { status: 'Ordered' });
+    await fetchPurchasing();
+  };
+
+  const deletePurchaseOrder = async (id: string) => {
+    await apiClient.delete(`/purchasing/pos/${id}`);
+    await fetchPurchasing();
+  };
+
+  const updatePurchaseOrder = async (id: string, vendorId: string, branchId: string, items: any[], total: number) => {
+    await apiClient.patch(`/purchasing/pos/${id}`, { vendorId, branchId, items, total });
+    await fetchPurchasing();
+  };
+
   const recordGRN = async (poId: string, grnNumber: string, items: any[]) => {
     await apiClient.post(`/purchasing/pos/${poId}/grn`, { items, grnNumber });
     await fetchPurchasing();
@@ -769,6 +787,9 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       purchases,
       fetchPurchasing,
       createPurchaseOrder,
+      submitPurchaseOrder,
+      deletePurchaseOrder,
+      updatePurchaseOrder,
       recordGRN,
       convertToInvoice,
       vendors,

@@ -77,14 +77,44 @@ router.post("/pos", async (req, res) => {
 
 router.patch("/pos/:id", async (req, res) => {
   const tenantId = (req as any).user.tenantId;
-  const { status } = req.body;
+  const { status, vendorId, branchId, total, items } = req.body;
   try {
-    const updated = await db.update(purchaseOrders)
-      .set({ status })
-      .where(and(eq(purchaseOrders.id, req.params.id), eq(purchaseOrders.tenantId, tenantId)))
-      .returning();
-    res.json(updated[0]);
+    await db.transaction(async (tx) => {
+      if (status !== undefined) {
+        await tx.update(purchaseOrders)
+          .set({ status })
+          .where(and(eq(purchaseOrders.id, req.params.id), eq(purchaseOrders.tenantId, tenantId)));
+      }
+
+      if (vendorId || branchId || total || items) {
+        await tx.update(purchaseOrders)
+          .set({
+            ...(vendorId && { vendorId }),
+            ...(branchId && { branchId }),
+            ...(total !== undefined && { total: total.toString() }),
+          })
+          .where(and(eq(purchaseOrders.id, req.params.id), eq(purchaseOrders.tenantId, tenantId)));
+
+        if (items && items.length) {
+          await tx.delete(purchaseOrderItems).where(eq(purchaseOrderItems.purchaseOrderId, req.params.id));
+          const poItemsVals = items.map((i: any) => ({
+            purchaseOrderId: req.params.id,
+            productId: i.productId,
+            qty: i.qty,
+            unitPrice: i.unitPrice.toString(),
+          }));
+          await db.insert(purchaseOrderItems).values(poItemsVals);
+        }
+      }
+    });
+
+    const fullPo = await db.query.purchaseOrders.findFirst({
+      where: eq(purchaseOrders.id, req.params.id),
+      with: { vendor: true, items: { with: { product: true } } }
+    });
+    res.json(fullPo);
   } catch (err) {
+    console.error("Update PO error:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });

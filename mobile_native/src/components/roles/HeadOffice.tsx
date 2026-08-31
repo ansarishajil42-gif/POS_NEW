@@ -629,7 +629,7 @@ export function ProductDetail({ id, onBack }: { id: string; onBack: () => void }
 export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | 'grn' | 'invoice' | 'vendors' }) {
   const { branch, role } = useAuth();
   const roleLabel = role === 'purchasing-officer' ? 'PO' : 'HO';
-  const { purchases, vendors, products, branches, createPurchaseOrder, recordGRN, convertToInvoice, addVendor, updateVendor, deleteVendor } = useHeadOffice();
+  const { purchases, vendors, products, branches, createPurchaseOrder, submitPurchaseOrder, deletePurchaseOrder, updatePurchaseOrder, recordGRN, convertToInvoice, addVendor, updateVendor, deleteVendor } = useHeadOffice();
 
   const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
   const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
@@ -640,6 +640,7 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
 
   // PO Form
   const [poOpen, setPoOpen] = useState(false);
+  const [editPoId, setEditPoId] = useState<string | null>(null);
   const [selectedVendorId, setSelectedVendorId] = useState('');
   const [selectedBranchId, setSelectedBranchId] = useState('');
   const [vendorSearch, setVendorSearch] = useState('');
@@ -690,13 +691,35 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
     });
 
     try {
-      await createPurchaseOrder(selectedVendorId, selectedBranchId, items, total);
-      showToast('Purchase Order created successfully', 'success');
+      if (editPoId) {
+        await updatePurchaseOrder(editPoId, selectedVendorId, selectedBranchId, items, total);
+        showToast('Purchase Order updated successfully', 'success');
+      } else {
+        await createPurchaseOrder(selectedVendorId, selectedBranchId, items, total);
+        showToast('Purchase Order created successfully', 'success');
+      }
       setPoOpen(false);
       setPoItems([]);
+      setEditPoId(null);
     } catch (e: any) {
-      showToast(e.message || 'Failed to create PO', 'error');
+      showToast(e.message || 'Failed to save PO', 'error');
     }
+  };
+
+  const openEditPO = (po: any) => {
+    setEditPoId(po.id);
+    setSelectedVendorId(po.po?.vendorId || '');
+    setSelectedBranchId(po.po?.branchId || '');
+    setVendorSearch(po.vendor || '');
+    const branchName = branches.find(b => b.id === po.po?.branchId)?.name || '';
+    setBranchSearch(branchName);
+    const items = po.po?.items?.map((i: any) => ({
+      productId: i.productId,
+      qty: String(i.qty),
+      unitPrice: String(i.unitPrice),
+    })) || [];
+    setPoItems(items);
+    setPoOpen(true);
   };
 
   const handleInvoiceClick = async (inv: any) => {
@@ -1055,7 +1078,15 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <Text style={[styles.mainTitle, { marginBottom: 0 }]}>Purchasing</Text>
           {step === 'po' && (
-            <Button variant="primary" onClick={() => setPoOpen(true)}>
+            <Button variant="primary" onClick={() => {
+              setEditPoId(null);
+              setSelectedVendorId('');
+              setSelectedBranchId('');
+              setVendorSearch('');
+              setBranchSearch('');
+              setPoItems([]);
+              setPoOpen(true);
+            }}>
               <Plus size={16} color="#0f172a" style={{ marginRight: 8 }} />
               New PO
             </Button>
@@ -1111,6 +1142,28 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
                       ) : null}
                     </View>
                   </View>
+                  {po.po?.status === 'Draft' && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12, borderTopWidth: 1, borderColor: '#f1f5f9', paddingTop: 8 }}>
+                      <TouchableOpacity 
+                        onPress={() => submitPurchaseOrder(po.id)} 
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#22c55e', borderRadius: 6, marginRight: 8 }}
+                      >
+                        <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '600' }}>Submit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        onPress={() => openEditPO(po)} 
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#3b82f6', borderRadius: 6, marginRight: 8 }}
+                      >
+                        <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '600' }}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        onPress={() => deletePurchaseOrder(po.id)} 
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#ef4444', borderRadius: 6 }}
+                      >
+                        <Text style={{ color: '#ffffff', fontSize: 12, fontWeight: '600' }}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </Card>
               ))}
               {stepPurchases.length === 0 && (
@@ -1304,7 +1357,7 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
       <Modal visible={poOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setPoOpen(false)}>
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Create PO</Text>
+            <Text style={styles.modalTitle}>{editPoId ? 'Edit PO' : 'Create PO'}</Text>
             <TouchableOpacity onPress={() => setPoOpen(false)} style={styles.closeBtn}>
               <X size={24} color="#64748b" />
             </TouchableOpacity>
@@ -1406,7 +1459,7 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
               </ScrollView>
             </Field>
 
-            <Button variant="primary" onClick={handleCreatePO} style={{ marginTop: 24 }}>Submit PO</Button>
+            <Button variant="primary" onClick={handleCreatePO} style={{ marginTop: 24 }}>{editPoId ? 'Save Changes' : 'Submit PO'}</Button>
           </ScrollView>
         </View>
       </Modal>
