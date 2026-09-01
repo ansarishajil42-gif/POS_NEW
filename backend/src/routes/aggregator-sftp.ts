@@ -105,6 +105,93 @@ connectionsStore.set(dummyTestId, {
 export type ProductItemInput = ProductData;
 
 /**
+ * Helper to fetch product data from DB or fallback
+ */
+export async function fetchDbProductItems(): Promise<ProductData[]> {
+  try {
+    const dbProducts = await db.select().from(products);
+    if (dbProducts && dbProducts.length > 0) {
+      const now = new Date();
+      const future = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+      return dbProducts.map((p, idx) => ({
+        id: p.id,
+        barcode: p.barcode || "",
+        sku: p.barcode ? "" : `SKU-${idx + 100}`,
+        price: p.salePrice || "15.00",
+        active: true,
+        promotion:
+          idx % 3 === 0
+            ? {
+                startDate: now,
+                endDate: future,
+                discountedPrice: (parseFloat(p.salePrice || "15.00") * 0.85).toFixed(2),
+                maxNoOfOrders: "500",
+              }
+            : null,
+      }));
+    }
+  } catch (e) {
+    // DB not seeded, return standard fallback
+  }
+
+  const now = new Date();
+  const future = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+
+  return [
+    {
+      id: "p1",
+      barcode: "6291001002011",
+      sku: "",
+      price: "8.50",
+      active: true,
+      promotion: {
+        startDate: now,
+        endDate: future,
+        discountedPrice: "7.25",
+        maxNoOfOrders: "500",
+      },
+    },
+    {
+      id: "p2",
+      barcode: "",
+      sku: "SKU-TEA-100",
+      price: "18.25",
+      active: true,
+      promotion: null,
+    },
+    {
+      id: "p3",
+      barcode: "6291005006033",
+      sku: "",
+      price: "12.00",
+      active: true,
+      promotion: null,
+    },
+    {
+      id: "p4",
+      barcode: "6291007008044",
+      sku: "",
+      price: "29.50",
+      active: true,
+      promotion: {
+        startDate: now,
+        endDate: future,
+        discountedPrice: "25.00",
+        maxNoOfOrders: "300",
+      },
+    },
+    {
+      id: "p5",
+      barcode: "",
+      sku: "SKU-PASTA-500",
+      price: "7.75",
+      active: true,
+      promotion: null,
+    },
+  ];
+}
+
+/**
  * Adapter-driven CSV Generation Logic
  */
 export function generateSingleFileCsvPayload(
@@ -217,7 +304,8 @@ export async function runScheduledSyncEngine(forceRun: boolean = false): Promise
         throw new Error("SFTP connection refused: Host unreachable.");
       }
 
-      const payload = generateSingleFileCsvPayload(conn.vendorId, conn.priceFormat, undefined, conn.aggregatorName);
+      const items = await fetchDbProductItems();
+      const payload = generateSingleFileCsvPayload(conn.vendorId, conn.priceFormat, items, conn.aggregatorName);
       const bytes = Buffer.byteLength(payload.csvContent, "utf-8");
       const timestamp = new Date().toISOString();
 
@@ -287,7 +375,6 @@ aggregatorSftpRouter.post("/connections", (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: "aggregatorName is required" });
   }
 
-  // Validate that an adapter exists for the aggregator name
   try {
     getAdapter(aggregatorName);
   } catch (err: any) {
@@ -395,7 +482,8 @@ aggregatorSftpRouter.get("/preview-csv/:connectionId", async (req: Request, res:
   const aggregatorName = conn?.aggregatorName || "talabat";
 
   try {
-    const payload = generateSingleFileCsvPayload(vendorId, priceFormat, undefined, aggregatorName);
+    const items = await fetchDbProductItems();
+    const payload = generateSingleFileCsvPayload(vendorId, priceFormat, items, aggregatorName);
 
     const previewLog: AggregatorSyncLog = {
       id: `log_prev_${Date.now()}`,
@@ -453,7 +541,8 @@ aggregatorSftpRouter.post("/sync/:connectionId", async (req: Request, res: Respo
 
   try {
     const decryptedPassword = decryptSecret(conn.sftpPasswordEncrypted);
-    const payload = generateSingleFileCsvPayload(conn.vendorId, conn.priceFormat, undefined, conn.aggregatorName);
+    const items = await fetchDbProductItems();
+    const payload = generateSingleFileCsvPayload(conn.vendorId, conn.priceFormat, items, conn.aggregatorName);
     const bytes = Buffer.byteLength(payload.csvContent, "utf-8");
     const now = new Date().toISOString();
 
