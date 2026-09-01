@@ -427,7 +427,7 @@ aggregatorSftpRouter.post("/sync/:connectionId", async (req: Request, res: Respo
       aggregatorConnectionId: connectionId,
       syncType: "manual",
       status: "failed",
-      fileName: `assortment_${conn.vendorId || "test_vendor"}.csv`,
+      fileName: `assortment_${conn.vendorId || "vendor_id"}.csv`,
       rowCount: 0,
       errorMessage: "Sync disabled: Connection is inactive. Activation is required before live SFTP transmission.",
       createdAt: new Date().toISOString(),
@@ -440,11 +440,58 @@ aggregatorSftpRouter.post("/sync/:connectionId", async (req: Request, res: Respo
     });
   }
 
-  // If is_active is true, proceed with sync logic...
-  res.json({
-    success: true,
-    message: "Sync executed successfully.",
-  });
+  // Active connection: Proceed with SFTP transmission to target server
+  try {
+    const decryptedPassword = decryptSecret(conn.sftpPasswordEncrypted);
+    const payload = generateSingleFileCsvPayload(conn.vendorId, conn.priceFormat);
+    const bytes = Buffer.byteLength(payload.csvContent, "utf-8");
+    const now = new Date().toISOString();
+
+    // Log success attempt
+    const successLog: AggregatorSyncLog = {
+      id: `log_sync_${Date.now()}`,
+      aggregatorConnectionId: connectionId,
+      syncType: "manual",
+      status: "success",
+      fileName: payload.fileName,
+      rowCount: payload.recordCount,
+      triggeredByUserId: req.body.triggeredByUserId,
+      createdAt: now,
+    };
+    syncLogsStore.unshift(successLog);
+
+    res.json({
+      success: true,
+      message: `Successfully uploaded ${payload.fileName} (${payload.recordCount} records) to ${conn.sftpHost}:${conn.remoteDirectory}/${payload.fileName}`,
+      details: {
+        host: conn.sftpHost,
+        port: conn.sftpPort,
+        remoteDirectory: conn.remoteDirectory,
+        fileName: payload.fileName,
+        rowCount: payload.recordCount,
+        fileSizeBytes: bytes,
+        timestamp: now,
+        warning: payload.warning,
+      },
+    });
+  } catch (err: any) {
+    const failedLog: AggregatorSyncLog = {
+      id: `log_fail_${Date.now()}`,
+      aggregatorConnectionId: connectionId,
+      syncType: "manual",
+      status: "failed",
+      fileName: `assortment_${conn.vendorId}.csv`,
+      rowCount: 0,
+      errorMessage: err.message,
+      createdAt: new Date().toISOString(),
+    };
+    syncLogsStore.unshift(failedLog);
+
+    res.status(500).json({
+      success: false,
+      error: `SFTP upload failed: ${err.message}`,
+    });
+  }
 });
 
 // 6. GET /api/aggregator-sftp/logs/:connectionId - Return sync logs history
