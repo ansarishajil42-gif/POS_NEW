@@ -55,6 +55,7 @@ export const staffUsers = pgTable("staff_users", {
   id: uuid("id").primaryKey().defaultRandom(),
   tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }),
   branchId: uuid("branch_id").references(() => branches.id, { onDelete: "set null" }),
+  vendorId: uuid("vendor_id").references(() => vendors.id, { onDelete: "cascade" }),
   name: text("name"),
   phone: text("phone"),
   address: text("address"),

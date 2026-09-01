@@ -87,4 +87,57 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+// Create Vendor User Account / Login Credentials
+router.post("/:id/create-account", async (req, res) => {
+  const tenantId = (req as any).user.tenantId;
+  const { id: vendorId } = req.params;
+  const { email, password, name } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: "email and password are required" });
+  }
+
+  try {
+    const bcrypt = (await import("bcryptjs")).default;
+    const { staffUsers } = await import("../db/schema.js");
+
+    const vendorRec = await db.query.vendors.findFirst({
+      where: and(eq(vendors.id, vendorId), eq(vendors.tenantId, tenantId)),
+    });
+
+    if (!vendorRec) {
+      return res.status(404).json({ error: "Vendor record not found" });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const [newUser] = await db
+      .insert(staffUsers)
+      .values({
+        tenantId,
+        vendorId,
+        name: name || vendorRec.name,
+        email,
+        passwordHash,
+        role: "vendor",
+        isActive: true,
+      })
+      .returning();
+
+    res.status(201).json({
+      success: true,
+      message: `Vendor login account created for ${vendorRec.name}`,
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        role: newUser.role,
+        vendorId: newUser.vendorId,
+      },
+    });
+  } catch (error: any) {
+    console.error("Create vendor account error:", error);
+    res.status(500).json({ error: error.message || "Internal server error" });
+  }
+});
+
 export default router;

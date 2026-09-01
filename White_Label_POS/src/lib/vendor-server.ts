@@ -12,7 +12,9 @@ import {
   products,
   tenants,
   branches,
+  staffUsers,
 } from "../server/db/schema";
+import bcrypt from "bcryptjs";
 
 async function getVendorContext() {
   const res = await getSessionServerFn();
@@ -131,4 +133,52 @@ export const confirmVendorDeliveryServerFn = createServerFn({ method: "POST" })
     });
 
     return { success: true, confirmedAt: now.toISOString() };
+  });
+
+export const createVendorUserAccountServerFn = createServerFn({ method: "POST" })
+  .validator((d: { vendorId: string; email: string; password: string; name?: string }) => d)
+  .handler(async ({ data }) => {
+    const sessionRes = await getSessionServerFn();
+    if (
+      !sessionRes.success ||
+      !sessionRes.session ||
+      (sessionRes.session.role !== "Head Office Admin" && sessionRes.session.role !== "Purchasing Officer")
+    ) {
+      throw new Error("Unauthorized: Only Head Office Admin or Purchasing Officer can create vendor accounts.");
+    }
+
+    const tenantId = sessionRes.session.tenantId;
+
+    if (!data.vendorId || !data.email || !data.password) {
+      throw new Error("vendorId, email, and password are required.");
+    }
+
+    const vendorRec = await db.query.vendors.findFirst({
+      where: and(eq(vendors.id, data.vendorId), eq(vendors.tenantId, tenantId)),
+    });
+
+    if (!vendorRec) {
+      throw new Error("Vendor profile record not found.");
+    }
+
+    const passwordHash = await bcrypt.hash(data.password, 10);
+
+    const [newUser] = await db
+      .insert(staffUsers)
+      .values({
+        tenantId,
+        vendorId: data.vendorId,
+        name: data.name || vendorRec.name,
+        email: data.email,
+        passwordHash,
+        role: "vendor" as any,
+        isActive: true,
+      })
+      .returning();
+
+    return {
+      success: true,
+      message: `Vendor login account created for ${vendorRec.name} (${newUser.email})`,
+      userId: newUser.id,
+    };
   });
