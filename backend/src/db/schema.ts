@@ -187,6 +187,9 @@ export const grn = pgTable("grn", {
   vendorId: uuid("vendor_id").notNull().references(() => vendors.id),
   grnNumber: text("grn_number").notNull(),
   status: text("status").notNull().default("received"), // received, variance
+  vendorConfirmed: boolean("vendor_confirmed").notNull().default(false),
+  vendorConfirmedAt: timestamp("vendor_confirmed_at"),
+  vendorNotes: text("vendor_notes"),
   receivedAt: timestamp("received_at").defaultNow().notNull(),
 });
 
