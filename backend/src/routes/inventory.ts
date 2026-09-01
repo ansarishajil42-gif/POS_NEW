@@ -16,6 +16,7 @@ import {
 } from "../db/schema.js";
 import { eq, and, or, desc, sql, inArray } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middleware/auth.js";
+import { logAuditAction } from "./audit-helper.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -408,9 +409,9 @@ router.post("/adjust", async (req, res) => {
       return res.status(403).json({ error: "Forbidden: Unauthorized branch scope" });
     }
 
-    await db.transaction(async (tx) => {
-      let previousQty = 0;
+    let previousQty = 0;
 
+    await db.transaction(async (tx) => {
       if (batchId) {
         // batches has no tenant_id column
         const [batch] = await tx
@@ -474,6 +475,23 @@ router.post("/adjust", async (req, res) => {
         createdBy: userId,
       });
     });
+
+    // 3. Emit immutable audit log entry
+    await logAuditAction(
+      tenantId,
+      userId,
+      branchId,
+      "Manual Stock Adjustment",
+      "Product",
+      productId,
+      {
+        previousQuantity: previousQty,
+        quantityChange: Number(quantityChange),
+        newQuantity: previousQty + Number(quantityChange),
+        reason: reason || "Manual stock count adjustment",
+        batchId: batchId || null,
+      }
+    );
 
     res.json({ success: true });
   } catch (error: any) {

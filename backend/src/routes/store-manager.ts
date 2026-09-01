@@ -15,6 +15,7 @@ import {
 } from "../db/schema.js";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middleware/auth.js";
+import { logAuditAction } from "./audit-helper.js";
 import bcrypt from "bcryptjs";
 
 const router = Router();
@@ -159,6 +160,7 @@ router.get("/data", async (req, res) => {
 router.post("/override-request", async (req, res) => {
   const tenantId = (req as AuthRequest).user?.tenantId;
   const branchId = (req as AuthRequest).user?.branchId;
+  const userId = (req as AuthRequest).user?.id || null;
   if (!tenantId || !branchId) return res.status(400).json({ error: "Unauthorized" });
 
   const { productId, requestedPrice, reason } = req.body;
@@ -181,16 +183,34 @@ router.post("/override-request", async (req, res) => {
       .from(products)
       .where(eq(products.id, productId));
 
-    await db.insert(priceOverrideRequests).values({
+    const [newReq] = await db
+      .insert(priceOverrideRequests)
+      .values({
+        tenantId,
+        branchId,
+        productId,
+        stockLevelId: stockItem.id,
+        standardPrice: product?.salePrice || "0.00",
+        requestedPrice: String(requestedPrice),
+        reason: reason.trim(),
+        status: "Pending",
+      })
+      .returning({ id: priceOverrideRequests.id });
+
+    await logAuditAction(
       tenantId,
+      userId || null,
       branchId,
+      "Price Override Request Submitted",
+      "Product",
       productId,
-      stockLevelId: stockItem.id,
-      standardPrice: product?.salePrice || "0.00",
-      requestedPrice: String(requestedPrice),
-      reason: reason.trim(),
-      status: "Pending",
-    });
+      {
+        requestId: newReq.id,
+        standardPrice: product?.salePrice || "0.00",
+        requestedPrice: String(requestedPrice),
+        reason: reason.trim(),
+      }
+    );
 
     res.json({ success: true });
   } catch (error) {
