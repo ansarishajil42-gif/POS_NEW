@@ -1,5 +1,5 @@
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { getSessionServerFn, roleRoutes, type Role } from "@/lib/auth";
 import { DemoShell, StatCard } from "@/components/demo/DemoShell";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -66,16 +66,27 @@ function VendorPortal() {
   const [vendorNotes, setVendorNotes] = useState("");
   const [isSubmittingConfirm, setIsSubmittingConfirm] = useState(false);
 
-  // Calculate totals
-  const totalOrdered = purchaseOrders.reduce((sum: number, po: any) => sum + Number(po.total || 0), 0);
-  const activeOrders = purchaseOrders.filter((po: any) => po.status !== "Fulfilled" && po.status !== "Invoiced").length;
-  const pendingVendorGrns = (grns || []).filter((g: any) => !g.vendorConfirmed).length;
+  // Calculate totals memoized for performance
+  const { totalOrdered, activeOrders, pendingVendorGrns, totalInvoiced, totalPaid, outstandingBalance } = useMemo(() => {
+    const totOrd = (purchaseOrders || []).reduce((sum: number, po: any) => sum + Number(po.total || 0), 0);
+    const actOrd = (purchaseOrders || []).filter((po: any) => po.status !== "Fulfilled" && po.status !== "Invoiced").length;
+    const pendGrns = (grns || []).filter((g: any) => !g.vendorConfirmed).length;
 
-  const totalInvoiced = invoices.reduce((sum: number, inv: any) => sum + Number(inv.total || 0), 0);
-  const totalPaid = invoices
-    .filter((inv: any) => inv.status === "paid")
-    .reduce((sum: number, inv: any) => sum + Number(inv.total || 0), 0);
-  const outstandingBalance = Math.max(0, totalInvoiced - totalPaid);
+    const totInv = (invoices || []).reduce((sum: number, inv: any) => sum + Number(inv.total || 0), 0);
+    const totPd = (invoices || [])
+      .filter((inv: any) => inv.status === "paid")
+      .reduce((sum: number, inv: any) => sum + Number(inv.total || 0), 0);
+    const outBal = Math.max(0, totInv - totPd);
+
+    return {
+      totalOrdered: totOrd,
+      activeOrders: actOrd,
+      pendingVendorGrns: pendGrns,
+      totalInvoiced: totInv,
+      totalPaid: totPd,
+      outstandingBalance: outBal,
+    };
+  }, [purchaseOrders, grns, invoices]);
 
   async function handleConfirmDelivery() {
     if (!selectedGrn) return;

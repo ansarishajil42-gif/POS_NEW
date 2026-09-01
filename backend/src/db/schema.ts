@@ -79,13 +79,19 @@ export const products = pgTable("products", {
   salePrice: decimal("sale_price", { precision: 10, scale: 2 }).notNull(),
   isBatchTracked: boolean("is_batch_tracked").default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  tenantIdx: index("products_tenant_idx").on(table.tenantId),
+  barcodeIdx: index("products_barcode_idx").on(table.barcode),
+}));
 
 export const productBarcodes = pgTable("product_barcodes", {
   id: uuid("id").primaryKey().defaultRandom(),
   productId: uuid("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
   barcode: text("barcode").notNull(),
-});
+}, (table) => ({
+  productIdx: index("product_barcodes_product_idx").on(table.productId),
+  barcodeIdx: index("product_barcodes_barcode_idx").on(table.barcode),
+}));
 
 export const productVariants = pgTable("product_variants", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -94,7 +100,9 @@ export const productVariants = pgTable("product_variants", {
   variantValue: text("variant_value").notNull(),
   sku: text("sku"),
   priceAdjustment: decimal("price_adjustment", { precision: 10, scale: 2 }).default("0.00").notNull(),
-});
+}, (table) => ({
+  productIdx: index("product_variants_product_idx").on(table.productId),
+}));
 
 export const unitConversions = pgTable("unit_conversions", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -102,7 +110,9 @@ export const unitConversions = pgTable("unit_conversions", {
   fromUnit: text("from_unit").notNull(),
   toUnit: text("to_unit").notNull(),
   conversionFactor: decimal("conversion_factor", { precision: 10, scale: 4 }).notNull(),
-});
+}, (table) => ({
+  productIdx: index("unit_conversions_product_idx").on(table.productId),
+}));
 
 // 5. stock_levels
 export const stockLevels = pgTable("stock_levels", {
@@ -112,7 +122,9 @@ export const stockLevels = pgTable("stock_levels", {
   stock: integer("stock").notNull().default(0),
   reorderLevel: integer("reorder_level").notNull().default(10),
   priceOverride: decimal("price_override", { precision: 10, scale: 2 }), // Branch-specific pricing
-});
+}, (table) => ({
+  prodBranchIdx: index("stock_levels_prod_branch_idx").on(table.productId, table.branchId),
+}));
 
 // 5.1 promotions
 export const promotions = pgTable("promotions", {
