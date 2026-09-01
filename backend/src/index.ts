@@ -19,7 +19,6 @@ import auditLogsRouter from "./routes/audit-logs.js";
 import storeManagerRouter from "./routes/store-manager.js";
 import inventoryRouter from "./routes/inventory.js";
 import posRouter from "./routes/pos.js";
-import { sftpRouter } from "./routes/sftp-sync.js";
 import { aggregatorSftpRouter } from "./routes/aggregator-sftp.js";
 
 const app = express();
@@ -64,7 +63,6 @@ app.use("/api/audit-logs", auditLogsRouter);
 app.use("/api/store-manager", storeManagerRouter);
 app.use("/api/inventory", inventoryRouter);
 app.use("/api/pos", posRouter);
-app.use("/api/sftp", sftpRouter);
 app.use("/api/aggregator-sftp", aggregatorSftpRouter);
 
 // Error handling middleware
