@@ -262,10 +262,10 @@ router.get("/reports/sales-summary", requireAuth, async (req, res) => {
   }
 });
 
-// Get VAT Summary FTA Report
+// Get VAT Summary FTA Report & Direct CSV Export
 router.get("/reports/vat-summary", requireAuth, async (req, res) => {
   const tenantId = (req as any).user?.tenantId;
-  const { startDate, endDate, branchId } = req.query;
+  const { startDate, endDate, branchId, exportFormat } = req.query;
 
   try {
     const sDate = startDate ? new Date(startDate as string) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -278,93 +278,148 @@ router.get("/reports/vat-summary", requireAuth, async (req, res) => {
 
     const { inArray } = await import("drizzle-orm");
 
-    // Fetch tenant configuration
+    // Fetch tenant configuration & details
+    const tenantRec = await db.query.tenants.findFirst({
+      where: eq(tenants.id, tenantId),
+    });
     const settings = await db.query.tenantSettings.findFirst({
-      where: eq(tenantSettings.tenantId, tenantId)
+      where: eq(tenantSettings.tenantId, tenantId),
     });
     const trn = settings?.taxRegistrationNumber || "Not Configured";
     const vatRate = settings ? parseFloat(settings.vatRate) / 100 : 0.05;
     const inclusive = settings ? settings.vatInclusive : true;
     const currency = settings ? settings.currency : "AED";
+    const tenantName = tenantRec?.name || "Tenant";
 
     // Query Sales
     let salesConditions = [
       eq(orders.tenantId, tenantId),
       eq(orders.status, "completed"),
       gte(orders.createdAt, sDate),
-      lte(orders.createdAt, eDate)
+      lte(orders.createdAt, eDate),
     ];
-    if (branchId && branchId !== 'all') {
+    if (branchId && branchId !== "all") {
       salesConditions.push(eq(orders.branchId, branchId as string));
     }
-    
-    const sales = await db.select({
-      subtotal: orders.subtotal,
-      vat: orders.vat,
-      total: orders.total
-    }).from(orders).where(and(...salesConditions));
+
+    const sales = await db
+      .select({
+        branchId: orders.branchId,
+        subtotal: orders.subtotal,
+        vat: orders.vat,
+        total: orders.total,
+      })
+      .from(orders)
+      .where(and(...salesConditions));
 
     // Query Purchases
     let purchaseConditions = [
       eq(purchaseOrders.tenantId, tenantId),
       gte(purchaseOrders.createdAt, sDate),
       lte(purchaseOrders.createdAt, eDate),
-      inArray(purchaseOrders.status, ["GRN", "Invoiced"])
+      inArray(purchaseOrders.status, ["GRN", "Invoiced"]),
     ];
-    if (branchId && branchId !== 'all') {
+    if (branchId && branchId !== "all") {
       purchaseConditions.push(eq(purchaseOrders.branchId, branchId as string));
     }
 
-    const purchases = await db.select({
-      total: purchaseOrders.total
-    }).from(purchaseOrders).where(and(...purchaseConditions));
+    const purchases = await db
+      .select({
+        branchId: purchaseOrders.branchId,
+        total: purchaseOrders.total,
+      })
+      .from(purchaseOrders)
+      .where(and(...purchaseConditions));
+
+    // Query Branches for breakdown table
+    const tenantBranches = await db.select().from(branches).where(eq(branches.tenantId, tenantId));
+    const branchMap = new Map(tenantBranches.map((b) => [b.id, b.name]));
 
     let totalSales = 0;
     let outputVat = 0;
     let taxableSales = 0;
 
-    sales.forEach(s => {
-      totalSales += parseFloat(s.total as string);
-      outputVat += parseFloat(s.vat as string);
-      taxableSales += parseFloat(s.subtotal as string);
+    const branchSummaryMap = new Map<string, { sales: number; outVat: number; purchases: number; inVat: number }>();
+    tenantBranches.forEach((b) => {
+      branchSummaryMap.set(b.id, { sales: 0, outVat: 0, purchases: 0, inVat: 0 });
+    });
+
+    sales.forEach((s) => {
+      const tot = parseFloat(s.total as string);
+      const vt = parseFloat(s.vat as string);
+      const sub = parseFloat(s.subtotal as string);
+
+      totalSales += tot;
+      outputVat += vt;
+      taxableSales += sub;
+
+      if (s.branchId && branchSummaryMap.has(s.branchId)) {
+        const entry = branchSummaryMap.get(s.branchId)!;
+        entry.sales += tot;
+        entry.outVat += vt;
+      }
     });
 
     let totalPurchases = 0;
     let inputVat = 0;
     let taxablePurchases = 0;
 
-    purchases.forEach(p => {
+    purchases.forEach((p) => {
       const t = parseFloat(p.total as string);
       totalPurchases += t;
+      let tax = 0;
       if (inclusive) {
-        const tax = t - (t / (1 + vatRate));
+        tax = t - t / (1 + vatRate);
         inputVat += tax;
-        taxablePurchases += (t - tax);
+        taxablePurchases += t - tax;
       } else {
-        inputVat += t * vatRate;
+        tax = t * vatRate;
+        inputVat += tax;
         taxablePurchases += t;
+      }
+
+      if (p.branchId && branchSummaryMap.has(p.branchId)) {
+        const entry = branchSummaryMap.get(p.branchId)!;
+        entry.purchases += t;
+        entry.inVat += tax;
       }
     });
 
     const netVat = outputVat - inputVat;
 
-    // Create CSV String matching the web exactly
+    // Construct CSV output string
     const BOM = "\uFEFF";
     let csv = BOM;
-    csv += '"FTA VAT Summary"\n';
-    csv += `"Date Range","${sDate.toISOString().split('T')[0]} to ${eDate.toISOString().split('T')[0]}"\n`;
-    csv += `"Currency","${currency}"\n\n`;
-    
-    csv += '"Description","Amount"\n';
-    csv += `"Total Sales","${totalSales.toFixed(2)}"\n`;
-    csv += `"Taxable Sales","${taxableSales.toFixed(2)}"\n`;
-    csv += `"Output VAT (Collected)","${outputVat.toFixed(2)}"\n`;
-    csv += `"Total Purchases","${totalPurchases.toFixed(2)}"\n`;
-    csv += `"Taxable Purchases","${taxablePurchases.toFixed(2)}"\n`;
-    csv += `"Input VAT (Paid)","${inputVat.toFixed(2)}"\n`;
-    csv += `"Net VAT Due/(Refundable)","${netVat.toFixed(2)}"\n`;
+    csv += '"VAT Return Summary Report (UAE VAT 5%)"\n';
+    csv += `"Business Name","${tenantName}"\n`;
+    csv += `"TRN (Tax Registration Number)","${trn}"\n`;
+    csv += `"Reporting Period","${sDate.toISOString().split("T")[0]} to ${eDate.toISOString().split("T")[0]}"\n`;
+    csv += `"Standard Tax Rate","${(vatRate * 100).toFixed(2)}%"\n`;
+    csv += `"Currency","${currency}"\n`;
+    csv += `"Generated At","${new Date().toISOString()}"\n\n`;
+
+    csv += '"FTA VAT 201 Box Reference","Description","Taxable Amount (AED)","VAT Amount (AED)"\n';
+    csv += `"Box 1a","Standard Rated Sales (Sales & Output Tax)","${taxableSales.toFixed(2)}","${outputVat.toFixed(2)}"\n`;
+    csv += `"Box 9","Standard Rated Expenses (Purchases & Input Tax)","${taxablePurchases.toFixed(2)}","${inputVat.toFixed(2)}"\n`;
+    csv += `"Box 10","Net VAT Payable / (Refundable)","0.00","${netVat.toFixed(2)}"\n\n`;
+
+    csv += '"Multi-Branch Breakdown"\n';
+    csv += '"Branch Name","Total Sales (AED)","Output VAT (AED)","Total Purchases (AED)","Input VAT (AED)","Net VAT Payable (AED)"\n';
+    tenantBranches.forEach((b) => {
+      const summary = branchSummaryMap.get(b.id) || { sales: 0, outVat: 0, purchases: 0, inVat: 0 };
+      const branchNet = summary.outVat - summary.inVat;
+      csv += `"${b.name}","${summary.sales.toFixed(2)}","${summary.outVat.toFixed(2)}","${summary.purchases.toFixed(2)}","${summary.inVat.toFixed(2)}","${branchNet.toFixed(2)}"\n`;
+    });
+
+    if (exportFormat === "csv") {
+      const fileName = `vat-summary-report-${sDate.toISOString().split("T")[0]}-to-${eDate.toISOString().split("T")[0]}.csv`;
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      return res.status(200).send(csv);
+    }
 
     res.json({
+      tenantName,
       trn,
       periodStart: sDate.toISOString(),
       periodEnd: eDate.toISOString(),

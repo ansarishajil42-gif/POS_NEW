@@ -637,9 +637,27 @@ function HeadOffice() {
   // Invoice Detail view & PDF State
   const [invoiceDetailModalOpen, setInvoiceDetailModalOpen] = useState(false);
   const [invoiceDetail, setInvoiceDetail] = useState<any>(null);
-  const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isGeneratingFtaReport, setIsGeneratingFtaReport] = useState(false);
+
+  const downloadVatSummaryCsv = () => {
+    if (!data?.csv) {
+      toast.error("VAT Summary CSV data is not available");
+      return;
+    }
+    const blob = new Blob([data.csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const sanitizedTenant = (data?.tenantName || "tenant")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "-");
+    link.setAttribute("download", `vat-summary-report-${sanitizedTenant}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success("VAT Summary CSV report downloaded successfully!");
+  };
 
   const downloadFtaSummary = async () => {
     setIsGeneratingFtaReport(true);
@@ -2816,15 +2834,25 @@ function HeadOffice() {
                     Save VAT settings
                   </Button>
                   <Button
+                    variant="default"
+                    className="rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
+                    onClick={downloadVatSummaryCsv}
+                  >
+                    <Download className="mr-1.5 h-4 w-4" /> Download VAT Summary (CSV)
+                  </Button>
+                  <Button
                     variant="outline"
                     className="rounded-xl font-semibold"
                     onClick={downloadFtaSummary}
                     disabled={isGeneratingFtaReport}
                   >
                     <FileText className="mr-1.5 h-4 w-4" />{" "}
-                    {isGeneratingFtaReport ? "Generating..." : "Download FTA tax summary"}
+                    {isGeneratingFtaReport ? "Generating..." : "Download VAT Summary (PDF)"}
                   </Button>
                 </div>
+                <p className="text-xs text-muted-foreground mt-3 italic">
+                  ℹ️ Internal tax summary report calculated from POS sales and vendor purchases formatted according to UAE VAT 201 Return boxes (5% Standard Rate).
+                </p>
               </div>
             </div>
           </TabsContent>
