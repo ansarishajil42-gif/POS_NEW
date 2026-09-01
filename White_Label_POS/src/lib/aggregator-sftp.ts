@@ -14,6 +14,10 @@ export interface ConnectionConfig {
   remoteDirectory: string;
   vendorId: string;
   priceFormat: "price_discounted" | "original_discounted" | "original_price";
+  syncFrequency: "manual" | "15min" | "hourly" | "daily";
+  isPaused: boolean;
+  consecutiveFailures?: number;
+  lastScheduledSyncAt?: string;
   isActive: boolean;
 }
 
@@ -21,6 +25,7 @@ let connectionsFallbackStore: ConnectionConfig[] = [
   {
     id: "conn_dummy_talabat",
     aggregatorName: "talabat",
+    branchId: "branch_main",
     sftpHost: "test.local",
     sftpPort: 22,
     sftpUsername: "test_vendor",
@@ -28,7 +33,10 @@ let connectionsFallbackStore: ConnectionConfig[] = [
     remoteDirectory: "/Assortment",
     vendorId: "test_vendor",
     priceFormat: "price_discounted",
-    isActive: false, // Default false in Phase 1
+    syncFrequency: "manual", // Default manual
+    isPaused: false,
+    consecutiveFailures: 0,
+    isActive: false,
   },
 ];
 
@@ -61,13 +69,40 @@ export const saveAggregatorConnectionServerFn = createServerFn({ method: "POST" 
 
     const connId = data.id || `conn_${data.aggregatorName}_${Date.now()}`;
     const idx = connectionsFallbackStore.findIndex((c) => c.id === connId);
-    const newConn = { ...data, id: connId, isActive: data.isActive ?? false };
+    const newConn = {
+      ...data,
+      id: connId,
+      syncFrequency: data.syncFrequency || "manual",
+      isPaused: data.isPaused ?? false,
+      isActive: data.isActive ?? false,
+    };
     if (idx >= 0) {
       connectionsFallbackStore[idx] = newConn;
     } else {
       connectionsFallbackStore.push(newConn);
     }
     return { success: true, connection: newConn };
+  });
+
+export const togglePauseAutomationServerFn = createServerFn({ method: "POST" })
+  .validator((data: { id: string; isPaused: boolean }) => data)
+  .handler(async ({ data }) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/aggregator-sftp/connections/${data.id}/toggle-pause`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isPaused: data.isPaused }),
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {}
+
+    const conn = connectionsFallbackStore.find((c) => c.id === data.id);
+    if (conn) {
+      conn.isPaused = data.isPaused;
+    }
+    return { success: true, connection: conn };
   });
 
 export const deleteAggregatorConnectionServerFn = createServerFn({ method: "POST" })
@@ -154,4 +189,20 @@ export const getAggregatorSyncLogsServerFn = createServerFn({ method: "POST" })
       }
     } catch (e) {}
     return { success: true, logs: logsFallbackStore };
+  });
+
+export const triggerScheduledRunnerServerFn = createServerFn({ method: "POST" })
+  .validator((data: { forceRun?: boolean }) => data)
+  .handler(async ({ data }) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/aggregator-sftp/trigger-scheduled-runner`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {}
+    return { success: true, result: { processed: 0, successCount: 0, deactivatedCount: 0 } };
   });

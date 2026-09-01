@@ -686,6 +686,10 @@ export const aggregatorConnections = pgTable("aggregator_connections", {
   remoteDirectory: text("remote_directory").default("/Assortment"),
   vendorId: text("vendor_id"),
   priceFormat: text("price_format").notNull().default("price_discounted"), // price_discounted, original_discounted, original_price
+  syncFrequency: text("sync_frequency").notNull().default("manual"), // manual, 15min, hourly, daily
+  isPaused: boolean("is_paused").notNull().default(false), // Pause automation separate from isActive
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  lastScheduledSyncAt: timestamp("last_scheduled_sync_at"),
   isActive: boolean("is_active").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

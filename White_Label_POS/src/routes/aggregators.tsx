@@ -17,10 +17,13 @@ import {
   Download,
   Copy,
   Plus,
-  AlertTriangle,
   Lock,
   Trash2,
   Info,
+  PauseCircle,
+  PlayCircle,
+  Clock,
+  Building,
 } from "lucide-react";
 import { DemoShell, StatCard } from "@/components/demo/DemoShell";
 import { Badge } from "@/components/ui/badge";
@@ -42,10 +45,12 @@ import { toast } from "sonner";
 import {
   getAggregatorConnectionsServerFn,
   saveAggregatorConnectionServerFn,
+  togglePauseAutomationServerFn,
   deleteAggregatorConnectionServerFn,
   previewAggregatorCsvServerFn,
   triggerAggregatorSyncServerFn,
   getAggregatorSyncLogsServerFn,
+  triggerScheduledRunnerServerFn,
   type ConnectionConfig,
 } from "@/lib/aggregator-sftp";
 
@@ -64,10 +69,10 @@ export const Route = createFileRoute("/aggregators")({
       {
         name: "description",
         content:
-          "Phase 1 Aggregator SFTP Sync Engine for Talabat Single File CSV format.",
+          "Phase 3 Multi-Branch Aggregator SFTP Sync Engine with background automation scheduler.",
       },
       { property: "og:title", content: "cloudynationpos Aggregator & SFTP Sync Engine" },
-      { property: "og:description", content: "Unified delivery orders, aggregator SFTP engine and API vault." },
+      { property: "og:description", content: "Unified delivery orders, multi-branch SFTP engine and background scheduler." },
     ],
   }),
   component: Aggregators,
@@ -111,6 +116,7 @@ function Aggregators() {
   // Connection modal form state
   const [formConn, setFormConn] = useState<ConnectionConfig>({
     aggregatorName: "talabat",
+    branchId: outlets[0]?.id || "branch_main",
     sftpHost: "test.local",
     sftpPort: 22,
     sftpUsername: "test_vendor",
@@ -118,7 +124,9 @@ function Aggregators() {
     remoteDirectory: "/Assortment",
     vendorId: "test_vendor",
     priceFormat: "price_discounted",
-    isActive: false, // Default false in Phase 1
+    syncFrequency: "manual", // Default manual
+    isPaused: false,
+    isActive: false, // Default false
   });
 
   useEffect(() => {
@@ -164,7 +172,7 @@ function Aggregators() {
       if (res?.success) {
         setCsvPreview(res);
         toast.success("Single File CSV preview generated in-memory", {
-          description: `${res.recordCount} products & promotions formatted per spec. No outbound server calls made.`,
+          description: `${res.recordCount} products & promotions formatted per spec.`,
         });
         if (res.warning) {
           toast.warning(res.warning);
@@ -185,12 +193,13 @@ function Aggregators() {
     try {
       const res = await triggerAggregatorSyncServerFn({ data: { connectionId: selectedConnId } });
       if (!res.success) {
-        toast.error("Sync Rejected (Phase 1 Protection)", {
+        toast.error("Sync Rejected (Protection Active)", {
           description: res.error || "Sync is disabled until this connection is verified and activated.",
         });
         loadLogs(selectedConnId);
       } else {
-        toast.success("Sync executed successfully");
+        toast.success("Manual Sync executed successfully");
+        loadLogs(selectedConnId);
       }
     } catch (e: any) {
       toast.error("SFTP Sync error: " + e.message);
@@ -204,12 +213,24 @@ function Aggregators() {
     try {
       const res = await saveAggregatorConnectionServerFn({ data: formConn });
       if (res?.success) {
-        toast.success("Connection saved successfully with encrypted credentials.");
+        toast.success("Connection saved successfully.");
         setShowConfigModal(false);
         await loadConnections();
       }
     } catch (e: any) {
       toast.error("Failed to save connection: " + e.message);
+    }
+  }
+
+  async function handleTogglePause(connId: string, currentPaused: boolean) {
+    try {
+      const res = await togglePauseAutomationServerFn({ data: { id: connId, isPaused: !currentPaused } });
+      if (res?.success) {
+        toast.success(`Scheduled automation ${!currentPaused ? "PAUSED" : "RESUMED"}`);
+        await loadConnections();
+      }
+    } catch (e: any) {
+      toast.error("Failed to toggle pause status: " + e.message);
     }
   }
 
@@ -223,12 +244,26 @@ function Aggregators() {
     }
   }
 
+  function calculateNextSyncTime(conn: ConnectionConfig): string {
+    if (conn.syncFrequency === "manual") return "Manual Sync Only";
+    if (conn.isPaused) return "Automation Paused";
+    if (!conn.isActive) return "Connection Inactive";
+
+    const lastTime = conn.lastScheduledSyncAt ? new Date(conn.lastScheduledSyncAt).getTime() : Date.now();
+    let addMs = 15 * 60 * 1000;
+    if (conn.syncFrequency === "hourly") addMs = 60 * 60 * 1000;
+    if (conn.syncFrequency === "daily") addMs = 24 * 60 * 60 * 1000;
+
+    const nextDate = new Date(lastTime + addMs);
+    return nextDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
   const visible = tab === "All" ? aggOrders : aggOrders.filter((o) => o.channel === tab);
 
   return (
     <DemoShell
       title="Aggregator & SFTP Sync Engine"
-      subtitle="Phase 1 generic SFTP engine for Talabat Single File CSV format with safe dummy data testing."
+      subtitle="Phase 3 multi-branch SFTP engine with background automation scheduler."
       actions={
         <div className="flex gap-2">
           <Button
@@ -237,6 +272,7 @@ function Aggregators() {
             onClick={() => {
               setFormConn({
                 aggregatorName: "talabat",
+                branchId: outlets[0]?.id || "branch_main",
                 sftpHost: "test.local",
                 sftpPort: 22,
                 sftpUsername: "test_vendor",
@@ -244,7 +280,9 @@ function Aggregators() {
                 remoteDirectory: "/Assortment",
                 vendorId: "test_vendor",
                 priceFormat: "price_discounted",
-                isActive: false, // Default false in Phase 1
+                syncFrequency: "manual",
+                isPaused: false,
+                isActive: false, // Default false
               });
               setShowConfigModal(true);
             }}
@@ -273,7 +311,7 @@ function Aggregators() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Live orders in queue" value={String(aggOrders.length)} delta="+18% vs last hour" icon={RefreshCw} />
         <StatCard label="Channels connected" value="4 + SFTP" delta="All healthy" icon={Link2} tone="success" />
-        <StatCard label="SFTP Engine" value="Phase 1 Active" delta="Safe Mode (Dummy Data Only)" icon={Server} tone="accent" />
+        <StatCard label="SFTP Engine" value="Multi-Branch & Automation" delta="Safe Background Scheduler" icon={Server} tone="accent" />
         <StatCard label="Stock sync events today" value="12,486" icon={RefreshCw} tone="accent" />
       </div>
 
@@ -287,25 +325,27 @@ function Aggregators() {
           <TabsTrigger value="vault">API credentials</TabsTrigger>
         </TabsList>
 
-        {/* --- CENTRAL SFTP SERVER TAB (PHASE 1) --- */}
+        {/* --- CENTRAL SFTP SERVER TAB (PHASE 3 MULTI-BRANCH & SCHEDULER) --- */}
         <TabsContent value="sftp" className="mt-5 space-y-6">
-          {/* Phase 1 Protection Notice */}
+          {/* Automation Notice */}
           <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-4 text-blue-900 dark:text-blue-200">
             <div className="flex items-start gap-3">
-              <ShieldCheck className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+              <Clock className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
               <div className="text-xs">
-                <p className="font-bold">Phase 1 Locked — Safe Dummy Data Testing</p>
+                <p className="font-bold">Background Automation & Multi-Branch Management Active</p>
                 <p className="mt-0.5 text-blue-800/90 dark:text-blue-300">
-                  Connections default to <strong>`is_active = false`</strong>. "Preview CSV" runs safely <strong>in-memory</strong> without making any network or SFTP calls. Real SFTP uploads stay disabled until Phase 2 activation.
+                  Scheduled syncs enforce a <strong>5-minute minimum rate limit</strong> for assortment files. Automation can be paused/resumed independently without changing connection status. 3 consecutive failures will auto-deactivate connection for protection.
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Configured Connections Cards */}
+          {/* Configured Connections List Grouped by Branch */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {connections.map((conn) => {
               const isSelected = conn.id === selectedConnId;
+              const outletMatch = outlets.find((o) => o.id === conn.branchId) || outlets[0];
+              const nextSync = calculateNextSyncTime(conn);
 
               return (
                 <div
@@ -327,8 +367,8 @@ function Aggregators() {
                       </div>
                       <div>
                         <h3 className="font-bold text-ink text-sm capitalize">{conn.aggregatorName} SFTP</h3>
-                        <p className="text-[11px] text-muted-foreground font-mono">
-                          Vendor ID: {conn.vendorId || "test_vendor"}
+                        <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+                          <Building className="h-3 w-3 text-primary" /> {outletMatch?.name || "Main Branch"}
                         </p>
                       </div>
                     </div>
@@ -341,31 +381,54 @@ function Aggregators() {
                           : "border-amber-500/30 bg-amber-500/10 text-amber-600 font-semibold"
                       }
                     >
-                      {conn.isActive ? "Active" : "Configured — Inactive"}
+                      {conn.isActive ? "Active" : "Inactive"}
                     </Badge>
                   </div>
 
                   <div className="mt-4 space-y-1.5 text-xs text-muted-foreground">
                     <div className="flex justify-between">
-                      <span>Host:</span>
-                      <span className="font-mono font-semibold text-ink truncate max-w-[170px]">
-                        {conn.sftpHost || "test.local"}
-                      </span>
+                      <span>Vendor ID:</span>
+                      <span className="font-mono font-semibold text-ink">{conn.vendorId || "test_vendor"}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Target Dir:</span>
-                      <span className="font-mono text-ink">{conn.remoteDirectory || "/Assortment"}</span>
+                      <span>Sync Schedule:</span>
+                      <span className="capitalize font-semibold text-ink">{conn.syncFrequency || "manual"}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Price Format:</span>
-                      <span className="font-mono text-ink text-[11px] font-semibold">{conn.priceFormat || "price_discounted"}</span>
+                      <span>Next Scheduled:</span>
+                      <span className="font-mono text-xs text-primary font-semibold">{nextSync}</span>
                     </div>
                   </div>
 
                   <div className="mt-4 pt-3 border-t border-border flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-semibold text-amber-600 flex items-center gap-1">
-                      <Lock className="h-3 w-3" /> Inactive (Phase 1)
-                    </span>
+                    {/* Pause/Resume Automation Toggle */}
+                    {conn.syncFrequency !== "manual" && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs font-semibold px-2"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleTogglePause(conn.id!, conn.isPaused);
+                        }}
+                      >
+                        {conn.isPaused ? (
+                          <span className="text-amber-600 flex items-center gap-1">
+                            <PlayCircle className="h-3.5 w-3.5" /> Resume
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground flex items-center gap-1">
+                            <PauseCircle className="h-3.5 w-3.5" /> Pause
+                          </span>
+                        )}
+                      </Button>
+                    )}
+
+                    {conn.syncFrequency === "manual" && (
+                      <span className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1">
+                        <Lock className="h-3 w-3" /> Manual Only
+                      </span>
+                    )}
 
                     <div className="flex items-center gap-1">
                       <Button
@@ -431,10 +494,9 @@ function Aggregators() {
                     {isLoadingPreview ? "Generating..." : "Preview CSV"}
                   </Button>
 
-                  {/* Sync Now Button - Disabled with tooltip when is_active is false */}
-                  <div title="Sync is disabled until this connection is verified and activated.">
+                  <div title={!activeConnection.isActive ? "Sync is disabled until this connection is verified and activated." : ""}>
                     <Button
-                      className="rounded-xl font-semibold opacity-50 cursor-not-allowed"
+                      className={`rounded-xl font-semibold ${!activeConnection.isActive ? "opacity-50 cursor-not-allowed" : ""}`}
                       disabled={!activeConnection.isActive || isSyncing}
                       onClick={handleExecuteSync}
                     >
@@ -481,7 +543,7 @@ function Aggregators() {
                         <FileText className="h-4 w-4 text-primary" /> Generated Single File Payload Preview ({csvPreview.fileName})
                       </h4>
                       <p className="text-[11px] text-muted-foreground">
-                        Target Path: <code className="font-mono text-primary">{csvPreview.remotePath}</code> | {csvPreview.recordCount} Items | {csvPreview.fileSizeBytes} Bytes | In-Memory (No outbound network calls)
+                        Target Path: <code className="font-mono text-primary">{csvPreview.remotePath}</code> | {csvPreview.recordCount} Items | {csvPreview.fileSizeBytes} Bytes | In-Memory
                       </p>
                     </div>
                     <div className="flex gap-2">
@@ -755,7 +817,7 @@ function Aggregators() {
               <Server className="h-5 w-5 text-primary" /> Add / Edit SFTP Connection
             </DialogTitle>
             <DialogDescription>
-              Configure placeholder or vendor SFTP settings. Credentials are encrypted at rest with AES-256.
+              Configure aggregator connection settings. Passwords are encrypted at rest with AES-256.
             </DialogDescription>
           </DialogHeader>
 
@@ -770,10 +832,29 @@ function Aggregators() {
                   onChange={(e) => setFormConn({ ...formConn, aggregatorName: e.target.value })}
                 >
                   <option value="talabat">Talabat</option>
+                  <option value="careem">Careem (Blocked - Spec Pending)</option>
+                  <option value="instashop">InstaShop (Blocked - Spec Pending)</option>
+                  <option value="deliveroo">Deliveroo (Blocked - Spec Pending)</option>
                 </select>
               </div>
 
               <div className="space-y-1.5">
+                <Label htmlFor="branchId" className="text-xs font-semibold">Target Branch</Label>
+                <select
+                  id="branchId"
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-xs text-ink shadow-sm"
+                  value={formConn.branchId}
+                  onChange={(e) => setFormConn({ ...formConn, branchId: e.target.value })}
+                >
+                  {outlets.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name} ({o.emirate})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5 sm:col-span-2">
                 <Label htmlFor="vendorId" className="text-xs font-semibold">Username / Vendor ID</Label>
                 <Input
                   id="vendorId"
@@ -821,8 +902,23 @@ function Aggregators() {
                 </select>
               </div>
 
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label htmlFor="sftpPassword" className="text-xs font-semibold">SFTP Password (AES-256 Encrypted)</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="syncFrequency" className="text-xs font-semibold">Sync Frequency Schedule</Label>
+                <select
+                  id="syncFrequency"
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-xs text-ink shadow-sm"
+                  value={formConn.syncFrequency}
+                  onChange={(e) => setFormConn({ ...formConn, syncFrequency: e.target.value as any })}
+                >
+                  <option value="manual">Manual Only (Sync Now Button)</option>
+                  <option value="15min">Every 15 Minutes</option>
+                  <option value="hourly">Hourly</option>
+                  <option value="daily">Daily</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="sftpPassword" className="text-xs font-semibold">SFTP Password</Label>
                 <div className="relative">
                   <Input
                     id="sftpPassword"
