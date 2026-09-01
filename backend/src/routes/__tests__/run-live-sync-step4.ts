@@ -1,10 +1,10 @@
-import { connectionsStore, syncLogsStore, fetchDbProductItems, generateSingleFileCsvPayload, decryptSecret, encryptSecret } from "../aggregator-sftp.js";
+import { connectionsStore, syncLogsStore, fetchDbProductItems, generateSingleFileCsvPayload, decryptSecret, encryptSecret, cleanSftpHost } from "../aggregator-sftp.js";
 import { db } from "../../db/index.js";
 import { aggregatorConnections, aggregatorSyncLogs, tenants, branches } from "../../db/schema.js";
 import { eq } from "drizzle-orm";
 
 async function runPhase5Step4LiveSync() {
-  console.log("\n🚀 Starting Phase 5 Step 4 & Step 5 — Real Live Talabat SFTP Sync...\n");
+  console.log("\n🚀 Starting Phase 5 Step 4 & Step 5 — Real Live Talabat SFTP Sync Retry...\n");
 
   let dbConnRecord: any = null;
   try {
@@ -17,7 +17,6 @@ async function runPhase5Step4LiveSync() {
     console.log("Notice: Querying DB table aggregator_connections skipped or failed.");
   }
 
-  // If no DB connection record found, let's create the Paramount Baqala / Talabat connection
   if (!dbConnRecord) {
     let tenantRec = await db.query.tenants.findFirst();
     let branchRec = await db.query.branches.findFirst();
@@ -36,7 +35,7 @@ async function runPhase5Step4LiveSync() {
           tenantId,
           branchId,
           aggregatorName: "talabat",
-          sftpHost: host,
+          sftpHost: cleanSftpHost(host),
           sftpPort: 22,
           sftpUsername: vendorId,
           sftpPassword: encryptSecret(password),
@@ -53,13 +52,12 @@ async function runPhase5Step4LiveSync() {
       console.log(`Created Paramount Baqala / Talabat connection record: ID ${inserted.id}`);
     } catch (e: any) {
       console.log("Could not insert DB connection record:", e.message);
-      // Fallback in-memory connection
       dbConnRecord = {
         id: "conn_paramount_baqala_talabat",
         tenantId,
         branchId,
         aggregatorName: "talabat",
-        sftpHost: host,
+        sftpHost: cleanSftpHost(host),
         sftpPort: 22,
         sftpUsername: vendorId,
         sftpPasswordEncrypted: encryptSecret(password),
@@ -74,14 +72,16 @@ async function runPhase5Step4LiveSync() {
     }
   }
 
+  const hostSanitized = cleanSftpHost(dbConnRecord.sftpHost || "vendor-automation-sftp-live-me.prod.aws.qcommerce.live");
+
   const talabatConn = {
     id: dbConnRecord.id,
     tenantId: dbConnRecord.tenantId,
     branchId: dbConnRecord.branchId,
     aggregatorName: dbConnRecord.aggregatorName,
-    sftpHost: dbConnRecord.sftpHost,
+    sftpHost: hostSanitized,
     sftpPort: dbConnRecord.sftpPort || 22,
-    sftpUsername: dbConnRecord.sftpUsername || dbConnRecord.vendorId,
+    sftpUsername: (dbConnRecord.sftpUsername || dbConnRecord.vendorId).trim(),
     sftpPasswordEncrypted: dbConnRecord.sftpPassword || dbConnRecord.sftpPasswordEncrypted || "",
     remoteDirectory: dbConnRecord.remoteDirectory || "/Assortment",
     vendorId: dbConnRecord.vendorId,
@@ -118,7 +118,7 @@ async function runPhase5Step4LiveSync() {
   const startTime = Date.now();
 
   try {
-    const decryptedPassword = decryptSecret(talabatConn.sftpPasswordEncrypted);
+    const decryptedPassword = decryptSecret(talabatConn.sftpPasswordEncrypted).trim();
     const items = await fetchDbProductItems();
     const payload = generateSingleFileCsvPayload(talabatConn.vendorId, talabatConn.priceFormat, items, talabatConn.aggregatorName);
     const bytes = Buffer.byteLength(payload.csvContent, "utf-8");
@@ -135,6 +135,39 @@ async function runPhase5Step4LiveSync() {
         username: talabatConn.sftpUsername || talabatConn.vendorId,
         password: decryptedPassword,
         readyTimeout: 25000,
+        algorithms: {
+          serverHostKey: [
+            "ssh-rsa",
+            "rsa-sha2-256",
+            "rsa-sha2-512",
+            "ecdsa-sha2-nistp256",
+            "ecdsa-sha2-nistp384",
+            "ecdsa-sha2-nistp521",
+            "ssh-ed25519",
+          ],
+          cipher: [
+            "aes128-ctr",
+            "aes192-ctr",
+            "aes256-ctr",
+            "aes128-gcm",
+            "aes128-gcm@openssh.com",
+            "aes256-gcm",
+            "aes256-gcm@openssh.com",
+            "aes128-cbc",
+            "aes192-cbc",
+            "aes256-cbc",
+          ],
+          kex: [
+            "curve25519-sha256",
+            "curve25519-sha256@libssh.org",
+            "ecdh-sha2-nistp256",
+            "ecdh-sha2-nistp384",
+            "ecdh-sha2-nistp521",
+            "diffie-hellman-group14-sha256",
+            "diffie-hellman-group14-sha1",
+            "diffie-hellman-group1-sha1",
+          ],
+        },
       });
 
       const remoteFilePath = `${talabatConn.remoteDirectory || "/Assortment"}/${payload.fileName}`;
