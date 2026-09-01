@@ -2,9 +2,9 @@ import {
   generateSingleFileCsvPayload,
   encryptSecret,
   decryptSecret,
-  formatTimestamp,
   ProductItemInput,
 } from "../aggregator-sftp.js";
+import { formatTimestamp } from "../../aggregator-adapters/index.js";
 
 describe("Phase 1 - Aggregator SFTP CSV Generator & Encryption Unit Tests", () => {
 

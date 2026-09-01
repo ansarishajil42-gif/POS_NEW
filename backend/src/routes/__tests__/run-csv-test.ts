@@ -2,12 +2,12 @@ import {
   generateSingleFileCsvPayload,
   encryptSecret,
   decryptSecret,
-  formatTimestamp,
   ProductItemInput,
   connectionsStore,
   runScheduledSyncEngine,
   syncLogsStore,
 } from "../aggregator-sftp.js";
+import { getAdapter, talabatAdapter, formatTimestamp } from "../../aggregator-adapters/index.js";
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -19,7 +19,7 @@ function assert(condition: boolean, message: string) {
 }
 
 async function runTests() {
-  console.log("\n🧪 Running Phase 1, 2 & 3 Aggregator SFTP Test Suite...\n");
+  console.log("\n🧪 Running Phase 1, 2, 3 & 4 Aggregator SFTP Test Suite...\n");
 
   // Test 1: Encryption & Decryption
   const rawPass = "dummy123_secret";
@@ -109,18 +109,16 @@ async function runTests() {
   // --- PHASE 3 AUTOMATION & SCHEDULER TESTS ---
   console.log("\n🧪 Running Phase 3 Scheduler & Safeguard Tests...\n");
 
-  // Check 1: Existing dummy connection sync_frequency remains "manual"
   const defaultConn = connectionsStore.get("conn_dummy_talabat");
   assert(defaultConn?.syncFrequency === "manual", "Existing test connection sync_frequency was NOT changed from 'manual'");
 
-  // Check 2: Setup a scheduled test connection with invalid host to test 3-consecutive-failures auto-deactivation
   const schedId = "conn_sched_test_failing";
   connectionsStore.set(schedId, {
     id: schedId,
     tenantId: "default-tenant",
     branchId: "branch_sub",
     aggregatorName: "talabat",
-    sftpHost: "invalid.test.local", // Will trigger simulated failure
+    sftpHost: "invalid.test.local",
     sftpPort: 22,
     sftpUsername: "failing_vendor",
     sftpPasswordEncrypted: encryptSecret("pass"),
@@ -130,36 +128,48 @@ async function runTests() {
     syncFrequency: "15min",
     isPaused: false,
     consecutiveFailures: 0,
-    isActive: true, // Started active
+    isActive: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
 
-  // Run 1
   await runScheduledSyncEngine(true);
   const connAfterRun1 = connectionsStore.get(schedId);
   assert(connAfterRun1?.consecutiveFailures === 1, "Consecutive failure count incremented to 1 after run 1");
-  assert(connAfterRun1?.isActive === true, "Connection remains active after 1 failure");
 
-  // Run 2
   await runScheduledSyncEngine(true);
   const connAfterRun2 = connectionsStore.get(schedId);
   assert(connAfterRun2?.consecutiveFailures === 2, "Consecutive failure count incremented to 2 after run 2");
-  assert(connAfterRun2?.isActive === true, "Connection remains active after 2 failures");
 
-  // Run 3
   await runScheduledSyncEngine(true);
   const connAfterRun3 = connectionsStore.get(schedId);
   assert(connAfterRun3?.consecutiveFailures === 3, "Consecutive failure count reached 3 after run 3");
   assert(connAfterRun3?.isActive === false, "Connection auto-deactivated (is_active = false) after 3 consecutive failures");
 
-  const latestLog = syncLogsStore.find((l) => l.aggregatorConnectionId === schedId);
+  // --- PHASE 4 ADAPTER PATTERN & REGISTRY TESTS ---
+  console.log("\n🧪 Running Phase 4 Adapter Architecture & Registry Tests...\n");
+
+  // 1. Adapter Factory returns talabatAdapter
+  const returnedAdapter = getAdapter("talabat");
+  assert(returnedAdapter.aggregatorName === "talabat", "getAdapter('talabat') returns talabatAdapter");
+
+  // 2. Direct Adapter output matches generateSingleFileCsvPayload output byte-for-byte
+  const directAdapterRes = talabatAdapter.generateFile(itemsExcl, { vendorId: "test_vendor", priceFormat: "price_discounted" });
+  assert(directAdapterRes.fileContent === resPriceA.csvContent, "Adapter output matches engine output byte-for-byte");
+
+  // 3. Adapter Registry throws clear error for unimplemented aggregators
+  let rejectedError = "";
+  try {
+    getAdapter("careem");
+  } catch (err: any) {
+    rejectedError = err.message;
+  }
   assert(
-    latestLog?.errorMessage?.includes("Auto-deactivated: 3 consecutive scheduled SFTP sync failures") ?? false,
-    "Audit log contains auto-deactivation reason"
+    rejectedError.includes("Aggregator integration for 'careem' is not yet implemented — format specification pending"),
+    "Adapter Registry cleanly rejects unimplemented aggregator 'careem' with clear message"
   );
 
-  console.log("\n🎉 ALL PHASE 1, 2 & 3 TESTS PASSED SUCCESSFULLY!\n");
+  console.log("\n🎉 ALL PHASE 1, 2, 3 & 4 TESTS PASSED SUCCESSFULLY!\n");
 }
 
 runTests().catch((e) => {

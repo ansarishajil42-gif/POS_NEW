@@ -831,10 +831,10 @@ function Aggregators() {
                   value={formConn.aggregatorName}
                   onChange={(e) => setFormConn({ ...formConn, aggregatorName: e.target.value })}
                 >
-                  <option value="talabat">Talabat</option>
-                  <option value="careem">Careem (Blocked - Spec Pending)</option>
-                  <option value="instashop">InstaShop (Blocked - Spec Pending)</option>
-                  <option value="deliveroo">Deliveroo (Blocked - Spec Pending)</option>
+                  <option value="talabat">Talabat / Delivery Hero</option>
+                  <option value="careem" disabled>Careem (Coming soon — format specification pending)</option>
+                  <option value="instashop" disabled>InstaShop (Coming soon — format specification pending)</option>
+                  <option value="deliveroo" disabled>Deliveroo (Coming soon — format specification pending)</option>
                 </select>
               </div>
 

@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { db } from "../db/index.js";
 import { products, promotions } from "../db/schema.js";
+import { getAdapter, ProductData, ConnectionConfigAdapter, GeneratedFileResult } from "../aggregator-adapters/index.js";
 
 export const aggregatorSftpRouter = Router();
 
@@ -75,7 +76,7 @@ export interface AggregatorSyncLog {
   createdAt: string;
 }
 
-// In-memory store for Phase 3
+// In-memory store for connections & logs
 export const connectionsStore: Map<string, AggregatorConnection> = new Map();
 export const syncLogsStore: AggregatorSyncLog[] = [];
 
@@ -101,40 +102,23 @@ connectionsStore.set(dummyTestId, {
   updatedAt: new Date().toISOString(),
 });
 
-/**
- * Format Date to exact YYYY-MM-DD HH:MM:SS
- */
-export function formatTimestamp(d: Date): string {
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-export interface ProductItemInput {
-  id?: string;
-  barcode?: string;
-  sku?: string;
-  price: string;
-  active?: boolean;
-  promotion?: {
-    startDate: Date;
-    endDate: Date;
-    discountedPrice: string;
-    maxNoOfOrders?: string;
-  } | null;
-}
+export type ProductItemInput = ProductData;
 
 /**
- * Core CSV Generation Logic
+ * Adapter-driven CSV Generation Logic
  */
 export function generateSingleFileCsvPayload(
   vendorId: string,
   priceFormat: "price_discounted" | "original_discounted" | "original_price" = "price_discounted",
-  itemsInput?: ProductItemInput[]
+  itemsInput?: ProductItemInput[],
+  aggregatorName: string = "talabat"
 ): { csvContent: string; recordCount: number; fileName: string; warning?: string } {
+  const adapter = getAdapter(aggregatorName);
+
   const now = new Date();
   const future = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 
-  const items: ProductItemInput[] = itemsInput || [
+  const items: ProductData[] = itemsInput || [
     {
       id: "p1",
       barcode: "6291001002011",
@@ -187,110 +171,23 @@ export function generateSingleFileCsvPayload(
     },
   ];
 
-  let firstPriceCol = "price";
-  let promoPriceCol = "discounted_price";
+  const configAdapter: ConnectionConfigAdapter = {
+    vendorId,
+    priceFormat,
+  };
 
-  if (priceFormat === "original_discounted") {
-    firstPriceCol = "original_price";
-    promoPriceCol = "discounted_price";
-  } else if (priceFormat === "original_price") {
-    firstPriceCol = "original_price";
-    promoPriceCol = "price";
-  }
-
-  const headers = [
-    "barcode",
-    "sku",
-    firstPriceCol,
-    "active",
-    "reason",
-    "start_date",
-    "end_date",
-    "campaign_status",
-    promoPriceCol,
-    "max_no_of_orders",
-  ];
-
-  const uniqueItemsMap = new Map<string, ProductItemInput>();
-  items.forEach((item) => {
-    const key = (item.barcode && item.barcode.trim()) || (item.sku && item.sku.trim()) || item.id || "unknown";
-    uniqueItemsMap.set(key, item);
-  });
-
-  const finalItems = Array.from(uniqueItemsMap.values());
-
-  let activePromoCount = 0;
-  const rows: string[] = [headers.join(",")];
-
-  finalItems.forEach((p, idx) => {
-    let barcode = "";
-    let sku = "";
-
-    if (p.barcode && p.barcode.trim()) {
-      barcode = p.barcode.trim();
-      sku = "";
-    } else if (p.sku && p.sku.trim()) {
-      barcode = "";
-      sku = p.sku.trim();
-    } else {
-      barcode = `51513131500${idx + 1}`;
-      sku = "";
-    }
-
-    const priceVal = parseFloat(p.price || "15.00").toFixed(2);
-    const activeVal = p.active !== false ? "1" : "0";
-
-    let reason = "";
-    let startDt = "";
-    let endDt = "";
-    let campaignStatus = "";
-    let promoPrice = "";
-    let maxOrders = "";
-
-    if (p.promotion) {
-      activePromoCount++;
-      reason = "competitiveness";
-      startDt = formatTimestamp(p.promotion.startDate || now);
-      endDt = formatTimestamp(p.promotion.endDate || future);
-      campaignStatus = "1";
-      promoPrice = parseFloat(p.promotion.discountedPrice || "0.00").toFixed(2);
-      maxOrders = p.promotion.maxNoOfOrders || "";
-    }
-
-    const row = [
-      barcode,
-      sku,
-      priceVal,
-      activeVal,
-      reason,
-      startDt,
-      endDt,
-      campaignStatus,
-      promoPrice,
-      maxOrders,
-    ].map((v) => (v.includes(",") ? `"${v}"` : v));
-
-    rows.push(row.join(","));
-  });
-
-  let warning: string | undefined = undefined;
-  if (activePromoCount > 20000) {
-    warning = `Active promotions count (${activePromoCount}) exceeds the 20,000 SKU limit per campaign file.`;
-  }
-
-  const cleanVendorId = (vendorId || "vendor_id").trim();
-  const fileName = `assortment_${cleanVendorId}.csv`;
+  const fileResult: GeneratedFileResult = adapter.generateFile(items, configAdapter);
 
   return {
-    csvContent: rows.join("\n"),
-    recordCount: finalItems.length,
-    fileName,
-    warning,
+    csvContent: fileResult.fileContent,
+    recordCount: fileResult.recordCount,
+    fileName: fileResult.fileName,
+    warning: fileResult.warning,
   };
 }
 
 /**
- * Scheduled Automation Engine Execution Logic (Part A)
+ * Scheduled Automation Engine Execution Logic
  */
 export async function runScheduledSyncEngine(forceRun: boolean = false): Promise<{ processed: number; successCount: number; deactivatedCount: number }> {
   let processed = 0;
@@ -298,19 +195,17 @@ export async function runScheduledSyncEngine(forceRun: boolean = false): Promise
   let deactivatedCount = 0;
 
   const nowMs = Date.now();
-  const MIN_ASSORTMENT_INTERVAL_MS = 5 * 60 * 1000; // Enforce max 1 update per 5 minutes
+  const MIN_ASSORTMENT_INTERVAL_MS = 5 * 60 * 1000;
 
   for (const conn of connectionsStore.values()) {
-    // Filter 1: Must be active, not paused, and syncFrequency != "manual"
     if (!conn.isActive || conn.isPaused || conn.syncFrequency === "manual") {
       continue;
     }
 
-    // Filter 2: Enforce 5-minute minimum interval safeguard
     if (conn.lastScheduledSyncAt) {
       const elapsedMs = nowMs - new Date(conn.lastScheduledSyncAt).getTime();
       if (elapsedMs < MIN_ASSORTMENT_INTERVAL_MS && !forceRun) {
-        console.log(`[SFTP Scheduler] Skipping ${conn.id}: Rate limit enforced (Min 5 minutes required between runs).`);
+        console.log(`[SFTP Scheduler] Skipping ${conn.id}: Rate limit enforced (Min 5 minutes required).`);
         continue;
       }
     }
@@ -318,16 +213,15 @@ export async function runScheduledSyncEngine(forceRun: boolean = false): Promise
     processed++;
 
     try {
-      // Simulate SFTP host connection check for test hosts
       if (conn.sftpHost === "invalid.host" || conn.sftpHost === "invalid.test.local") {
         throw new Error("SFTP connection refused: Host unreachable.");
       }
 
-      const payload = generateSingleFileCsvPayload(conn.vendorId, conn.priceFormat);
+      const payload = generateSingleFileCsvPayload(conn.vendorId, conn.priceFormat, undefined, conn.aggregatorName);
       const bytes = Buffer.byteLength(payload.csvContent, "utf-8");
       const timestamp = new Date().toISOString();
 
-      conn.consecutiveFailures = 0; // Reset consecutive failures on success
+      conn.consecutiveFailures = 0;
       conn.lastScheduledSyncAt = timestamp;
       conn.updatedAt = timestamp;
 
@@ -347,7 +241,6 @@ export async function runScheduledSyncEngine(forceRun: boolean = false): Promise
       const timestamp = new Date().toISOString();
 
       let deactivationMsg = "";
-      // Part A 3-consecutive-failures auto-deactivation rule
       if (conn.consecutiveFailures >= 3) {
         conn.isActive = false;
         deactivatedCount++;
@@ -394,6 +287,13 @@ aggregatorSftpRouter.post("/connections", (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: "aggregatorName is required" });
   }
 
+  // Validate that an adapter exists for the aggregator name
+  try {
+    getAdapter(aggregatorName);
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err.message });
+  }
+
   const connId = id || `conn_${aggregatorName.toLowerCase()}_${Date.now()}`;
   const existing = connectionsStore.get(connId);
 
@@ -414,11 +314,11 @@ aggregatorSftpRouter.post("/connections", (req: Request, res: Response) => {
     remoteDirectory: remoteDirectory || existing?.remoteDirectory || "/Assortment",
     vendorId: vendorId !== undefined ? vendorId : (existing?.vendorId || "test_vendor"),
     priceFormat: priceFormat || existing?.priceFormat || "price_discounted",
-    syncFrequency: syncFrequency || existing?.syncFrequency || "manual", // Default manual
+    syncFrequency: syncFrequency || existing?.syncFrequency || "manual",
     isPaused: isPaused !== undefined ? Boolean(isPaused) : (existing?.isPaused ?? false),
     consecutiveFailures: existing?.consecutiveFailures || 0,
     lastScheduledSyncAt: existing?.lastScheduledSyncAt,
-    isActive: isActive !== undefined ? Boolean(isActive) : (existing?.isActive ?? false), // Default false
+    isActive: isActive !== undefined ? Boolean(isActive) : (existing?.isActive ?? false),
     createdAt: existing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -436,7 +336,7 @@ aggregatorSftpRouter.post("/connections", (req: Request, res: Response) => {
   });
 });
 
-// 2. GET /api/aggregator-sftp/connections - List connections (Password masked as ••••••••)
+// 2. GET /api/aggregator-sftp/connections - List connections
 aggregatorSftpRouter.get("/connections", (req: Request, res: Response) => {
   const connections = Array.from(connectionsStore.values()).map((conn) => ({
     ...conn,
@@ -485,16 +385,17 @@ aggregatorSftpRouter.delete("/connections/:id", (req: Request, res: Response) =>
   res.status(404).json({ success: false, error: "Connection not found" });
 });
 
-// 5. GET /api/aggregator-sftp/preview-csv/:connectionId - In-memory Preview ONLY
+// 5. GET /api/aggregator-sftp/preview-csv/:connectionId - In-memory Preview via Adapter
 aggregatorSftpRouter.get("/preview-csv/:connectionId", async (req: Request, res: Response) => {
   const { connectionId } = req.params;
   const conn = connectionsStore.get(connectionId);
 
   const vendorId = conn?.vendorId || "test_vendor";
   const priceFormat = conn?.priceFormat || "price_discounted";
+  const aggregatorName = conn?.aggregatorName || "talabat";
 
   try {
-    const payload = generateSingleFileCsvPayload(vendorId, priceFormat);
+    const payload = generateSingleFileCsvPayload(vendorId, priceFormat, undefined, aggregatorName);
 
     const previewLog: AggregatorSyncLog = {
       id: `log_prev_${Date.now()}`,
@@ -522,7 +423,7 @@ aggregatorSftpRouter.get("/preview-csv/:connectionId", async (req: Request, res:
   }
 });
 
-// 6. POST /api/aggregator-sftp/sync/:connectionId - Manual Sync (Rejects if is_active === false)
+// 6. POST /api/aggregator-sftp/sync/:connectionId - Manual Sync via Adapter (Rejects if is_active === false)
 aggregatorSftpRouter.post("/sync/:connectionId", async (req: Request, res: Response) => {
   const { connectionId } = req.params;
   const conn = connectionsStore.get(connectionId);
@@ -551,11 +452,12 @@ aggregatorSftpRouter.post("/sync/:connectionId", async (req: Request, res: Respo
   }
 
   try {
-    const payload = generateSingleFileCsvPayload(conn.vendorId, conn.priceFormat);
+    const decryptedPassword = decryptSecret(conn.sftpPasswordEncrypted);
+    const payload = generateSingleFileCsvPayload(conn.vendorId, conn.priceFormat, undefined, conn.aggregatorName);
     const bytes = Buffer.byteLength(payload.csvContent, "utf-8");
     const now = new Date().toISOString();
 
-    conn.consecutiveFailures = 0; // Reset failures on manual sync success
+    conn.consecutiveFailures = 0;
 
     const successLog: AggregatorSyncLog = {
       id: `log_sync_${Date.now()}`,
@@ -603,7 +505,7 @@ aggregatorSftpRouter.post("/sync/:connectionId", async (req: Request, res: Respo
   }
 });
 
-// 7. POST /api/aggregator-sftp/trigger-scheduled-runner - Manually trigger background scheduler cycle
+// 7. POST /api/aggregator-sftp/trigger-scheduled-runner
 aggregatorSftpRouter.post("/trigger-scheduled-runner", async (req: Request, res: Response) => {
   const { forceRun } = req.body;
   const result = await runScheduledSyncEngine(Boolean(forceRun));
@@ -613,7 +515,7 @@ aggregatorSftpRouter.post("/trigger-scheduled-runner", async (req: Request, res:
   });
 });
 
-// 8. GET /api/aggregator-sftp/logs/:connectionId - Return sync logs history
+// 8. GET /api/aggregator-sftp/logs/:connectionId
 aggregatorSftpRouter.get("/logs/:connectionId", (req: Request, res: Response) => {
   const { connectionId } = req.params;
   const logs = syncLogsStore.filter((l) => l.aggregatorConnectionId === connectionId);
