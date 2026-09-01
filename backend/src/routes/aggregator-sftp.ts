@@ -76,6 +76,16 @@ export interface AggregatorSyncLog {
   createdAt: string;
 }
 
+export function cleanSftpHost(host: string): string {
+  if (!host) return "";
+  let clean = host.trim();
+  if (clean.startsWith("sftp://")) clean = clean.replace("sftp://", "");
+  if (clean.startsWith("ssh://")) clean = clean.replace("ssh://", "");
+  if (clean.startsWith("https://")) clean = clean.replace("https://", "");
+  if (clean.includes("/")) clean = clean.split("/")[0];
+  return clean;
+}
+
 // In-memory store for connections & logs
 export const connectionsStore: Map<string, AggregatorConnection> = new Map();
 export const syncLogsStore: AggregatorSyncLog[] = [];
@@ -386,15 +396,17 @@ aggregatorSftpRouter.post("/connections", (req: Request, res: Response) => {
 
   let passwordEncrypted = existing?.sftpPasswordEncrypted || "";
   if (sftpPassword && sftpPassword !== "••••••••") {
-    passwordEncrypted = encryptSecret(sftpPassword);
+    passwordEncrypted = encryptSecret(sftpPassword.trim());
   }
+
+  const rawHost = sftpHost !== undefined ? sftpHost : (existing?.sftpHost || "test.local");
 
   const updatedConn: AggregatorConnection = {
     id: connId,
     tenantId: tenantId || existing?.tenantId || "default-tenant",
     branchId: branchId || existing?.branchId || "branch_main",
     aggregatorName: (aggregatorName || "talabat").toLowerCase(),
-    sftpHost: sftpHost !== undefined ? sftpHost : (existing?.sftpHost || "test.local"),
+    sftpHost: cleanSftpHost(rawHost),
     sftpPort: sftpPort ? Number(sftpPort) : (existing?.sftpPort || 22),
     sftpUsername: sftpUsername !== undefined ? sftpUsername : (existing?.sftpUsername || "test_vendor"),
     sftpPasswordEncrypted: passwordEncrypted,
@@ -546,17 +558,52 @@ aggregatorSftpRouter.post("/sync/:connectionId", async (req: Request, res: Respo
     const bytes = Buffer.byteLength(payload.csvContent, "utf-8");
     const now = new Date().toISOString();
 
+    const hostClean = cleanSftpHost(conn.sftpHost);
+
     // Perform real SFTP upload if host is non-dummy
-    if (conn.sftpHost && conn.sftpHost !== "test.local" && conn.sftpHost !== "invalid.host") {
+    if (hostClean && hostClean !== "test.local" && hostClean !== "invalid.host") {
       try {
         const SftpClient = (await import("ssh2-sftp-client")).default;
         const sftp = new SftpClient();
         await sftp.connect({
-          host: conn.sftpHost,
+          host: hostClean,
           port: conn.sftpPort || 22,
-          username: conn.sftpUsername || conn.vendorId,
-          password: decryptedPassword,
-          readyTimeout: 20000,
+          username: (conn.sftpUsername || conn.vendorId).trim(),
+          password: decryptedPassword.trim(),
+          readyTimeout: 25000,
+          algorithms: {
+            serverHostKey: [
+              "ssh-rsa",
+              "rsa-sha2-256",
+              "rsa-sha2-512",
+              "ecdsa-sha2-nistp256",
+              "ecdsa-sha2-nistp384",
+              "ecdsa-sha2-nistp521",
+              "ssh-ed25519",
+            ],
+            cipher: [
+              "aes128-ctr",
+              "aes192-ctr",
+              "aes256-ctr",
+              "aes128-gcm",
+              "aes128-gcm@openssh.com",
+              "aes256-gcm",
+              "aes256-gcm@openssh.com",
+              "aes128-cbc",
+              "aes192-cbc",
+              "aes256-cbc",
+            ],
+            kex: [
+              "curve25519-sha256",
+              "curve25519-sha256@libssh.org",
+              "ecdh-sha2-nistp256",
+              "ecdh-sha2-nistp384",
+              "ecdh-sha2-nistp521",
+              "diffie-hellman-group14-sha256",
+              "diffie-hellman-group14-sha1",
+              "diffie-hellman-group1-sha1",
+            ],
+          },
         });
         const remoteFilePath = `${conn.remoteDirectory || "/Assortment"}/${payload.fileName}`;
         const fileBuffer = Buffer.from(payload.csvContent, "utf-8");
@@ -566,7 +613,7 @@ aggregatorSftpRouter.post("/sync/:connectionId", async (req: Request, res: Respo
         // Step 5 Failure Safeguard: Auto-deactivate on upload failure
         conn.isActive = false;
         conn.consecutiveFailures = (conn.consecutiveFailures || 0) + 1;
-        throw new Error(`SFTP Transmission Failure (${conn.sftpHost}): ${sftpErr.message}`);
+        throw new Error(`SFTP Transmission Failure (${hostClean}): ${sftpErr.message}`);
       }
     }
 
