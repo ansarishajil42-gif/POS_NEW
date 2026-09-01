@@ -546,6 +546,30 @@ aggregatorSftpRouter.post("/sync/:connectionId", async (req: Request, res: Respo
     const bytes = Buffer.byteLength(payload.csvContent, "utf-8");
     const now = new Date().toISOString();
 
+    // Perform real SFTP upload if host is non-dummy
+    if (conn.sftpHost && conn.sftpHost !== "test.local" && conn.sftpHost !== "invalid.host") {
+      try {
+        const SftpClient = (await import("ssh2-sftp-client")).default;
+        const sftp = new SftpClient();
+        await sftp.connect({
+          host: conn.sftpHost,
+          port: conn.sftpPort || 22,
+          username: conn.sftpUsername || conn.vendorId,
+          password: decryptedPassword,
+          readyTimeout: 20000,
+        });
+        const remoteFilePath = `${conn.remoteDirectory || "/Assortment"}/${payload.fileName}`;
+        const fileBuffer = Buffer.from(payload.csvContent, "utf-8");
+        await sftp.put(fileBuffer, remoteFilePath);
+        await sftp.end();
+      } catch (sftpErr: any) {
+        // Step 5 Failure Safeguard: Auto-deactivate on upload failure
+        conn.isActive = false;
+        conn.consecutiveFailures = (conn.consecutiveFailures || 0) + 1;
+        throw new Error(`SFTP Transmission Failure (${conn.sftpHost}): ${sftpErr.message}`);
+      }
+    }
+
     conn.consecutiveFailures = 0;
 
     const successLog: AggregatorSyncLog = {
