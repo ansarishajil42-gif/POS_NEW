@@ -19,6 +19,8 @@ import auditLogsRouter from "./routes/audit-logs.js";
 import storeManagerRouter from "./routes/store-manager.js";
 import inventoryRouter from "./routes/inventory.js";
 import posRouter from "./routes/pos.js";
+import { sftpRouter } from "./routes/sftp-sync.js";
+import { aggregatorSftpRouter } from "./routes/aggregator-sftp.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -44,10 +46,6 @@ app.get("/health", (req, res) => {
   res.json({ status: "healthy", timestamp: new Date().toISOString() });
 });
 
-
-
-
-
 // API Routes
 app.use("/api/auth", authRouter);
 app.use("/api/tenants", tenantsRouter);
@@ -66,6 +64,8 @@ app.use("/api/audit-logs", auditLogsRouter);
 app.use("/api/store-manager", storeManagerRouter);
 app.use("/api/inventory", inventoryRouter);
 app.use("/api/pos", posRouter);
+app.use("/api/sftp", sftpRouter);
+app.use("/api/aggregator-sftp", aggregatorSftpRouter);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

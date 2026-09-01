@@ -673,3 +673,32 @@ export const inventoryLedger = pgTable("inventory_ledger", {
   productIdx: index("inventory_ledger_product_idx").on(table.productId),
   createdAtIdx: index("inventory_ledger_created_at_idx").on(table.createdAt),
 }));
+
+export const aggregatorConnections = pgTable("aggregator_connections", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  branchId: uuid("branch_id").notNull().references(() => branches.id, { onDelete: "cascade" }),
+  aggregatorName: text("aggregator_name").notNull(), // e.g. talabat
+  sftpHost: text("sftp_host"),
+  sftpPort: integer("sftp_port").default(22),
+  sftpUsername: text("sftp_username"),
+  sftpPassword: text("sftp_password"), // Encrypted AES-256-GCM
+  remoteDirectory: text("remote_directory").default("/Assortment"),
+  vendorId: text("vendor_id"),
+  priceFormat: text("price_format").notNull().default("price_discounted"), // price_discounted, original_discounted, original_price
+  isActive: boolean("is_active").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const aggregatorSyncLogs = pgTable("aggregator_sync_logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  aggregatorConnectionId: uuid("aggregator_connection_id").notNull().references(() => aggregatorConnections.id, { onDelete: "cascade" }),
+  syncType: text("sync_type").notNull().default("manual"), // manual, scheduled
+  status: text("status").notNull(), // success, failed, preview_only
+  fileName: text("file_name").notNull(),
+  rowCount: integer("row_count").notNull().default(0),
+  errorMessage: text("error_message"),
+  triggeredByUserId: uuid("triggered_by_user_id").references(() => staffUsers.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
