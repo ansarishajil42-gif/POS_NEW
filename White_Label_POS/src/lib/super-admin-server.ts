@@ -353,23 +353,25 @@ export const deleteTenantAdminServerFn = createServerFn({ method: "POST" })
     .handler(async ({ data }) => {
         await ensureSuperAdmin();
         try {
-            await db.transaction(async (tx) => {
-                const [current] = await tx.select().from(staffUsers).where(eq(staffUsers.id, data.id));
-                if (current) {
-                    try {
-                        await tx.delete(staffUsers).where(eq(staffUsers.id, data.id));
-                    } catch (err: any) {
-                        await tx.update(staffUsers).set({ isActive: false }).where(eq(staffUsers.id, data.id));
-                    }
-                    await logAuditAction({
-                        action: "Delete Tenant Admin",
-                        entityType: "user",
-                        entityId: data.id,
-                        tenantId: current.tenantId!,
-                        beforeValue: { email: current.email }
-                    }, tx);
-                }
-            });
+            const [current] = await db.select().from(staffUsers).where(eq(staffUsers.id, data.id));
+            if (!current) return { success: true };
+
+            try {
+                await db.delete(staffUsers).where(eq(staffUsers.id, data.id));
+            } catch (err: any) {
+                await db.update(staffUsers).set({ isActive: false }).where(eq(staffUsers.id, data.id));
+            }
+
+            if (current.tenantId) {
+                await logAuditAction({
+                    action: "Delete Tenant Admin",
+                    entityType: "user",
+                    entityId: data.id,
+                    tenantId: current.tenantId,
+                    beforeValue: { email: current.email }
+                });
+            }
+
             return { success: true };
         } catch (e: any) {
             console.error("Error deleting tenant admin:", e);

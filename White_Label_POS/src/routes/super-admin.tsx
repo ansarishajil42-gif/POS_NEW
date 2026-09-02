@@ -1116,8 +1116,9 @@ function SuperAdmin() {
                                             if (res.success) {
                                                 toast.success("Admin deleted successfully");
                                                 setAdminData(null);
+                                                router.invalidate();
                                             } else {
-                                                toast.error("Failed to delete admin");
+                                                toast.error(res.error || "Failed to delete admin");
                                             }
                                         }
                                     }}>
