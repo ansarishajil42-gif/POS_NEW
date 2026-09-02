@@ -1157,7 +1157,7 @@ function SuperAdmin() {
                     
                     <div className="py-4 space-y-4">
                         <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive font-semibold">
-                            To confirm archiving <span className="font-extrabold">{tenantToArchive?.name}</span>, please type its exact name or subdomain below.
+                            To confirm archiving <span className="font-extrabold">{tenantToArchive?.name?.trim()}</span>, please type its exact name or subdomain below.
                         </div>
                         <div className="space-y-2">
                             <Label htmlFor="confirmationValue">Confirmation Value</Label>
@@ -1165,7 +1165,7 @@ function SuperAdmin() {
                                 id="confirmationValue"
                                 value={archiveConfirmation}
                                 onChange={(e) => setArchiveConfirmation(e.target.value)}
-                                placeholder={`e.g. ${tenantToArchive?.subdomain || tenantToArchive?.name}`}
+                                placeholder={`e.g. ${tenantToArchive?.subdomain?.trim() || tenantToArchive?.name?.trim()}`}
                                 className="font-mono text-sm"
                             />
                         </div>

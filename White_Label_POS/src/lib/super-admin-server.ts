@@ -716,7 +716,11 @@ export const archiveTenantServerFn = createServerFn({ method: "POST" })
             const [tenant] = await tx.select().from(tenants).where(eq(tenants.id, data.tenantId)).for('update');
             if (!tenant) throw new Error("Tenant not found.");
             
-            if (tenant.name !== data.confirmationValue && tenant.subdomain !== data.confirmationValue) {
+            const normalizedConfirm = (data.confirmationValue || "").trim().toLowerCase();
+            const normalizedName = (tenant.name || "").trim().toLowerCase();
+            const normalizedSubdomain = (tenant.subdomain || "").trim().toLowerCase();
+
+            if (normalizedName !== normalizedConfirm && normalizedSubdomain !== normalizedConfirm) {
                 throw new Error("Confirmation value does not match tenant name or subdomain.");
             }
 
