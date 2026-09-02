@@ -635,7 +635,7 @@ function Aggregators() {
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleSaveConnection} className="space-y-4 py-2">
+          <form onSubmit={handleSaveConnection} className="space-y-4 py-2" autoComplete="off">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="aggregatorName" className="text-xs font-semibold">Aggregator Channel</Label>
@@ -672,9 +672,11 @@ function Aggregators() {
                 <Label htmlFor="vendorId" className="text-xs font-semibold">Username / Vendor ID</Label>
                 <Input
                   id="vendorId"
+                  name="sftp_vendor_id"
+                  autoComplete="off"
                   value={formConn.vendorId}
                   onChange={(e) => setFormConn({ ...formConn, vendorId: e.target.value, sftpUsername: e.target.value })}
-                  placeholder="e.g. test_vendor"
+                  placeholder="e.g. TB_AE_4e9a0d34-3ba4-4396"
                   required
                 />
               </div>
@@ -683,9 +685,11 @@ function Aggregators() {
                 <Label htmlFor="sftpHost" className="text-xs font-semibold">SFTP Host</Label>
                 <Input
                   id="sftpHost"
+                  name="sftp_host"
+                  autoComplete="off"
                   value={formConn.sftpHost}
                   onChange={(e) => setFormConn({ ...formConn, sftpHost: e.target.value })}
-                  placeholder="e.g. test.local"
+                  placeholder="e.g. sftp.talabat.com"
                   required
                 />
               </div>
@@ -694,6 +698,8 @@ function Aggregators() {
                 <Label htmlFor="sftpPort" className="text-xs font-semibold">SFTP Port</Label>
                 <Input
                   id="sftpPort"
+                  name="sftp_port"
+                  autoComplete="off"
                   type="number"
                   value={formConn.sftpPort}
                   onChange={(e) => setFormConn({ ...formConn, sftpPort: Number(e.target.value) })}
@@ -736,6 +742,8 @@ function Aggregators() {
                 <div className="relative">
                   <Input
                     id="sftpPassword"
+                    name="sftp_password"
+                    autoComplete="new-password"
                     type={showPass ? "text" : "password"}
                     value={formConn.sftpPassword || ""}
                     onChange={(e) => setFormConn({ ...formConn, sftpPassword: e.target.value })}
@@ -756,6 +764,8 @@ function Aggregators() {
                 <Label htmlFor="remoteDirectory" className="text-xs font-semibold">Target Remote Directory</Label>
                 <Input
                   id="remoteDirectory"
+                  name="remote_directory"
+                  autoComplete="off"
                   value={formConn.remoteDirectory}
                   onChange={(e) => setFormConn({ ...formConn, remoteDirectory: e.target.value })}
                   placeholder="/Assortment"
