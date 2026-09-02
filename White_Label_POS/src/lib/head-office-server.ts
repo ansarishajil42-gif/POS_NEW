@@ -133,214 +133,219 @@ export const getBranchDetailsFn = createServerFn({ method: "GET" })
   });
 
 export const getHeadOfficeDataFn = createServerFn({ method: "GET" }).handler(async () => {
-  const tenantId = await getHeadOfficeTenant();
+  try {
+    const tenantId = await getHeadOfficeTenant();
 
-  const tenantInfo = await db.query.tenants.findFirst({
-    where: eq(tenants.id, tenantId),
-  });
+    const tenantInfo = await db.query.tenants.findFirst({
+      where: eq(tenants.id, tenantId),
+    });
 
-  // Settings
-  let settings = await db.query.tenantSettings.findFirst({
-    where: eq(tenantSettings.tenantId, tenantId),
-  });
-  if (!settings) {
-    const [newSet] = await db.insert(tenantSettings).values({ tenantId }).returning();
-    settings = newSet;
-  }
+    // Settings
+    let settings = await db.query.tenantSettings.findFirst({
+      where: eq(tenantSettings.tenantId, tenantId),
+    });
+    if (!settings) {
+      const [newSet] = await db.insert(tenantSettings).values({ tenantId }).returning();
+      settings = newSet;
+    }
 
-  // Branches
-  const dbBranches = await db.query.branches.findMany({
-    where: eq(branches.tenantId, tenantId),
-  });
+    // Branches
+    const dbBranches = await db.query.branches.findMany({
+      where: eq(branches.tenantId, tenantId),
+    });
 
-  // Products
-  const [dbProducts, dbBarcodes, dbVariants, dbConversions] = await Promise.all([
-    db.query.products.findMany({
-      where: eq(products.tenantId, tenantId),
-    }),
-    db.select().from(productBarcodes),
-    db.select().from(productVariants),
-    db.select().from(unitConversions),
-  ]);
+    // Products
+    const [dbProducts, dbBarcodes, dbVariants, dbConversions] = await Promise.all([
+      db.query.products.findMany({
+        where: eq(products.tenantId, tenantId),
+      }),
+      db.select().from(productBarcodes),
+      db.select().from(productVariants),
+      db.select().from(unitConversions),
+    ]);
 
-  const productsWithDetails = dbProducts.map((p) => {
-    const alternateBarcodes = dbBarcodes
-      .filter((b) => b.productId === p.id)
-      .map((b) => b.barcode);
-    const variants = dbVariants
-      .filter((v) => v.productId === p.id)
-      .map((v) => ({
-        variantName: v.variantName,
-        variantValue: v.variantValue,
-        sku: v.sku,
-        priceAdjustment: v.priceAdjustment,
-      }));
-    const conversions = dbConversions
-      .filter((c) => c.productId === p.id)
-      .map((c) => ({
-        fromUnit: c.fromUnit,
-        toUnit: c.toUnit,
-        conversionFactor: c.conversionFactor,
-      }));
+    const productsWithDetails = dbProducts.map((p) => {
+      const alternateBarcodes = dbBarcodes
+        .filter((b) => b.productId === p.id)
+        .map((b) => b.barcode);
+      const variants = dbVariants
+        .filter((v) => v.productId === p.id)
+        .map((v) => ({
+          variantName: v.variantName,
+          variantValue: v.variantValue,
+          sku: v.sku,
+          priceAdjustment: v.priceAdjustment,
+        }));
+      const conversions = dbConversions
+        .filter((c) => c.productId === p.id)
+        .map((c) => ({
+          fromUnit: c.fromUnit,
+          toUnit: c.toUnit,
+          conversionFactor: c.conversionFactor,
+        }));
+
+      return {
+        ...p,
+        alternateBarcodes,
+        variants,
+        conversions,
+      };
+    });
+
+    // Stock Levels
+    const dbStock = await db.query.stockLevels.findMany({
+      where: inArray(
+        stockLevels.branchId,
+        dbBranches.map((b) => b.id).concat(["00000000-0000-0000-0000-000000000000"]),
+      ),
+    });
+
+    // Batches
+    const dbBatches = await db.query.batches.findMany({
+      where: inArray(
+        batches.branchId,
+        dbBranches.map((b) => b.id).concat(["00000000-0000-0000-0000-000000000000"]),
+      ),
+      orderBy: [batches.expiryDate],
+    });
+
+    // POs
+    const dbPos = await db.query.purchaseOrders.findMany({
+      where: eq(purchaseOrders.tenantId, tenantId),
+      with: { vendor: true, branch: true, items: { with: { product: true } } },
+      orderBy: [desc(purchaseOrders.createdAt)],
+    });
+
+    // Vendors
+    const dbVendors = await db.query.vendors.findMany({
+      where: eq(vendors.tenantId, tenantId),
+    });
+
+    // Staff
+    const dbStaff = await db.query.staffUsers.findMany({
+      where: eq(staffUsers.tenantId, tenantId),
+      columns: {
+        id: true,
+        tenantId: true,
+        branchId: true,
+        name: true,
+        email: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+      },
+    });
+
+    // Customers
+    const dbCustomers = await db.query.customers.findMany({
+      where: eq(customers.tenantId, tenantId),
+    });
+
+    // Promotions
+    const dbPromotions = await db.query.promotions.findMany({
+      where: eq(promotions.tenantId, tenantId),
+    });
+
+    // Permissions
+    const dbPermissions = await db.query.rolePermissions.findMany({
+      where: eq(rolePermissions.tenantId, tenantId),
+    });
+
+    // Orders for branch trend
+    const dbOrders = await db.query.orders.findMany({
+      where: eq(orders.tenantId, tenantId),
+      columns: { branchId: true, total: true, vat: true, subtotal: true, createdAt: true },
+    });
+
+    // Calculate Output VAT (VAT collected on completed orders)
+    const outputVat = dbOrders.reduce((sum, o) => sum + Number(o.vat || 0), 0);
+    const salesTotal = dbOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
+
+    // Fetch Invoices to calculate Input VAT (VAT paid on purchases)
+    const dbInvoices = await db.query.vendorInvoices.findMany({
+      where: eq(vendorInvoices.tenantId, tenantId),
+    });
+
+    const vatRateVal = settings ? Number(settings.vatRate) : 5.0;
+    const inputVat = dbInvoices.reduce((sum, inv) => {
+      const total = Number(inv.total);
+      const vat = total - total / (1 + vatRateVal / 100);
+      return sum + vat;
+    }, 0);
+    const purchasesTotal = dbInvoices.reduce((sum, inv) => sum + Number(inv.total || 0), 0);
+
+    // Calculate Reporting Period
+    let reportingPeriod = "All Time";
+    const dates: Date[] = [];
+    dbOrders.forEach((o) => dates.push(new Date(o.createdAt)));
+    dbInvoices.forEach((i) => dates.push(new Date(i.createdAt)));
+    if (dates.length > 0) {
+      const minDate = new Date(Math.min(...dates.map((d) => d.getTime())));
+      const maxDate = new Date(Math.max(...dates.map((d) => d.getTime())));
+      const formatD = (d: Date) =>
+        d.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
+      reportingPeriod = `${formatD(minDate)} - ${formatD(maxDate)}`;
+    }
+
+    // Generate dynamic 7-day trend
+    const branchTrend: any[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dayName = date.toLocaleDateString("en-US", { weekday: "short" });
+
+      const dayData: any = { d: dayName };
+      dbBranches.forEach((b) => {
+        dayData[b.name] = 0; // default 0 sales
+      });
+
+      dbOrders.forEach((o) => {
+        const oDate = new Date(o.createdAt);
+        if (oDate.toDateString() === date.toDateString()) {
+          const branch = dbBranches.find((b) => b.id === o.branchId);
+          if (branch) {
+            dayData[branch.name] += Number(o.total);
+          }
+        }
+      });
+      branchTrend.push(dayData);
+    }
+
+    const dbPriceOverrideRequests = await db.query.priceOverrideRequests.findMany({
+      where: eq(priceOverrideRequests.tenantId, tenantId),
+      orderBy: [desc(priceOverrideRequests.createdAt)],
+      with: {
+        product: true,
+        branch: true,
+      },
+    });
 
     return {
-      ...p,
-      alternateBarcodes,
-      variants,
-      conversions,
+      success: true,
+      settings,
+      priceRequests: dbPriceOverrideRequests,
+      branches: dbBranches,
+      products: productsWithDetails,
+      stock: dbStock,
+      batches: dbBatches,
+      purchases: dbPos,
+      vendors: dbVendors,
+      staff: dbStaff,
+      customers: dbCustomers,
+      promotions: dbPromotions,
+      permissions: dbPermissions,
+      branchTrend,
+      outputVat,
+      inputVat,
+      salesTotal,
+      purchasesTotal,
+      reportingPeriod,
+      tenantName: tenantInfo ? tenantInfo.name : "Tenant",
     };
-  });
-
-  // Stock Levels
-  const dbStock = await db.query.stockLevels.findMany({
-    where: inArray(
-      stockLevels.branchId,
-      dbBranches.map((b) => b.id).concat(["00000000-0000-0000-0000-000000000000"]),
-    ),
-  });
-
-  // Batches
-  const dbBatches = await db.query.batches.findMany({
-    where: inArray(
-      batches.branchId,
-      dbBranches.map((b) => b.id).concat(["00000000-0000-0000-0000-000000000000"]),
-    ),
-    orderBy: [batches.expiryDate],
-  });
-
-  // POs
-  const dbPos = await db.query.purchaseOrders.findMany({
-    where: eq(purchaseOrders.tenantId, tenantId),
-    with: { vendor: true, branch: true, items: { with: { product: true } } },
-    orderBy: [desc(purchaseOrders.createdAt)],
-  });
-
-  // Vendors
-  const dbVendors = await db.query.vendors.findMany({
-    where: eq(vendors.tenantId, tenantId),
-  });
-
-  // Staff
-  const dbStaff = await db.query.staffUsers.findMany({
-    where: eq(staffUsers.tenantId, tenantId),
-    columns: {
-      id: true,
-      tenantId: true,
-      branchId: true,
-      name: true,
-      email: true,
-      role: true,
-      isActive: true,
-      createdAt: true,
-    },
-  });
-
-  // Customers
-  const dbCustomers = await db.query.customers.findMany({
-    where: eq(customers.tenantId, tenantId),
-  });
-
-  // Promotions
-  const dbPromotions = await db.query.promotions.findMany({
-    where: eq(promotions.tenantId, tenantId),
-  });
-
-  // Permissions
-  const dbPermissions = await db.query.rolePermissions.findMany({
-    where: eq(rolePermissions.tenantId, tenantId),
-  });
-
-  // Orders for branch trend
-  const dbOrders = await db.query.orders.findMany({
-    where: eq(orders.tenantId, tenantId),
-    columns: { branchId: true, total: true, vat: true, subtotal: true, createdAt: true },
-  });
-
-  // Calculate Output VAT (VAT collected on completed orders)
-  const outputVat = dbOrders.reduce((sum, o) => sum + Number(o.vat || 0), 0);
-  const salesTotal = dbOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
-
-  // Fetch Invoices to calculate Input VAT (VAT paid on purchases)
-  const dbInvoices = await db.query.vendorInvoices.findMany({
-    where: eq(vendorInvoices.tenantId, tenantId),
-  });
-
-  const vatRateVal = settings ? Number(settings.vatRate) : 5.0;
-  const inputVat = dbInvoices.reduce((sum, inv) => {
-    const total = Number(inv.total);
-    const vat = total - total / (1 + vatRateVal / 100);
-    return sum + vat;
-  }, 0);
-  const purchasesTotal = dbInvoices.reduce((sum, inv) => sum + Number(inv.total || 0), 0);
-
-  // Calculate Reporting Period
-  let reportingPeriod = "All Time";
-  const dates: Date[] = [];
-  dbOrders.forEach((o) => dates.push(new Date(o.createdAt)));
-  dbInvoices.forEach((i) => dates.push(new Date(i.createdAt)));
-  if (dates.length > 0) {
-    const minDate = new Date(Math.min(...dates.map((d) => d.getTime())));
-    const maxDate = new Date(Math.max(...dates.map((d) => d.getTime())));
-    const formatD = (d: Date) =>
-      d.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
-    reportingPeriod = `${formatD(minDate)} - ${formatD(maxDate)}`;
+  } catch (err: any) {
+    console.error("getHeadOfficeDataFn error:", err);
+    return { success: false, error: err.message || "Failed to fetch head office data" };
   }
-
-  // Generate dynamic 7-day trend
-  const branchTrend: any[] = [];
-  for (let i = 6; i >= 0; i--) {
-    const date = new Date();
-    date.setDate(date.getDate() - i);
-    const dayName = date.toLocaleDateString("en-US", { weekday: "short" });
-
-    const dayData: any = { d: dayName };
-    dbBranches.forEach((b) => {
-      dayData[b.name] = 0; // default 0 sales
-    });
-
-    dbOrders.forEach((o) => {
-      const oDate = new Date(o.createdAt);
-      if (oDate.toDateString() === date.toDateString()) {
-        const branch = dbBranches.find((b) => b.id === o.branchId);
-        if (branch) {
-          dayData[branch.name] += Number(o.total);
-        }
-      }
-    });
-    branchTrend.push(dayData);
-  }
-
-  const dbPriceOverrideRequests = await db.query.priceOverrideRequests.findMany({
-    where: eq(priceOverrideRequests.tenantId, tenantId),
-    orderBy: [desc(priceOverrideRequests.createdAt)],
-    with: {
-      product: true,
-      branch: true,
-    },
-  });
-
-  return {
-    success: true,
-    settings,
-    priceRequests: dbPriceOverrideRequests,
-    branches: dbBranches,
-    products: productsWithDetails,
-    stock: dbStock,
-    batches: dbBatches,
-    purchases: dbPos,
-    vendors: dbVendors,
-    staff: dbStaff,
-    customers: dbCustomers,
-    promotions: dbPromotions,
-    permissions: dbPermissions,
-    branchTrend,
-    outputVat,
-    inputVat,
-    salesTotal,
-    purchasesTotal,
-    reportingPeriod,
-    tenantName: tenantInfo ? tenantInfo.name : "Tenant",
-  };
 });
 
 export const updateStockFn = createServerFn({ method: "POST" })

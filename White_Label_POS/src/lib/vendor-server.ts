@@ -28,77 +28,83 @@ async function getVendorContext() {
 }
 
 export const getVendorPortalDataServerFn = createServerFn({ method: "GET" }).handler(async () => {
-  const { tenantId, vendorId } = await getVendorContext();
+  try {
+    const { tenantId, vendorId } = await getVendorContext();
 
-  // Fetch the vendor's profile
-  let vendorProfile = await db.query.vendors.findFirst({
-    where: and(eq(vendors.id, vendorId), eq(vendors.tenantId, tenantId)),
-  });
+    // Fetch the vendor's profile
+    let vendorProfile = await db.query.vendors.findFirst({
+      where: and(eq(vendors.id, vendorId), eq(vendors.tenantId, tenantId)),
+    });
 
-  if (!vendorProfile) {
-    // Fallback vendor profile if not seeded in DB
-    vendorProfile = {
-      id: vendorId,
-      tenantId,
-      name: "Global Food Distributors LLC",
-      email: "supplier@globalfood.ae",
-      contact: "+971 4 881 2345",
-      trn: "100293847500003",
-    } as any;
+    if (!vendorProfile) {
+      // Fallback vendor profile if not seeded in DB
+      vendorProfile = {
+        id: vendorId,
+        tenantId,
+        name: "Global Food Distributors LLC",
+        email: "supplier@globalfood.ae",
+        contact: "+971 4 881 2345",
+        trn: "100293847500003",
+      } as any;
+    }
+
+    // Fetch tenant
+    const tenant = await db.query.tenants.findFirst({
+      where: eq(tenants.id, tenantId),
+    });
+
+    // Fetch Purchase Orders for this vendor
+    const pos = await db.query.purchaseOrders.findMany({
+      where: and(eq(purchaseOrders.vendorId, vendorId), eq(purchaseOrders.tenantId, tenantId)),
+      orderBy: [desc(purchaseOrders.createdAt)],
+      with: {
+        branch: true,
+        items: {
+          with: {
+            product: true,
+          },
+        },
+      },
+    });
+
+    // Fetch GRNs (Goods Received Notes) for this vendor
+    const grnRecords = await db.query.grn.findMany({
+      where: and(eq(grn.vendorId, vendorId), eq(grn.tenantId, tenantId)),
+      orderBy: [desc(grn.receivedAt)],
+      with: {
+        branch: true,
+        purchaseOrder: true,
+        items: {
+          with: {
+            product: true,
+          },
+        },
+      },
+    });
+
+    // Fetch Invoices for this vendor
+    const invoices = await db.query.vendorInvoices.findMany({
+      where: and(eq(vendorInvoices.vendorId, vendorId), eq(vendorInvoices.tenantId, tenantId)),
+      orderBy: [desc(vendorInvoices.createdAt)],
+      with: {
+        purchaseOrder: true,
+      },
+    });
+
+    return JSON.parse(
+      JSON.stringify({
+        success: true,
+        tenant,
+        vendor: vendorProfile,
+        purchaseOrders: pos,
+        grns: grnRecords,
+        invoices,
+      }),
+    );
+  } catch (err: any) {
+    console.error("getVendorPortalDataServerFn error:", err);
+    return { success: false, error: err.message || "Failed to fetch vendor portal data" };
   }
-
-  // Fetch tenant
-  const tenant = await db.query.tenants.findFirst({
-    where: eq(tenants.id, tenantId),
-  });
-
-  // Fetch Purchase Orders for this vendor
-  const pos = await db.query.purchaseOrders.findMany({
-    where: and(eq(purchaseOrders.vendorId, vendorId), eq(purchaseOrders.tenantId, tenantId)),
-    orderBy: [desc(purchaseOrders.createdAt)],
-    with: {
-      branch: true,
-      items: {
-        with: {
-          product: true,
-        },
-      },
-    },
-  });
-
-  // Fetch GRNs (Goods Received Notes) for this vendor
-  const grnRecords = await db.query.grn.findMany({
-    where: and(eq(grn.vendorId, vendorId), eq(grn.tenantId, tenantId)),
-    orderBy: [desc(grn.receivedAt)],
-    with: {
-      branch: true,
-      purchaseOrder: true,
-      items: {
-        with: {
-          product: true,
-        },
-      },
-    },
-  });
-
-  // Fetch Invoices for this vendor
-  const invoices = await db.query.vendorInvoices.findMany({
-    where: and(eq(vendorInvoices.vendorId, vendorId), eq(vendorInvoices.tenantId, tenantId)),
-    orderBy: [desc(vendorInvoices.createdAt)],
-    with: {
-      purchaseOrder: true,
-    },
-  });
-
-  return JSON.parse(
-    JSON.stringify({
-      tenant,
-      vendor: vendorProfile,
-      purchaseOrders: pos,
-      grns: grnRecords,
-      invoices,
-    }),
-  );
 });
 
 export const confirmVendorDeliveryServerFn = createServerFn({ method: "POST" })

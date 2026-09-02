@@ -47,80 +47,86 @@ async function getFinanceContext() {
 }
 
 export const getPurchasingDataServerFn = createServerFn({ method: "GET" }).handler(async () => {
-  const { tenantId, user } = await getPurchasingContext();
+  try {
+    const { tenantId, user } = await getPurchasingContext();
 
-  const tenant = await db.query.tenants.findFirst({
-    where: eq(tenants.id, tenantId),
-  });
+    const tenant = await db.query.tenants.findFirst({
+      where: eq(tenants.id, tenantId),
+    });
 
-  const allVendors = await db.query.vendors.findMany({
-    where: eq(vendors.tenantId, tenantId),
-  });
+    const allVendors = await db.query.vendors.findMany({
+      where: eq(vendors.tenantId, tenantId),
+    });
 
-  const allBranches = await db.query.branches.findMany({
-    where: eq(branches.tenantId, tenantId),
-  });
+    const allBranches = await db.query.branches.findMany({
+      where: eq(branches.tenantId, tenantId),
+    });
 
-  const allProducts = await db.query.products.findMany({
-    where: eq(products.tenantId, tenantId),
-  });
+    const allProducts = await db.query.products.findMany({
+      where: eq(products.tenantId, tenantId),
+    });
 
-  const allPOs = await db.query.purchaseOrders.findMany({
-    where: eq(purchaseOrders.tenantId, tenantId),
-    orderBy: [desc(purchaseOrders.createdAt)],
-    with: {
-      vendor: true,
-      branch: true,
-      items: {
-        with: {
-          product: true,
+    const allPOs = await db.query.purchaseOrders.findMany({
+      where: eq(purchaseOrders.tenantId, tenantId),
+      orderBy: [desc(purchaseOrders.createdAt)],
+      with: {
+        vendor: true,
+        branch: true,
+        items: {
+          with: {
+            product: true,
+          },
         },
       },
-    },
-  });
+    });
 
-  const allGRNs = await db.query.grn.findMany({
-    where: eq(grn.tenantId, tenantId),
-    orderBy: [desc(grn.receivedAt)],
-    with: {
-      vendor: true,
-      branch: true,
-      purchaseOrder: true,
-      items: {
-        with: {
-          product: true,
+    const allGRNs = await db.query.grn.findMany({
+      where: eq(grn.tenantId, tenantId),
+      orderBy: [desc(grn.receivedAt)],
+      with: {
+        vendor: true,
+        branch: true,
+        purchaseOrder: true,
+        items: {
+          with: {
+            product: true,
+          },
         },
       },
-    },
-  });
+    });
 
-  const allInvoices = await db.query.vendorInvoices.findMany({
-    where: eq(vendorInvoices.tenantId, tenantId),
-    orderBy: [desc(vendorInvoices.createdAt)],
-    with: {
-      vendor: true,
-      purchaseOrder: true,
-    },
-  });
+    const allInvoices = await db.query.vendorInvoices.findMany({
+      where: eq(vendorInvoices.tenantId, tenantId),
+      orderBy: [desc(vendorInvoices.createdAt)],
+      with: {
+        vendor: true,
+        purchaseOrder: true,
+      },
+    });
 
-  const allPayments = await db.query.vendorPayments.findMany({
-    where: eq(vendorPayments.tenantId, tenantId),
-    orderBy: [desc(vendorPayments.paymentDate)],
-  });
+    const allPayments = await db.query.vendorPayments.findMany({
+      where: eq(vendorPayments.tenantId, tenantId),
+      orderBy: [desc(vendorPayments.paymentDate)],
+    });
 
-  return JSON.parse(
-    JSON.stringify({
-      tenant,
-      userRole: user.role,
-      vendors: allVendors,
-      products: allProducts,
-      branches: allBranches,
-      purchaseOrders: allPOs,
-      grns: allGRNs,
-      invoices: allInvoices,
-      payments: allPayments,
-    }),
-  );
+    return JSON.parse(
+      JSON.stringify({
+        success: true,
+        tenant,
+        userRole: user.role,
+        vendors: allVendors,
+        products: allProducts,
+        branches: allBranches,
+        purchaseOrders: allPOs,
+        grns: allGRNs,
+        invoices: allInvoices,
+        payments: allPayments,
+      }),
+    );
+  } catch (err: any) {
+    console.error("getPurchasingDataServerFn error:", err);
+    return { success: false, error: err.message || "Failed to fetch purchasing data" };
+  }
 });
 
 export const createVendorServerFn = createServerFn({ method: "POST" })
