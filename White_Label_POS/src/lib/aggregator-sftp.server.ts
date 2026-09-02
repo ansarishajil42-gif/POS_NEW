@@ -4,6 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { encryptSecret, decryptSecret, isEncrypted } from "./crypto";
 import { getAdapter, ProductData } from "./aggregator-adapters/index";
 import { createRequire } from "module";
+import crypto from "crypto";
 
 export async function getAggregatorBranchesFromDb() {
   const resBranches = await db
@@ -366,6 +367,11 @@ export async function triggerAggregatorSyncFromDb(connectionId: string) {
     if (password.length === 0) {
       throw new Error("Password decryption returned EMPTY string — encryption key mismatch or corrupted stored value. Re-enter the password via the Edit Connection UI.");
     }
+
+    const passwordHash = crypto.createHash("sha256").update(password, "utf-8").digest("hex");
+    const KNOWN_CORRECT_HASH = "d7b36a41f42c8e18885b5e0b4005f2cf6ca8d7c8d402bdc9a8199546c3cf7e45";
+    console.log("DEBUG [SFTP Sync]: password SHA256 hash =", passwordHash);
+    console.log("DEBUG [SFTP Sync]: hash matches known-correct value =", passwordHash === KNOWN_CORRECT_HASH);
 
     await sftp.connect({
       host: hostClean,
