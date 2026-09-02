@@ -361,6 +361,12 @@ export async function triggerAggregatorSyncFromDb(connectionId: string) {
     const rawPassword = (conn.sftp_password || "").trim();
     const password = decryptSecret(rawPassword);
 
+    // TEMPORARY DIAGNOSTIC — remove after confirming
+    console.log("DEBUG [SFTP Sync]: decrypted password length =", password.length, "| raw stored value length =", rawPassword.length, "| looks encrypted (has 2 colons) =", (rawPassword.match(/:/g) || []).length === 2);
+    if (password.length === 0) {
+      throw new Error("Password decryption returned EMPTY string — encryption key mismatch or corrupted stored value. Re-enter the password via the Edit Connection UI.");
+    }
+
     await sftp.connect({
       host: hostClean,
       port: conn.sftp_port || 22,
