@@ -74,6 +74,7 @@ export const Route = createFileRoute("/aggregators")({
 function Aggregators() {
   // SFTP State
   const [connections, setConnections] = useState<ConnectionConfig[]>([]);
+  const [realBranches, setRealBranches] = useState<{ id: string; name: string; address?: string }[]>([]);
   const [selectedConnId, setSelectedConnId] = useState<string>("");
   const [sftpLogs, setSftpLogs] = useState<any[]>([]);
 
