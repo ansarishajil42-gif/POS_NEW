@@ -458,6 +458,29 @@ aggregatorSftpRouter.get("/connections", async (req: Request, res: Response) => 
   }
 });
 
+// GET /api/aggregator-sftp/branches - List active branches from DB
+aggregatorSftpRouter.get("/branches", async (req: Request, res: Response) => {
+  try {
+    const rawBranches = await db
+      .select({
+        id: branches.id,
+        name: branches.name,
+        address: branches.address,
+        status: branches.status,
+      })
+      .from(branches)
+      .where(eq(branches.status, "Active"));
+
+    return res.json({
+      success: true,
+      branches: rawBranches,
+    });
+  } catch (err: any) {
+    console.error("Failed to list active branches from DB:", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // 3. PATCH /api/aggregator-sftp/connections/:id/toggle-pause - Pause/Resume automation
 aggregatorSftpRouter.patch("/connections/:id/toggle-pause", async (req: Request, res: Response) => {
   const { id } = req.params;

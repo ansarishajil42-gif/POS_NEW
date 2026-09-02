@@ -35,6 +35,19 @@ export const getAggregatorConnectionsServerFn = createServerFn({ method: "GET" }
   return { success: true, connections: connectionsFallbackStore };
 });
 
+export const getAggregatorBranchesServerFn = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/aggregator-sftp/branches`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.branches) {
+        return { success: true, branches: data.branches };
+      }
+    }
+  } catch (e) {}
+  return { success: true, branches: [] };
+});
+
 export const saveAggregatorConnectionServerFn = createServerFn({ method: "POST" })
   .validator((data: ConnectionConfig) => data)
   .handler(async ({ data }) => {

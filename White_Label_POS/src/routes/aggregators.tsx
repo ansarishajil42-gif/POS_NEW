@@ -35,10 +35,9 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { outlets } from "@/lib/demo-data";
-import { toast } from "sonner";
 import {
   getAggregatorConnectionsServerFn,
+  getAggregatorBranchesServerFn,
   saveAggregatorConnectionServerFn,
   togglePauseAutomationServerFn,
   deleteAggregatorConnectionServerFn,
@@ -96,7 +95,7 @@ function Aggregators() {
   // Connection modal form state (initializes clean with empty values)
   const [formConn, setFormConn] = useState<ConnectionConfig>({
     aggregatorName: "talabat",
-    branchId: outlets[0]?.id || "",
+    branchId: "",
     sftpHost: "",
     sftpPort: 22,
     sftpUsername: "",
@@ -111,7 +110,25 @@ function Aggregators() {
 
   useEffect(() => {
     loadConnections();
+    loadRealBranches();
   }, []);
+
+  async function loadRealBranches() {
+    try {
+      const res = await getAggregatorBranchesServerFn();
+      if (res?.success && res.branches) {
+        setRealBranches(res.branches);
+        if (res.branches.length > 0) {
+          setFormConn((prev) => ({
+            ...prev,
+            branchId: prev.branchId || res.branches[0].id,
+          }));
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
 
   async function loadConnections() {
     try {
@@ -252,7 +269,7 @@ function Aggregators() {
             onClick={() => {
               setFormConn({
                 aggregatorName: "talabat",
-                branchId: outlets[0]?.id || "",
+                branchId: realBranches[0]?.id || "",
                 sftpHost: "",
                 sftpPort: 22,
                 sftpUsername: "",
@@ -316,7 +333,7 @@ function Aggregators() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {connections.map((conn) => {
               const isSelected = conn.id === selectedConnId;
-              const outletMatch = outlets.find((o) => o.id === conn.branchId) || outlets[0];
+              const branchMatch = realBranches.find((b) => b.id === conn.branchId);
               const nextSync = calculateNextSyncTime(conn);
 
               return (
@@ -340,7 +357,7 @@ function Aggregators() {
                       <div>
                         <h3 className="font-bold text-ink text-sm capitalize">{conn.aggregatorName} SFTP</h3>
                         <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-                          <Building className="h-3 w-3 text-primary" /> {outletMatch?.name || "Main Branch"}
+                          <Building className="h-3 w-3 text-primary" /> {branchMatch?.name || "Main Branch"}
                         </p>
                       </div>
                     </div>
@@ -660,11 +677,15 @@ function Aggregators() {
                   value={formConn.branchId}
                   onChange={(e) => setFormConn({ ...formConn, branchId: e.target.value })}
                 >
-                  {outlets.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.name} ({o.emirate})
-                    </option>
-                  ))}
+                  {realBranches.length === 0 ? (
+                    <option value="" disabled>No active branches found</option>
+                  ) : (
+                    realBranches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} {b.address ? `(${b.address})` : ""}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
 
