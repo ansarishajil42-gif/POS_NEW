@@ -2343,17 +2343,21 @@ export const deleteBlogPostFn = createServerFn({ method: "POST" })
     }
   });
 
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
-const supabaseClient = createClient(
-  process.env.SUPABASE_URL || "https://agauuzudkvbxecpukshq.supabase.co",
-  supabaseKey
-);
+function getSupabaseClient() {
+  const supabaseKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFnYXV1enVka3ZieGVjcHVrc2hxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwNDMyNTAsImV4cCI6MjEwMjYxOTI1MH0.6byNsZMv_zZnUQX75dUzaEANWhfXx7XExUE-ZQ-RO2w";
+  const supabaseUrl = process.env.SUPABASE_URL || "https://agauuzudkvbxecpukshq.supabase.co";
+  return createClient(supabaseUrl, supabaseKey);
+}
 
 export const uploadBlogCoverFn = createServerFn({ method: "POST" })
   .validator((d: { base64Data: string; fileName: string; mimeType: string }) => d)
   .handler(async ({ data }) => {
     await getHeadOfficeSession();
     try {
+      const supabaseClient = getSupabaseClient();
       const buffer = Buffer.from(data.base64Data, "base64");
       const fileExt = data.fileName.split(".").pop();
       const newFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
@@ -2374,8 +2378,8 @@ export const uploadBlogCoverFn = createServerFn({ method: "POST" })
         .from("blog-covers")
         .getPublicUrl(filePath);
 
-      return { success: true, url: publicUrlData.publicUrl };
+      return { success: true, publicUrl: publicUrlData.publicUrl };
     } catch (e: any) {
-      throw new Error(e.message);
+      return { success: false, error: e.message };
     }
   });
