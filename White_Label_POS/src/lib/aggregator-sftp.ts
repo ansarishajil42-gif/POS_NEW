@@ -1,4 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
+import { db } from "../server/db/index";
+import { branches } from "../server/db/schema";
+import { eq } from "drizzle-orm";
 
 const BACKEND_URL = process.env.VITE_BACKEND_URL || "http://localhost:3000";
 
@@ -37,15 +40,21 @@ export const getAggregatorConnectionsServerFn = createServerFn({ method: "GET" }
 
 export const getAggregatorBranchesServerFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
-    const res = await fetch(`${BACKEND_URL}/api/aggregator-sftp/branches`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && data.branches) {
-        return { success: true, branches: data.branches };
-      }
-    }
-  } catch (e) {}
-  return { success: true, branches: [] };
+    const resBranches = await db
+      .select({
+        id: branches.id,
+        name: branches.name,
+        address: branches.address,
+        status: branches.status,
+      })
+      .from(branches)
+      .where(eq(branches.status, "Active"));
+
+    return { success: true, branches: resBranches };
+  } catch (e: any) {
+    console.error("Failed to fetch active branches from DB:", e);
+    return { success: true, branches: [] };
+  }
 });
 
 export const saveAggregatorConnectionServerFn = createServerFn({ method: "POST" })
