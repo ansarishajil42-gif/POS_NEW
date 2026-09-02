@@ -21,25 +21,7 @@ export interface ConnectionConfig {
   isActive: boolean;
 }
 
-let connectionsFallbackStore: ConnectionConfig[] = [
-  {
-    id: "conn_dummy_talabat",
-    aggregatorName: "talabat",
-    branchId: "branch_main",
-    sftpHost: "test.local",
-    sftpPort: 22,
-    sftpUsername: "test_vendor",
-    sftpPassword: "",
-    remoteDirectory: "/Assortment",
-    vendorId: "test_vendor",
-    priceFormat: "price_discounted",
-    syncFrequency: "manual", // Default manual
-    isPaused: false,
-    consecutiveFailures: 0,
-    isActive: false,
-  },
-];
-
+let connectionsFallbackStore: ConnectionConfig[] = [];
 let logsFallbackStore: any[] = [];
 
 export const getAggregatorConnectionsServerFn = createServerFn({ method: "GET" }).handler(async () => {
@@ -126,38 +108,14 @@ export const previewAggregatorCsvServerFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/aggregator-sftp/preview-csv/${data.connectionId}`);
-      if (res.ok) {
-        return await res.json();
+      const result = await res.json();
+      if (!res.ok) {
+        return { success: false, error: result.error || "Unable to load products from database." };
       }
-    } catch (e) {}
-
-    const conn = connectionsFallbackStore.find((c) => c.id === data.connectionId);
-    const vendorId = conn?.vendorId || "test_vendor";
-    const now = new Date();
-    const future = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
-    const pad = (n: number) => n.toString().padStart(2, "0");
-    const fmt = (d: Date) =>
-      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-
-    const csvContent = [
-      "barcode,sku,price,active,reason,start_date,end_date,campaign_status,discounted_price,max_no_of_orders",
-      `6291001002011,,8.50,1,competitiveness,${fmt(now)},${fmt(future)},1,7.25,500`,
-      ",SKU-TEA-100,18.25,1,,,,,,",
-      "6291005006033,,12.00,1,,,,,,",
-      `6291007008044,,29.50,1,competitiveness,${fmt(now)},${fmt(future)},1,25.00,300`,
-      ",SKU-PASTA-500,7.75,1,,,,,,",
-    ].join("\n");
-
-    const fileName = `assortment_${vendorId}.csv`;
-    return {
-      success: true,
-      isPreviewOnly: true,
-      fileName,
-      remotePath: `${conn?.remoteDirectory || "/Assortment"}/${fileName}`,
-      recordCount: 5,
-      fileSizeBytes: Buffer.byteLength(csvContent, "utf-8"),
-      csvContent,
-    };
+      return result;
+    } catch (e: any) {
+      return { success: false, error: "Unable to generate CSV preview: " + e.message };
+    }
   });
 
 export const triggerAggregatorSyncServerFn = createServerFn({ method: "POST" })

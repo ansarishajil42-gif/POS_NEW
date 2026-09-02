@@ -116,13 +116,13 @@ function Aggregators() {
   // Connection modal form state
   const [formConn, setFormConn] = useState<ConnectionConfig>({
     aggregatorName: "talabat",
-    branchId: outlets[0]?.id || "branch_main",
-    sftpHost: "test.local",
+    branchId: outlets[0]?.id || "",
+    sftpHost: "",
     sftpPort: 22,
-    sftpUsername: "test_vendor",
-    sftpPassword: "dummy123",
+    sftpUsername: "",
+    sftpPassword: "",
     remoteDirectory: "/Assortment",
-    vendorId: "test_vendor",
+    vendorId: "",
     priceFormat: "price_discounted",
     syncFrequency: "manual", // Default manual
     isPaused: false,
