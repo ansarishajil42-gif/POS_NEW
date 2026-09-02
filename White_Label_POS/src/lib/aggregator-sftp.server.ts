@@ -446,3 +446,14 @@ export async function triggerAggregatorSyncFromDb(connectionId: string) {
     };
   }
 }
+
+export async function deleteAggregatorSyncLogFromDb(logId: string) {
+  await db.execute(sql`DELETE FROM aggregator_sync_logs WHERE id::text = ${logId};`);
+  return { success: true };
+}
+
+export async function deleteAllAggregatorSyncLogsFromDb(connectionId: string) {
+  await db.execute(sql`DELETE FROM aggregator_sync_logs WHERE aggregator_connection_id::text = ${connectionId};`);
+  return { success: true };
+}
+

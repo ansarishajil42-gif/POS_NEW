@@ -20,6 +20,9 @@ import {
   PlayCircle,
   Clock,
   Building,
+  ChevronLeft,
+  ChevronRight,
+  AlertTriangle,
 } from "lucide-react";
 import { DemoShell, StatCard } from "@/components/demo/DemoShell";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +48,8 @@ import {
   previewAggregatorCsvServerFn,
   triggerAggregatorSyncServerFn,
   getAggregatorSyncLogsServerFn,
+  deleteAggregatorSyncLogServerFn,
+  deleteAllAggregatorSyncLogsServerFn,
   type ConnectionConfig,
 } from "@/lib/aggregator-sftp";
 
@@ -93,6 +98,13 @@ function Aggregators() {
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [showPass, setShowPass] = useState(false);
+
+  // Audit Log Pagination & Deletion State
+  const [logPage, setLogPage] = useState(1);
+  const [logPageSize] = useState(10);
+  const [logToDelete, setLogToDelete] = useState<any | null>(null);
+  const [isDeletingLog, setIsDeletingLog] = useState(false);
+  const [showClearAllLogsModal, setShowClearAllLogsModal] = useState(false);
 
   // Connection modal form state (initializes clean with empty values)
   const [formConn, setFormConn] = useState<ConnectionConfig>({
@@ -153,6 +165,7 @@ function Aggregators() {
       const res = await getAggregatorSyncLogsServerFn({ data: { connectionId: connId } });
       if (res?.success && res.logs) {
         setSftpLogs(res.logs);
+        setLogPage(1);
       }
     } catch (e) {
       console.error(e);
@@ -242,6 +255,44 @@ function Aggregators() {
       await loadConnections();
     } catch (e: any) {
       toast.error("Failed to delete connection: " + e.message);
+    }
+  }
+
+  async function handleConfirmDeleteLog() {
+    if (!logToDelete?.id) return;
+    setIsDeletingLog(true);
+    try {
+      const res = await deleteAggregatorSyncLogServerFn({ data: { logId: logToDelete.id } });
+      if (res?.success) {
+        toast.success("Audit log record permanently deleted from database.");
+        if (selectedConnId) await loadLogs(selectedConnId);
+      } else {
+        toast.error(res?.error || "Failed to delete log record from database.");
+      }
+    } catch (e: any) {
+      toast.error("Failed to delete log: " + e.message);
+    } finally {
+      setIsDeletingLog(false);
+      setLogToDelete(null);
+    }
+  }
+
+  async function handleConfirmClearAllLogs() {
+    if (!selectedConnId) return;
+    setIsDeletingLog(true);
+    try {
+      const res = await deleteAllAggregatorSyncLogsServerFn({ data: { connectionId: selectedConnId } });
+      if (res?.success) {
+        toast.success("All audit log records deleted from database.");
+        await loadLogs(selectedConnId);
+      } else {
+        toast.error(res?.error || "Failed to clear logs from database.");
+      }
+    } catch (e: any) {
+      toast.error("Failed to clear logs: " + e.message);
+    } finally {
+      setIsDeletingLog(false);
+      setShowClearAllLogsModal(false);
     }
   }
 
@@ -568,58 +619,145 @@ function Aggregators() {
 
               {/* Audit Log Table for Selected Connection */}
               <div className="space-y-3">
-                <h4 className="text-xs font-bold text-ink flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-primary" /> SFTP Sync Audit Trail & Execution History
-                </h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-ink flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-primary" /> SFTP Sync Audit Trail & Execution History
+                    <Badge variant="outline" className="font-mono text-[10px]">
+                      {sftpLogs.length} Records
+                    </Badge>
+                  </h4>
+
+                  {sftpLogs.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-[11px] font-semibold text-destructive hover:bg-destructive/10"
+                      onClick={() => setShowClearAllLogsModal(true)}
+                    >
+                      <Trash2 className="mr-1 h-3 w-3" /> Clear All Logs
+                    </Button>
+                  )}
+                </div>
 
                 {sftpLogs.length === 0 ? (
                   <p className="text-xs text-muted-foreground italic bg-surface-2 p-4 rounded-xl text-center">
                     No sync logs recorded yet for this connection.
                   </p>
                 ) : (
-                  <div className="overflow-x-auto rounded-xl border border-border">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-surface-2 text-muted-foreground">
-                        <tr>
-                          <th className="p-3 font-semibold">Timestamp</th>
-                          <th className="p-3 font-semibold">Sync Type</th>
-                          <th className="p-3 font-semibold">Status</th>
-                          <th className="p-3 font-semibold">File Name</th>
-                          <th className="p-3 font-semibold">Records</th>
-                          <th className="p-3 font-semibold">Details / Error</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {sftpLogs.map((log) => (
-                          <tr key={log.id} className="hover:bg-surface-2/50">
-                            <td className="p-3 font-mono text-[11px] text-muted-foreground">
-                              {new Date(log.createdAt).toLocaleString()}
-                            </td>
-                            <td className="p-3 capitalize font-semibold">{log.syncType}</td>
-                            <td className="p-3">
-                              <Badge
-                                variant="outline"
-                                className={
-                                  log.status === "success"
-                                    ? "border-success/30 bg-success/10 text-success font-semibold"
-                                    : log.status === "preview_only"
-                                    ? "border-blue-500/30 bg-blue-500/10 text-blue-600 font-semibold"
-                                    : "border-destructive/30 bg-destructive/10 text-destructive font-semibold"
-                                }
-                              >
-                                {log.status}
-                              </Badge>
-                            </td>
-                            <td className="p-3 font-mono text-[11px]">{log.fileName}</td>
-                            <td className="p-3 font-mono">{log.rowCount}</td>
-                            <td className="p-3 text-muted-foreground max-w-xs truncate">
-                              {log.errorMessage || "—"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <>
+                    {(() => {
+                      const totalLogPages = Math.ceil(sftpLogs.length / logPageSize) || 1;
+                      const currentPage = Math.min(logPage, totalLogPages);
+                      const startIndex = (currentPage - 1) * logPageSize;
+                      const paginatedLogs = sftpLogs.slice(startIndex, startIndex + logPageSize);
+
+                      return (
+                        <div className="space-y-3">
+                          <div className="overflow-x-auto rounded-xl border border-border">
+                            <table className="w-full text-left text-xs">
+                              <thead className="bg-surface-2 text-muted-foreground">
+                                <tr>
+                                  <th className="p-3 font-semibold">Timestamp</th>
+                                  <th className="p-3 font-semibold">Sync Type</th>
+                                  <th className="p-3 font-semibold">Status</th>
+                                  <th className="p-3 font-semibold">File Name</th>
+                                  <th className="p-3 font-semibold">Records</th>
+                                  <th className="p-3 font-semibold">Details / Error</th>
+                                  <th className="p-3 font-semibold text-right">Action</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-border">
+                                {paginatedLogs.map((log) => (
+                                  <tr key={log.id} className="hover:bg-surface-2/50">
+                                    <td className="p-3 font-mono text-[11px] text-muted-foreground">
+                                      {new Date(log.createdAt).toLocaleString()}
+                                    </td>
+                                    <td className="p-3 capitalize font-semibold">{log.syncType}</td>
+                                    <td className="p-3">
+                                      <Badge
+                                        variant="outline"
+                                        className={
+                                          log.status === "success"
+                                            ? "border-success/30 bg-success/10 text-success font-semibold"
+                                            : log.status === "preview_only"
+                                            ? "border-blue-500/30 bg-blue-500/10 text-blue-600 font-semibold"
+                                            : "border-destructive/30 bg-destructive/10 text-destructive font-semibold"
+                                        }
+                                      >
+                                        {log.status}
+                                      </Badge>
+                                    </td>
+                                    <td className="p-3 font-mono text-[11px]">{log.fileName}</td>
+                                    <td className="p-3 font-mono">{log.rowCount}</td>
+                                    <td className="p-3 text-muted-foreground max-w-xs truncate" title={log.errorMessage || ""}>
+                                      {log.errorMessage || "—"}
+                                    </td>
+                                    <td className="p-3 text-right">
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-7 w-7 rounded-lg text-destructive hover:bg-destructive/10"
+                                        title="Delete Log Record (Warning: Database Delete)"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setLogToDelete(log);
+                                        }}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {/* Pagination Footer */}
+                          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground px-1 pt-1">
+                            <div>
+                              Showing{" "}
+                              <span className="font-semibold text-ink">
+                                {startIndex + 1}
+                              </span>{" "}
+                              to{" "}
+                              <span className="font-semibold text-ink">
+                                {Math.min(startIndex + logPageSize, sftpLogs.length)}
+                              </span>{" "}
+                              of <span className="font-semibold text-ink">{sftpLogs.length}</span> audit logs
+                            </div>
+
+                            {totalLogPages > 1 && (
+                              <div className="flex items-center gap-1.5">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2.5 text-xs font-semibold rounded-lg"
+                                  disabled={currentPage <= 1}
+                                  onClick={() => setLogPage((prev) => Math.max(prev - 1, 1))}
+                                >
+                                  <ChevronLeft className="h-3.5 w-3.5 mr-1" /> Previous
+                                </Button>
+
+                                <span className="px-2 font-mono text-xs font-semibold text-ink">
+                                  Page {currentPage} of {totalLogPages}
+                                </span>
+
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2.5 text-xs font-semibold rounded-lg"
+                                  disabled={currentPage >= totalLogPages}
+                                  onClick={() => setLogPage((prev) => Math.min(prev + 1, totalLogPages))}
+                                >
+                                  Next <ChevronRight className="h-3.5 w-3.5 ml-1" />
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </>
                 )}
               </div>
             </div>
@@ -843,6 +981,81 @@ function Aggregators() {
               <Button type="submit">Save Connection</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* --- CONFIRM DELETE SINGLE LOG RECORD WARNING DIALOG --- */}
+      <Dialog open={!!logToDelete} onOpenChange={(open) => !open && setLogToDelete(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-destructive flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" /> Confirm Database Deletion
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground pt-1">
+              Warning: This audit log entry will be permanently removed from the database table <code className="font-mono text-ink font-semibold">aggregator_sync_logs</code>.
+            </DialogDescription>
+          </DialogHeader>
+
+          {logToDelete && (
+            <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs space-y-1.5 my-2">
+              <div className="flex justify-between font-mono">
+                <span className="text-muted-foreground">File:</span>
+                <span className="font-semibold text-ink truncate max-w-[220px]">{logToDelete.fileName}</span>
+              </div>
+              <div className="flex justify-between font-mono">
+                <span className="text-muted-foreground">Timestamp:</span>
+                <span className="text-ink">{new Date(logToDelete.createdAt).toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between font-mono">
+                <span className="text-muted-foreground">Sync Type / Status:</span>
+                <span className="capitalize text-ink">{logToDelete.syncType} ({logToDelete.status})</span>
+              </div>
+              <p className="text-destructive font-semibold text-[11px] pt-1 border-t border-destructive/20 mt-1">
+                ⚠️ Yeh record database se permanent delete ho jayega. Continue?
+              </p>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0 mt-2">
+            <Button variant="outline" size="sm" onClick={() => setLogToDelete(null)} disabled={isDeletingLog}>
+              Cancel
+            </Button>
+            <Button variant="destructive" size="sm" onClick={handleConfirmDeleteLog} disabled={isDeletingLog}>
+              {isDeletingLog ? "Deleting..." : "Yes, Delete from Database"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* --- CONFIRM CLEAR ALL LOGS WARNING DIALOG --- */}
+      <Dialog open={showClearAllLogsModal} onOpenChange={setShowClearAllLogsModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-destructive flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" /> Clear All Audit Logs Warning
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground pt-1">
+              Warning: Are you sure you want to delete ALL audit log entries for this connection?
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs space-y-1.5 my-2">
+            <p className="text-ink font-bold">
+              Total {sftpLogs.length} audit log entries will be deleted.
+            </p>
+            <p className="text-destructive font-semibold text-[11px]">
+              ⚠️ Yeh saarey log records database (aggregator_sync_logs) se permanently clear ho jayenge.
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0 mt-2">
+            <Button variant="outline" size="sm" onClick={() => setShowClearAllLogsModal(false)} disabled={isDeletingLog}>
+              Cancel
+            </Button>
+            <Button variant="destructive" size="sm" onClick={handleConfirmClearAllLogs} disabled={isDeletingLog}>
+              {isDeletingLog ? "Clearing All..." : "Yes, Clear All Logs"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </DemoShell>

@@ -113,18 +113,25 @@ export const getAggregatorSyncLogsServerFn = createServerFn({ method: "POST" })
     }
   });
 
-export const triggerScheduledRunnerServerFn = createServerFn({ method: "POST" })
-  .validator((data: { forceRun?: boolean }) => data)
+export const deleteAggregatorSyncLogServerFn = createServerFn({ method: "POST" })
+  .validator((data: { logId: string }) => data)
   .handler(async ({ data }) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/aggregator-sftp/trigger-scheduled-runner`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (res.ok) {
-        return await res.json();
-      }
-    } catch (e) {}
-    return { success: true, result: { processed: 0, successCount: 0, deactivatedCount: 0 } };
+      const { deleteAggregatorSyncLogFromDb } = await import("./aggregator-sftp.server");
+      return await deleteAggregatorSyncLogFromDb(data.logId);
+    } catch (e: any) {
+      return { success: false, error: "Failed to delete log from database: " + e.message };
+    }
   });
+
+export const deleteAllAggregatorSyncLogsServerFn = createServerFn({ method: "POST" })
+  .validator((data: { connectionId: string }) => data)
+  .handler(async ({ data }) => {
+    try {
+      const { deleteAllAggregatorSyncLogsFromDb } = await import("./aggregator-sftp.server");
+      return await deleteAllAggregatorSyncLogsFromDb(data.connectionId);
+    } catch (e: any) {
+      return { success: false, error: "Failed to delete logs from database: " + e.message };
+    }
+  });
+
