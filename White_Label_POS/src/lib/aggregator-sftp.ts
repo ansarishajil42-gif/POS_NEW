@@ -13,6 +13,7 @@ export interface ConnectionConfig {
   sftpPassword?: string;
   remoteDirectory: string;
   vendorId: string;
+  storeVendorId?: string;
   priceFormat: "price_discounted" | "original_discounted" | "original_price";
   syncFrequency: "manual" | "15min" | "hourly" | "daily";
   isPaused: boolean;
