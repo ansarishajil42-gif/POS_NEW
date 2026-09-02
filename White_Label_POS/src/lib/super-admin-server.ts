@@ -254,7 +254,7 @@ export const getTenantAdminServerFn = createServerFn({ method: "GET" })
             createdAt: staffUsers.createdAt
         })
         .from(staffUsers)
-        .where(sql`${staffUsers.tenantId} = ${data.tenantId} AND ${staffUsers.role} = 'head_office_admin'`)
+        .where(and(eq(staffUsers.tenantId, data.tenantId), eq(staffUsers.role, 'head_office_admin'), eq(staffUsers.isActive, true)))
         .limit(1);
         
         if (!admin) return { success: true, admin: null };
