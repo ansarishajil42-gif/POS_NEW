@@ -12,6 +12,15 @@ import {
 } from "../db/schema.js";
 import { getAdapter, ProductData, ConnectionConfigAdapter, GeneratedFileResult } from "../aggregator-adapters/index.js";
 
+/**
+ * @deprecated NOTE ON SFTP AGGREGATOR ARCHITECTURE:
+ * The active primary server implementation for Aggregator SFTP Sync is located in:
+ * `White_Label_POS/src/lib/aggregator-sftp.server.ts` (TanStack Start RPC Server Functions).
+ * 
+ * All UI routes (`aggregators.tsx`), CSV generation (via `src/lib/aggregator-adapters`),
+ * SFTP transmissions, and AES-256-GCM secret encryption (`src/lib/crypto.ts`) execute through
+ * the TanStack Start server functions path. This Express router is preserved for legacy API backward-compatibility.
+ */
 export const aggregatorSftpRouter = Router();
 
 // Encryption helper using AES-256-GCM
