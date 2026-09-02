@@ -3,6 +3,7 @@ import { branches, products, promotions } from "../server/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { encryptSecret, decryptSecret, isEncrypted } from "./crypto";
 import { getAdapter, ProductData } from "./aggregator-adapters/index";
+import { createRequire } from "module";
 
 export async function getAggregatorBranchesFromDb() {
   const resBranches = await db
@@ -352,8 +353,8 @@ export async function triggerAggregatorSyncFromDb(connectionId: string) {
   const hostClean = (conn.sftp_host || "").trim().replace(/^(sftp:\/\/|ssh:\/\/|https:\/\/)/, "").split("/")[0];
 
   try {
-    const SftpClientModule = await import("../../../backend/node_modules/ssh2-sftp-client/src/index.js");
-    const SftpClient = SftpClientModule.default || SftpClientModule;
+    const req = createRequire(import.meta.url);
+    const SftpClient = req("ssh2-sftp-client");
     const sftp = new SftpClient();
 
     const username = (conn.sftp_username || conn.vendor_id || "").trim();
