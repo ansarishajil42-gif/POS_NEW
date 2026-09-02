@@ -375,34 +375,25 @@ export async function triggerAggregatorSyncFromDb(connectionId: string) {
       readyTimeout: 25000,
     });
 
-    const cleanDir = (conn.remote_directory || "assortment").replace(/^\/+/, "").trim();
+    const normalizedDir = (conn.remote_directory || "assortment").replace(/^\/+|\/+$/g, "").toLowerCase().trim() || "assortment";
+    const targetPath = `${normalizedDir}/${fileName}`;
     const fileBuffer = Buffer.from(csvContent, "utf-8");
 
-    const candidatePaths = [
-      `${cleanDir}/${fileName}`,
-      `assortment/${fileName}`,
-      `Assortment/${fileName}`,
-      `/${cleanDir}/${fileName}`,
-    ];
+    console.log(`[SFTP Sync] Uploading to deterministic target path: '${targetPath}'`);
+    await sftp.put(fileBuffer, targetPath);
 
-    let uploadedPath = "";
-    let lastUploadErr: any = null;
+    console.log(`[SFTP Sync] Verifying file presence in directory '${normalizedDir}'...`);
+    const dirListing = await sftp.list(normalizedDir);
+    const fileExists = dirListing.some((item: any) => item.name === fileName);
 
-    for (const targetPath of candidatePaths) {
-      try {
-        await sftp.put(fileBuffer, targetPath);
-        uploadedPath = targetPath;
-        break;
-      } catch (err: any) {
-        lastUploadErr = err;
-      }
+    if (!fileExists) {
+      console.error(`❌ [SFTP Sync] Post-upload verification FAILED: File '${fileName}' not found in '${normalizedDir}' listing. Found:`, dirListing.map((i: any) => i.name));
+      await sftp.end();
+      throw new Error(`Post-upload verification failed: File '${fileName}' was not found in directory '${normalizedDir}' after upload.`);
     }
 
+    console.log(`✅ [SFTP Sync] Post-upload verification PASSED: '${fileName}' confirmed present in '${normalizedDir}'!`);
     await sftp.end();
-
-    if (!uploadedPath) {
-      throw new Error(`Failed to upload file to remote server: ${lastUploadErr?.message || "Access denied"}`);
-    }
 
     await db.execute(sql`
       INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
@@ -417,7 +408,7 @@ export async function triggerAggregatorSyncFromDb(connectionId: string) {
 
     return {
       success: true,
-      message: `Successfully uploaded ${fileName} (${recordCount} records) to ${uploadedPath}`,
+      message: `Successfully uploaded and verified ${fileName} (${recordCount} records) in ${targetPath}`,
       log: csvPreviewResult,
     };
   } catch (sftpErr: any) {
