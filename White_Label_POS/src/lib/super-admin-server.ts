@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { db } from "@/server/db";
-import { tenants, branches, tenantSettings, orders, platformSettings, staffUsers, auditLogs } from "@/server/db/schema";
-import { eq, and, sql, desc, gte, lte } from "drizzle-orm";
+import { tenants, branches, tenantSettings, orders, platformSettings, staffUsers, auditLogs, inventoryLedger } from "@/server/db/schema";
+import { eq, and, sql, desc, gte, lte, count } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
 import bcrypt from "bcryptjs";
 import { logAuditAction } from "@/lib/audit-logger";
@@ -459,29 +459,34 @@ export const deleteBranchServerFn = createServerFn({ method: "POST" })
         try {
             await db.transaction(async (tx) => {
                 const [current] = await tx.select().from(branches).where(eq(branches.id, data.id));
-                if (current) {
-                    await tx.execute(sql`ALTER TABLE inventory_ledger DISABLE TRIGGER USER;`);
-                    try {
-                        await tx.execute(sql`DELETE FROM stock_levels WHERE branch_id = ${data.id};`);
-                        await tx.execute(sql`DELETE FROM inventory_ledger WHERE branch_id = ${data.id};`);
-                        await tx.execute(sql`DELETE FROM orders WHERE branch_id = ${data.id};`);
-                        await tx.execute(sql`DELETE FROM tills WHERE branch_id = ${data.id};`);
-                        await tx.execute(sql`DELETE FROM purchase_orders WHERE branch_id = ${data.id};`);
-                        await tx.execute(sql`UPDATE staff_users SET branch_id = NULL WHERE branch_id = ${data.id};`);
-                        await tx.execute(sql`DELETE FROM aggregator_connections WHERE branch_id = ${data.id};`);
-                        await tx.delete(branches).where(eq(branches.id, data.id));
+                if (!current) return;
 
-                        await logAuditAction({
-                            action: "Delete Branch",
-                            entityType: "branch",
-                            entityId: data.id,
-                            tenantId: current.tenantId,
-                            beforeValue: { name: current.name }
-                        }, tx);
-                    } finally {
-                        await tx.execute(sql`ALTER TABLE inventory_ledger ENABLE TRIGGER USER;`);
-                    }
+                const [ledgerCount] = await tx
+                    .select({ val: count() })
+                    .from(inventoryLedger)
+                    .where(eq(inventoryLedger.branchId, data.id));
+
+                if (Number(ledgerCount?.val || 0) > 0) {
+                    // Branch has immutable inventory ledger history — mark status as Inactive to preserve audit history
+                    await tx.update(branches).set({ status: "Inactive" }).where(eq(branches.id, data.id));
+                } else {
+                    // Branch has no ledger history — clean up dependent records and remove
+                    await tx.execute(sql`DELETE FROM stock_levels WHERE branch_id = ${data.id};`);
+                    await tx.execute(sql`DELETE FROM orders WHERE branch_id = ${data.id};`);
+                    await tx.execute(sql`DELETE FROM tills WHERE branch_id = ${data.id};`);
+                    await tx.execute(sql`DELETE FROM purchase_orders WHERE branch_id = ${data.id};`);
+                    await tx.execute(sql`UPDATE staff_users SET branch_id = NULL WHERE branch_id = ${data.id};`);
+                    await tx.execute(sql`DELETE FROM aggregator_connections WHERE branch_id = ${data.id};`);
+                    await tx.delete(branches).where(eq(branches.id, data.id));
                 }
+
+                await logAuditAction({
+                    action: "Delete Branch",
+                    entityType: "branch",
+                    entityId: data.id,
+                    tenantId: current.tenantId,
+                    beforeValue: { name: current.name }
+                }, tx);
             });
             return { success: true };
         } catch (e: any) {
