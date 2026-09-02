@@ -245,6 +245,19 @@ function Aggregators() {
     }
   }
 
+  async function handleToggleActive(conn: ConnectionConfig) {
+    try {
+      const updatedConn = { ...conn, isActive: !conn.isActive };
+      const res = await saveAggregatorConnectionServerFn({ data: updatedConn });
+      if (res?.success) {
+        toast.success(`Connection ${!conn.isActive ? "ACTIVATED" : "DEACTIVATED"}`);
+        await loadConnections();
+      }
+    } catch (e: any) {
+      toast.error("Failed to toggle active status: " + e.message);
+    }
+  }
+
   function calculateNextSyncTime(conn: ConnectionConfig): string {
     if (conn.syncFrequency === "manual") return "Manual Sync Only";
     if (conn.isPaused) return "Automation Paused";
@@ -364,16 +377,24 @@ function Aggregators() {
                       </div>
                     </div>
 
-                    <Badge
-                      variant="outline"
-                      className={
-                        conn.isActive
-                          ? "border-success/30 bg-success/10 text-success font-semibold"
-                          : "border-amber-500/30 bg-amber-500/10 text-amber-600 font-semibold"
-                      }
-                    >
-                      {conn.isActive ? "Active" : "Inactive"}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className={`h-7 text-xs font-semibold rounded-lg ${
+                          conn.isActive
+                            ? "border-success/30 bg-success/10 text-success hover:bg-success/20"
+                            : "border-amber-500/30 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20"
+                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleActive(conn);
+                        }}
+                        title={conn.isActive ? "Click to Deactivate Connection" : "Click to Activate Connection"}
+                      >
+                        {conn.isActive ? "Active" : "Inactive (Click to Activate)"}
+                      </Button>
+                    </div>
                   </div>
 
                   <div className="mt-4 space-y-1.5 text-xs text-muted-foreground">
@@ -793,6 +814,24 @@ function Aggregators() {
                   onChange={(e) => setFormConn({ ...formConn, remoteDirectory: e.target.value })}
                   placeholder="/Assortment"
                   required
+                />
+              </div>
+
+              <div className="flex items-center justify-between rounded-xl border border-border bg-surface/50 p-3 sm:col-span-2 mt-1">
+                <div>
+                  <Label htmlFor="formIsActive" className="text-xs font-bold text-ink cursor-pointer">
+                    Activate SFTP Connection
+                  </Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Enables manual sync and scheduled background SFTP transmission.
+                  </p>
+                </div>
+                <input
+                  id="formIsActive"
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                  checked={formConn.isActive}
+                  onChange={(e) => setFormConn({ ...formConn, isActive: e.target.checked })}
                 />
               </div>
             </div>
