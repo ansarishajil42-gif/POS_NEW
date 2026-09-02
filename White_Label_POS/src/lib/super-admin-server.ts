@@ -67,7 +67,7 @@ export const getTenantsServerFn = createServerFn({ method: "GET" })
 export const getBranchesServerFn = createServerFn({ method: "GET" })
     .handler(async () => {
         await ensureSuperAdmin();
-        const rows = await db.select().from(branches).orderBy(sql`${branches.createdAt} DESC`);
+        const rows = await db.select().from(branches).where(eq(branches.status, "Active")).orderBy(sql`${branches.createdAt} DESC`);
         return { success: true, branches: rows };
     });
 
@@ -461,24 +461,8 @@ export const deleteBranchServerFn = createServerFn({ method: "POST" })
                 const [current] = await tx.select().from(branches).where(eq(branches.id, data.id));
                 if (!current) return;
 
-                const [ledgerCount] = await tx
-                    .select({ val: count() })
-                    .from(inventoryLedger)
-                    .where(eq(inventoryLedger.branchId, data.id));
-
-                if (Number(ledgerCount?.val || 0) > 0) {
-                    // Branch has immutable inventory ledger history — mark status as Inactive to preserve audit history
-                    await tx.update(branches).set({ status: "Inactive" }).where(eq(branches.id, data.id));
-                } else {
-                    // Branch has no ledger history — clean up dependent records and remove
-                    await tx.execute(sql`DELETE FROM stock_levels WHERE branch_id = ${data.id};`);
-                    await tx.execute(sql`DELETE FROM orders WHERE branch_id = ${data.id};`);
-                    await tx.execute(sql`DELETE FROM tills WHERE branch_id = ${data.id};`);
-                    await tx.execute(sql`DELETE FROM purchase_orders WHERE branch_id = ${data.id};`);
-                    await tx.execute(sql`UPDATE staff_users SET branch_id = NULL WHERE branch_id = ${data.id};`);
-                    await tx.execute(sql`DELETE FROM aggregator_connections WHERE branch_id = ${data.id};`);
-                    await tx.delete(branches).where(eq(branches.id, data.id));
-                }
+                // Deactivate branch cleanly in DB (immediately hides branch without hitting foreign-key constraints on POs, inventory, or orders)
+                await tx.update(branches).set({ status: "Inactive" }).where(eq(branches.id, data.id));
 
                 await logAuditAction({
                     action: "Delete Branch",
