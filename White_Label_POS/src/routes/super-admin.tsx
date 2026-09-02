@@ -286,14 +286,18 @@ function SuperAdmin() {
     const confirmRemoveBranch = async () => {
         if (!manageTenant || !branchToDelete) return;
 
-        const res = await deleteBranchServerFn({ data: { id: branchToDelete } });
-        if (res.success) {
-            router.invalidate();
-            toast.success("Branch removed");
-            setBranchToDelete(null);
-            setSelectedBranch(null);
-        } else {
-            toast.error("Failed to remove branch");
+        try {
+            const res = await deleteBranchServerFn({ data: { id: branchToDelete } });
+            if (res.success) {
+                router.invalidate();
+                toast.success("Branch removed");
+                setBranchToDelete(null);
+                setSelectedBranch(null);
+            } else {
+                toast.error(res.error || "Failed to remove branch");
+            }
+        } catch (e: any) {
+            toast.error("Failed to remove branch: " + e.message);
         }
     };
 

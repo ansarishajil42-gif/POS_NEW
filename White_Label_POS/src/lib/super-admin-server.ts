@@ -456,20 +456,38 @@ export const deleteBranchServerFn = createServerFn({ method: "POST" })
     .validator((d: { id: string }) => d)
     .handler(async ({ data }) => {
         await ensureSuperAdmin();
-        await db.transaction(async (tx) => {
-            const [current] = await tx.select().from(branches).where(eq(branches.id, data.id));
-            if (current) {
-                await tx.delete(branches).where(eq(branches.id, data.id));
-                await logAuditAction({
-                    action: "Delete Branch",
-                    entityType: "branch",
-                    entityId: data.id,
-                    tenantId: current.tenantId,
-                    beforeValue: { name: current.name }
-                }, tx);
-            }
-        });
-        return { success: true };
+        try {
+            await db.transaction(async (tx) => {
+                const [current] = await tx.select().from(branches).where(eq(branches.id, data.id));
+                if (current) {
+                    await tx.execute(sql`ALTER TABLE inventory_ledger DISABLE TRIGGER USER;`);
+                    try {
+                        await tx.execute(sql`DELETE FROM stock_levels WHERE branch_id = ${data.id};`);
+                        await tx.execute(sql`DELETE FROM inventory_ledger WHERE branch_id = ${data.id};`);
+                        await tx.execute(sql`DELETE FROM orders WHERE branch_id = ${data.id};`);
+                        await tx.execute(sql`DELETE FROM tills WHERE branch_id = ${data.id};`);
+                        await tx.execute(sql`DELETE FROM purchase_orders WHERE branch_id = ${data.id};`);
+                        await tx.execute(sql`UPDATE staff_users SET branch_id = NULL WHERE branch_id = ${data.id};`);
+                        await tx.execute(sql`DELETE FROM aggregator_connections WHERE branch_id = ${data.id};`);
+                        await tx.delete(branches).where(eq(branches.id, data.id));
+
+                        await logAuditAction({
+                            action: "Delete Branch",
+                            entityType: "branch",
+                            entityId: data.id,
+                            tenantId: current.tenantId,
+                            beforeValue: { name: current.name }
+                        }, tx);
+                    } finally {
+                        await tx.execute(sql`ALTER TABLE inventory_ledger ENABLE TRIGGER USER;`);
+                    }
+                }
+            });
+            return { success: true };
+        } catch (e: any) {
+            console.error("Error deleting branch:", e);
+            return { success: false, error: e.message };
+        }
     });
 
 export const getGlobalTaxSettingsServerFn = createServerFn({ method: "GET" })
