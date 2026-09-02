@@ -3,9 +3,17 @@ import postgres from "postgres";
 import * as schema from "./schema";
 import "dotenv/config";
 
-const queryClient = postgres(process.env["DATABASE_URL"]!, {
+const dbUrl = process.env["DATABASE_URL"] || process.env["POSTGRES_URL"] || "";
+
+if (!dbUrl && typeof window === "undefined") {
+  console.warn("⚠️ DATABASE_URL is not defined in environment variables.");
+}
+
+const safeDbUrl = dbUrl || "postgres://placeholder:placeholder@localhost:5432/placeholder";
+
+const queryClient = postgres(safeDbUrl, {
   prepare: false, // Required for PgBouncer / Connection Pooler in Serverless
-  ssl: 'require', // Ensure SSL is forced for external DB connections from Vercel
+  ssl: dbUrl.includes("sslmode=require") || dbUrl.includes("supabase") ? 'require' : false,
 });
 export const db = drizzle(queryClient, { schema });
 
