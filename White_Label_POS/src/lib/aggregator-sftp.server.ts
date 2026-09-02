@@ -358,80 +358,51 @@ export async function triggerAggregatorSyncFromDb(connectionId: string) {
     const SftpClient = req("ssh2-sftp-client");
     const sftp = new SftpClient();
 
-    const username = (conn.sftp_username || conn.vendor_id || "").trim();
+    const username = (conn.vendor_id || conn.sftp_username || "").trim();
     const rawPassword = (conn.sftp_password || "").trim();
     const password = decryptSecret(rawPassword);
 
-    // TEMPORARY DIAGNOSTIC — remove after confirming
-    console.log("DEBUG [SFTP Sync]: decrypted password length =", password.length, "| raw stored value length =", rawPassword.length, "| looks encrypted (has 2 colons) =", (rawPassword.match(/:/g) || []).length === 2);
-    if (password.length === 0) {
-      throw new Error("Password decryption returned EMPTY string — encryption key mismatch or corrupted stored value. Re-enter the password via the Edit Connection UI.");
+    if (!password) {
+      throw new Error("Password decryption returned empty value. Please re-enter the password in Connection Settings.");
     }
-
-    const passwordHash = crypto.createHash("sha256").update(password, "utf-8").digest("hex");
-    const KNOWN_CORRECT_HASH = "d7b36a41f42c8e18885b5e0b4005f2cf6ca8d7c8d402bdc9a8199546c3cf7e45";
-    console.log("DEBUG [SFTP Sync]: password SHA256 hash =", passwordHash);
-    console.log("DEBUG [SFTP Sync]: hash matches known-correct value =", passwordHash === KNOWN_CORRECT_HASH);
 
     await sftp.connect({
       host: hostClean,
       port: conn.sftp_port || 22,
       username: username,
       password: password,
+      tryKeyboard: true,
       readyTimeout: 25000,
-      algorithms: {
-        serverHostKey: [
-          "ssh-rsa",
-          "rsa-sha2-256",
-          "rsa-sha2-512",
-          "ecdsa-sha2-nistp256",
-          "ecdsa-sha2-nistp384",
-          "ecdsa-sha2-nistp521",
-          "ssh-ed25519",
-        ],
-        cipher: [
-          "aes128-ctr",
-          "aes192-ctr",
-          "aes256-ctr",
-          "aes128-gcm",
-          "aes128-gcm@openssh.com",
-          "aes256-gcm",
-          "aes256-gcm@openssh.com",
-          "aes128-cbc",
-          "aes192-cbc",
-          "aes256-cbc",
-        ],
-        kex: [
-          "curve25519-sha256",
-          "curve25519-sha256@libssh.org",
-          "ecdh-sha2-nistp256",
-          "ecdh-sha2-nistp384",
-          "ecdh-sha2-nistp521",
-          "diffie-hellman-group14-sha256",
-          "diffie-hellman-group14-sha1",
-          "diffie-hellman-group1-sha1",
-        ],
-      },
     });
 
-    const baseDir = (conn.remote_directory || "/Assortment").trim();
-    const targetDir = baseDir.startsWith("/") ? baseDir : `/${baseDir}`;
-    const remoteFilePath = `${targetDir}/${fileName}`;
-
+    const cleanDir = (conn.remote_directory || "assortment").replace(/^\/+/, "").trim();
     const fileBuffer = Buffer.from(csvContent, "utf-8");
 
-    try {
-      await sftp.put(fileBuffer, remoteFilePath);
-    } catch (putErr: any) {
-      const altDir = targetDir.toLowerCase();
-      if (altDir !== targetDir) {
-        await sftp.put(fileBuffer, `${altDir}/${fileName}`);
-      } else {
-        throw putErr;
+    const candidatePaths = [
+      `${cleanDir}/${fileName}`,
+      `assortment/${fileName}`,
+      `Assortment/${fileName}`,
+      `/${cleanDir}/${fileName}`,
+    ];
+
+    let uploadedPath = "";
+    let lastUploadErr: any = null;
+
+    for (const targetPath of candidatePaths) {
+      try {
+        await sftp.put(fileBuffer, targetPath);
+        uploadedPath = targetPath;
+        break;
+      } catch (err: any) {
+        lastUploadErr = err;
       }
     }
 
     await sftp.end();
+
+    if (!uploadedPath) {
+      throw new Error(`Failed to upload file to remote server: ${lastUploadErr?.message || "Access denied"}`);
+    }
 
     await db.execute(sql`
       INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
@@ -446,7 +417,7 @@ export async function triggerAggregatorSyncFromDb(connectionId: string) {
 
     return {
       success: true,
-      message: `Successfully uploaded ${fileName} (${recordCount} records) to ${remoteFilePath}`,
+      message: `Successfully uploaded ${fileName} (${recordCount} records) to ${uploadedPath}`,
       log: csvPreviewResult,
     };
   } catch (sftpErr: any) {
