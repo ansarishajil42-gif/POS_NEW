@@ -204,16 +204,144 @@ export async function triggerAggregatorSyncFromDb(connectionId: string) {
   const conn = connList[0];
   if (!conn) return { success: false, error: "Connection configuration not found." };
 
+  const fileName = `assortment_${(conn.vendor_id || "vendor").trim()}.csv`;
+
   if (!conn.is_active) {
     await db.execute(sql`
       INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
-      VALUES (${connectionId}::uuid, 'manual', 'failed', ${`assortment_${conn.vendor_id || "vendor"}.csv`}, 0, 'Sync disabled: Connection is inactive. Activation is required before live SFTP transmission.', NOW());
+      VALUES (${connectionId}::uuid, 'manual', 'failed', ${fileName}, 0, 'Sync disabled: Connection is inactive. Activation is required before live SFTP transmission.', NOW());
     `);
     return { success: false, error: "Sync is disabled until this connection is verified and activated." };
   }
 
-  const preview = await generateDirectCsvPreviewFromDb(connectionId);
-  return { success: true, message: "Manual sync completed.", log: preview };
+  // 1. Generate real CSV payload per 10-column specification
+  let csvPreviewResult: any;
+  try {
+    csvPreviewResult = await generateDirectCsvPreviewFromDb(connectionId);
+  } catch (err: any) {
+    await db.execute(sql`
+      INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
+      VALUES (${connectionId}::uuid, 'manual', 'failed', ${fileName}, 0, ${"Failed generating CSV payload: " + err.message}, NOW());
+    `);
+    return { success: false, error: "Failed generating CSV payload: " + err.message };
+  }
+
+  const csvContent = csvPreviewResult.csvContent;
+  const recordCount = csvPreviewResult.recordCount;
+  const hostClean = (conn.sftp_host || "").trim().replace(/^(sftp:\/\/|ssh:\/\/|https:\/\/)/, "").split("/")[0];
+
+  // 2. Perform Real SFTP Upload using ssh2-sftp-client
+  try {
+    const SftpClientModule = await import("../../../backend/node_modules/ssh2-sftp-client/src/index.js");
+    const SftpClient = SftpClientModule.default || SftpClientModule;
+    const sftp = new SftpClient();
+
+    const username = (conn.sftp_username || conn.vendor_id || "").trim();
+    const password = (conn.sftp_password || "").trim();
+
+    await sftp.connect({
+      host: hostClean,
+      port: conn.sftp_port || 22,
+      username: username,
+      password: password,
+      readyTimeout: 25000,
+      algorithms: {
+        serverHostKey: [
+          "ssh-rsa",
+          "rsa-sha2-256",
+          "rsa-sha2-512",
+          "ecdsa-sha2-nistp256",
+          "ecdsa-sha2-nistp384",
+          "ecdsa-sha2-nistp521",
+          "ssh-ed25519",
+        ],
+        cipher: [
+          "aes128-ctr",
+          "aes192-ctr",
+          "aes256-ctr",
+          "aes128-gcm",
+          "aes128-gcm@openssh.com",
+          "aes256-gcm",
+          "aes256-gcm@openssh.com",
+          "aes128-cbc",
+          "aes192-cbc",
+          "aes256-cbc",
+        ],
+        kex: [
+          "curve25519-sha256",
+          "curve25519-sha256@libssh.org",
+          "ecdh-sha2-nistp256",
+          "ecdh-sha2-nistp384",
+          "ecdh-sha2-nistp521",
+          "diffie-hellman-group14-sha256",
+          "diffie-hellman-group14-sha1",
+          "diffie-hellman-group1-sha1",
+        ],
+      },
+    });
+
+    const baseDir = (conn.remote_directory || "/Assortment").trim();
+    const targetDir = baseDir.startsWith("/") ? baseDir : `/${baseDir}`;
+    const remoteFilePath = `${targetDir}/${fileName}`;
+
+    const fileBuffer = Buffer.from(csvContent, "utf-8");
+
+    try {
+      await sftp.put(fileBuffer, remoteFilePath);
+    } catch (putErr: any) {
+      const altDir = targetDir.toLowerCase();
+      if (altDir !== targetDir) {
+        await sftp.put(fileBuffer, `${altDir}/${fileName}`);
+      } else {
+        throw putErr;
+      }
+    }
+
+    await sftp.end();
+
+    // 3. Log real SUCCESS to DB
+    await db.execute(sql`
+      INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
+      VALUES (${connectionId}::uuid, 'manual', 'success', ${fileName}, ${recordCount}, NULL, NOW());
+    `);
+
+    await db.execute(sql`
+      UPDATE aggregator_connections
+      SET consecutive_failures = 0, last_scheduled_sync_at = NOW(), updated_at = NOW()
+      WHERE id::text = ${connectionId};
+    `);
+
+    return {
+      success: true,
+      message: `Successfully uploaded ${fileName} (${recordCount} records) to ${remoteFilePath}`,
+      log: csvPreviewResult,
+    };
+  } catch (sftpErr: any) {
+    const errorMsg = sftpErr.message || "SFTP connection error";
+    console.error("❌ SFTP Real Upload Failed:", errorMsg);
+
+    // 4. Log FAILURE to DB & auto-deactivate if consecutive failures >= 3
+    await db.execute(sql`
+      INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
+      VALUES (${connectionId}::uuid, 'manual', 'failed', ${fileName}, ${recordCount}, ${errorMsg}, NOW());
+    `);
+
+    const newFailCount = (conn.consecutive_failures || 0) + 1;
+    const shouldDeactivate = newFailCount >= 3;
+
+    await db.execute(sql`
+      UPDATE aggregator_connections
+      SET consecutive_failures = ${newFailCount},
+          is_active = ${shouldDeactivate ? false : conn.is_active},
+          updated_at = NOW()
+      WHERE id::text = ${connectionId};
+    `);
+
+    return {
+      success: false,
+      error: `SFTP Transmission Failed: ${errorMsg}${shouldDeactivate ? " (Connection auto-deactivated after 3 failures)" : ""}`,
+    };
+  }
 }
 
 function formatTimestamp(d: Date): string {
