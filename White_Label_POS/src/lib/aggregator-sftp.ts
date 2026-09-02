@@ -21,18 +21,15 @@ export interface ConnectionConfig {
   isActive: boolean;
 }
 
-let connectionsFallbackStore: ConnectionConfig[] = [];
-let logsFallbackStore: any[] = [];
-
 export const getAggregatorConnectionsServerFn = createServerFn({ method: "GET" }).handler(async () => {
   try {
-    const res = await fetch(`${BACKEND_URL}/api/aggregator-sftp/connections`);
-    if (res.ok) {
-      const data = await res.json();
-      return { success: true, connections: data.connections };
-    }
-  } catch (e) {}
-  return { success: true, connections: connectionsFallbackStore };
+    const { getAggregatorConnectionsFromDb } = await import("./aggregator-sftp.server");
+    const connections = await getAggregatorConnectionsFromDb();
+    return { success: true, connections };
+  } catch (e: any) {
+    console.error("Failed to load connections from DB:", e);
+    return { success: true, connections: [] };
+  }
 });
 
 export const getAggregatorBranchesServerFn = createServerFn({ method: "GET" }).handler(async () => {
@@ -50,88 +47,46 @@ export const saveAggregatorConnectionServerFn = createServerFn({ method: "POST" 
   .validator((data: ConnectionConfig) => data)
   .handler(async ({ data }) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/aggregator-sftp/connections`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (res.ok) {
-        return await res.json();
-      }
-    } catch (e) {}
-
-    const connId = data.id || `conn_${data.aggregatorName}_${Date.now()}`;
-    const idx = connectionsFallbackStore.findIndex((c) => c.id === connId);
-    const newConn = {
-      ...data,
-      id: connId,
-      syncFrequency: data.syncFrequency || "manual",
-      isPaused: data.isPaused ?? false,
-      isActive: data.isActive ?? false,
-    };
-    if (idx >= 0) {
-      connectionsFallbackStore[idx] = newConn;
-    } else {
-      connectionsFallbackStore.push(newConn);
+      const { saveAggregatorConnectionToDb } = await import("./aggregator-sftp.server");
+      return await saveAggregatorConnectionToDb(data);
+    } catch (e: any) {
+      console.error("Failed to save connection to DB:", e);
+      return { success: false, error: "Failed to save connection to database: " + e.message };
     }
-    return { success: true, connection: newConn };
   });
 
 export const togglePauseAutomationServerFn = createServerFn({ method: "POST" })
   .validator((data: { id: string; isPaused: boolean }) => data)
   .handler(async ({ data }) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/aggregator-sftp/connections/${data.id}/toggle-pause`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isPaused: data.isPaused }),
-      });
-      if (res.ok) {
-        return await res.json();
-      }
-    } catch (e) {}
-
-    const conn = connectionsFallbackStore.find((c) => c.id === data.id);
-    if (conn) {
-      conn.isPaused = data.isPaused;
+      const { togglePauseAutomationInDb } = await import("./aggregator-sftp.server");
+      return await togglePauseAutomationInDb(data.id, data.isPaused);
+    } catch (e: any) {
+      console.error("Failed to toggle pause automation in DB:", e);
+      return { success: false, error: "Failed to update status in database." };
     }
-    return { success: true, connection: conn };
   });
 
 export const deleteAggregatorConnectionServerFn = createServerFn({ method: "POST" })
   .validator((data: { id: string }) => data)
   .handler(async ({ data }) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/aggregator-sftp/connections/${data.id}`, {
-        method: "DELETE",
-      });
-      if (res.ok) {
-        return await res.json();
-      }
-    } catch (e) {}
-
-    connectionsFallbackStore = connectionsFallbackStore.filter((c) => c.id !== data.id);
-    return { success: true };
+      const { deleteAggregatorConnectionFromDb } = await import("./aggregator-sftp.server");
+      return await deleteAggregatorConnectionFromDb(data.id);
+    } catch (e: any) {
+      console.error("Failed to delete connection from DB:", e);
+      return { success: false, error: "Failed to delete connection from database." };
+    }
   });
 
 export const previewAggregatorCsvServerFn = createServerFn({ method: "POST" })
   .validator((data: { connectionId: string }) => data)
   .handler(async ({ data }) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/aggregator-sftp/preview-csv/${data.connectionId}`);
-      if (!res.ok) {
-        const { generateDirectCsvPreviewFromDb } = await import("./aggregator-sftp.server");
-        return await generateDirectCsvPreviewFromDb(data.connectionId);
-      }
-      const result = await res.json();
-      return result;
-    } catch (e: any) {
-      try {
-        const { generateDirectCsvPreviewFromDb } = await import("./aggregator-sftp.server");
-        return await generateDirectCsvPreviewFromDb(data.connectionId);
-      } catch (err: any) {
-        return { success: false, error: "Unable to generate CSV preview: " + err.message };
-      }
+      const { generateDirectCsvPreviewFromDb } = await import("./aggregator-sftp.server");
+      return await generateDirectCsvPreviewFromDb(data.connectionId);
+    } catch (err: any) {
+      return { success: false, error: "Unable to generate CSV preview: " + err.message };
     }
   });
 
@@ -139,18 +94,10 @@ export const triggerAggregatorSyncServerFn = createServerFn({ method: "POST" })
   .validator((data: { connectionId: string }) => data)
   .handler(async ({ data }) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/aggregator-sftp/sync/${data.connectionId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ syncType: "manual" }),
-      });
-      const result = await res.json();
-      if (!res.ok) {
-        return { success: false, error: result.error || "Sync disabled: Connection is inactive." };
-      }
-      return result;
+      const { triggerAggregatorSyncFromDb } = await import("./aggregator-sftp.server");
+      return await triggerAggregatorSyncFromDb(data.connectionId);
     } catch (e: any) {
-      return { success: false, error: "Network error triggering SFTP sync: " + e.message };
+      return { success: false, error: "Error triggering SFTP sync: " + e.message };
     }
   });
 
@@ -158,12 +105,12 @@ export const getAggregatorSyncLogsServerFn = createServerFn({ method: "POST" })
   .validator((data: { connectionId: string }) => data)
   .handler(async ({ data }) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/aggregator-sftp/logs/${data.connectionId}`);
-      if (res.ok) {
-        return await res.json();
-      }
-    } catch (e) {}
-    return { success: true, logs: logsFallbackStore };
+      const { getAggregatorSyncLogsFromDb } = await import("./aggregator-sftp.server");
+      const logs = await getAggregatorSyncLogsFromDb(data.connectionId);
+      return { success: true, logs };
+    } catch (e: any) {
+      return { success: true, logs: [] };
+    }
   });
 
 export const triggerScheduledRunnerServerFn = createServerFn({ method: "POST" })
