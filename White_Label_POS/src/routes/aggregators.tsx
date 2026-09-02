@@ -4,7 +4,6 @@ import { getSessionServerFn, roleRoutes, type Role } from "@/lib/auth";
 import {
   Eye,
   EyeOff,
-  KeyRound,
   Link2,
   RefreshCw,
   Rocket,
@@ -13,9 +12,6 @@ import {
   UploadCloud,
   CheckCircle2,
   Settings,
-  ShieldCheck,
-  Download,
-  Copy,
   Plus,
   Lock,
   Trash2,
@@ -28,7 +24,6 @@ import {
 import { DemoShell, StatCard } from "@/components/demo/DemoShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -40,7 +35,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { aed, aggOrders, aggregators, outlets, type Aggregator } from "@/lib/demo-data";
+import { outlets } from "@/lib/demo-data";
 import { toast } from "sonner";
 import {
   getAggregatorConnectionsServerFn,
@@ -50,7 +45,6 @@ import {
   previewAggregatorCsvServerFn,
   triggerAggregatorSyncServerFn,
   getAggregatorSyncLogsServerFn,
-  triggerScheduledRunnerServerFn,
   type ConnectionConfig,
 } from "@/lib/aggregator-sftp";
 
@@ -69,30 +63,16 @@ export const Route = createFileRoute("/aggregators")({
       {
         name: "description",
         content:
-          "Phase 3 Multi-Branch Aggregator SFTP Sync Engine with background automation scheduler.",
+          "Multi-Branch Aggregator SFTP Sync Engine with background automation scheduler.",
       },
       { property: "og:title", content: "cloudynationpos Aggregator & SFTP Sync Engine" },
-      { property: "og:description", content: "Unified delivery orders, multi-branch SFTP engine and background scheduler." },
+      { property: "og:description", content: "Multi-branch SFTP engine and background scheduler." },
     ],
   }),
   component: Aggregators,
 });
 
-const statusTone: Record<string, string> = {
-  New: "bg-primary/10 text-primary border-primary/20",
-  Picking: "bg-warning/15 text-warning-foreground border-warning/30",
-  Ready: "bg-success/12 text-success border-success/20",
-  Dispatched: "bg-surface-2 text-muted-foreground border-border",
-};
-
 function Aggregators() {
-  const [tab, setTab] = useState<Aggregator | "All">("All");
-  const [sync, setSync] = useState<Record<string, boolean>>(
-    Object.fromEntries(outlets.map((o) => [o.id, true])),
-  );
-  const [revealed, setRevealed] = useState<string | null>(null);
-  const [publishing, setPublishing] = useState(false);
-
   // SFTP State
   const [connections, setConnections] = useState<ConnectionConfig[]>([]);
   const [selectedConnId, setSelectedConnId] = useState<string>("");
@@ -113,7 +93,7 @@ function Aggregators() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [showPass, setShowPass] = useState(false);
 
-  // Connection modal form state
+  // Connection modal form state (initializes clean with empty values)
   const [formConn, setFormConn] = useState<ConnectionConfig>({
     aggregatorName: "talabat",
     branchId: outlets[0]?.id || "",
@@ -124,9 +104,9 @@ function Aggregators() {
     remoteDirectory: "/Assortment",
     vendorId: "",
     priceFormat: "price_discounted",
-    syncFrequency: "manual", // Default manual
+    syncFrequency: "manual",
     isPaused: false,
-    isActive: false, // Default false
+    isActive: false,
   });
 
   useEffect(() => {
@@ -178,6 +158,8 @@ function Aggregators() {
           toast.warning(res.warning);
         }
         loadLogs(targetId);
+      } else if (res?.error) {
+        toast.error("Failed to generate CSV preview: " + res.error);
       }
     } catch (e: any) {
       toast.error("Failed to generate CSV preview: " + e.message);
@@ -258,8 +240,6 @@ function Aggregators() {
     return nextDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 
-  const visible = tab === "All" ? aggOrders : aggOrders.filter((o) => o.channel === tab);
-
   return (
     <DemoShell
       title="Aggregator & SFTP Sync Engine"
@@ -272,47 +252,40 @@ function Aggregators() {
             onClick={() => {
               setFormConn({
                 aggregatorName: "talabat",
-                branchId: outlets[0]?.id || "branch_main",
-                sftpHost: "test.local",
+                branchId: outlets[0]?.id || "",
+                sftpHost: "",
                 sftpPort: 22,
-                sftpUsername: "test_vendor",
-                sftpPassword: "dummy123",
+                sftpUsername: "",
+                sftpPassword: "",
                 remoteDirectory: "/Assortment",
-                vendorId: "test_vendor",
+                vendorId: "",
                 priceFormat: "price_discounted",
                 syncFrequency: "manual",
                 isPaused: false,
-                isActive: false, // Default false
+                isActive: false,
               });
               setShowConfigModal(true);
             }}
           >
             <Plus className="mr-1.5 h-4 w-4" /> Add SFTP Connection
           </Button>
-          <Button
-            className="rounded-xl font-semibold"
-            disabled={publishing}
-            onClick={() => {
-              setPublishing(true);
-              setTimeout(() => {
-                setPublishing(false);
-                toast.success("Published to all aggregators", {
-                  description: "Catalog, promo pricing and stock status updated on 4 channels.",
-                });
-              }, 1200);
-            }}
-          >
-            <Rocket className="mr-1.5 h-4 w-4" />
-            {publishing ? "Publishing…" : "Publish to all channels"}
-          </Button>
+          <div title="Live channel API publishing is disconnected. Assortment & promo sync is managed via Central SFTP Server tab.">
+            <Button
+              className="rounded-xl font-semibold opacity-50 cursor-not-allowed"
+              disabled
+            >
+              <Rocket className="mr-1.5 h-4 w-4" />
+              Publish to channels (API Disconnected)
+            </Button>
+          </div>
         </div>
       }
     >
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Live orders in queue" value={String(aggOrders.length)} delta="+18% vs last hour" icon={RefreshCw} />
-        <StatCard label="Channels connected" value="4 + SFTP" delta="All healthy" icon={Link2} tone="success" />
+        <StatCard label="Live orders in queue" value="0" delta="Ingestion pending" icon={RefreshCw} />
+        <StatCard label="Channels connected" value="1 (Talabat SFTP)" delta="SFTP Active" icon={Link2} tone="success" />
         <StatCard label="SFTP Engine" value="Multi-Branch & Automation" delta="Safe Background Scheduler" icon={Server} tone="accent" />
-        <StatCard label="Stock sync events today" value="12,486" icon={RefreshCw} tone="accent" />
+        <StatCard label="Database Sync Status" value="Active" icon={CheckCircle2} tone="accent" />
       </div>
 
       <Tabs defaultValue="sftp" className="mt-8">
@@ -322,10 +295,9 @@ function Aggregators() {
           </TabsTrigger>
           <TabsTrigger value="queue">Order queue</TabsTrigger>
           <TabsTrigger value="stock">Stock sync</TabsTrigger>
-          <TabsTrigger value="vault">API credentials</TabsTrigger>
         </TabsList>
 
-        {/* --- CENTRAL SFTP SERVER TAB (PHASE 3 MULTI-BRANCH & SCHEDULER) --- */}
+        {/* --- CENTRAL SFTP SERVER TAB --- */}
         <TabsContent value="sftp" className="mt-5 space-y-6">
           {/* Automation Notice */}
           <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-4 text-blue-900 dark:text-blue-200">
@@ -388,7 +360,7 @@ function Aggregators() {
                   <div className="mt-4 space-y-1.5 text-xs text-muted-foreground">
                     <div className="flex justify-between">
                       <span>Vendor ID:</span>
-                      <span className="font-mono font-semibold text-ink">{conn.vendorId || "test_vendor"}</span>
+                      <span className="font-mono font-semibold text-ink">{conn.vendorId || "—"}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Sync Schedule:</span>
@@ -543,269 +515,111 @@ function Aggregators() {
                         <FileText className="h-4 w-4 text-primary" /> Generated Single File Payload Preview ({csvPreview.fileName})
                       </h4>
                       <p className="text-[11px] text-muted-foreground">
-                        Target Path: <code className="font-mono text-primary">{csvPreview.remotePath}</code> | {csvPreview.recordCount} Items | {csvPreview.fileSizeBytes} Bytes | In-Memory
+                        Target Path: <code className="font-mono text-primary">{csvPreview.remotePath}</code> | {csvPreview.recordCount} Items | {csvPreview.fileSizeBytes} Bytes
                       </p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="rounded-lg text-xs"
-                        onClick={() => {
-                          navigator.clipboard.writeText(csvPreview.csvContent);
-                          toast.success("CSV payload copied to clipboard!");
-                        }}
-                      >
-                        <Copy className="mr-1 h-3.5 w-3.5" /> Copy CSV
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="rounded-lg text-xs"
-                        onClick={() => {
-                          const blob = new Blob([csvPreview.csvContent], { type: "text/csv" });
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement("a");
-                          a.href = url;
-                          a.download = csvPreview.fileName;
-                          a.click();
-                          toast.success("CSV file downloaded");
-                        }}
-                      >
-                        <Download className="mr-1 h-3.5 w-3.5" /> Download
-                      </Button>
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto rounded-xl bg-slate-950 p-4 font-mono text-xs text-emerald-400 max-h-[300px]">
-                    <pre className="whitespace-pre">{csvPreview.csvContent}</pre>
+                  <div className="max-h-60 overflow-y-auto rounded-lg bg-surface-2 p-3 font-mono text-xs text-ink leading-relaxed">
+                    <pre>{csvPreview.csvContent}</pre>
                   </div>
                 </div>
               )}
 
-              {/* Audit History Log */}
-              <div>
-                <h4 className="text-xs font-bold text-ink mb-3">Sync & Preview Audit History</h4>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-border text-muted-foreground uppercase tracking-wider font-semibold">
-                        <th className="py-2.5 px-3">Timestamp</th>
-                        <th className="py-2.5 px-3">File Name</th>
-                        <th className="py-2.5 px-3">Sync Type</th>
-                        <th className="py-2.5 px-3">Records</th>
-                        <th className="py-2.5 px-3">Status</th>
-                        <th className="py-2.5 px-3">Details / Error</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {sftpLogs.length === 0 ? (
+              {/* Audit Log Table for Selected Connection */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold text-ink flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-primary" /> SFTP Sync Audit Trail & Execution History
+                </h4>
+
+                {sftpLogs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic bg-surface-2 p-4 rounded-xl text-center">
+                    No sync logs recorded yet for this connection.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-border">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-surface-2 text-muted-foreground">
                         <tr>
-                          <td colSpan={6} className="py-6 text-center text-muted-foreground">
-                            No sync or preview events logged yet.
-                          </td>
+                          <th className="p-3 font-semibold">Timestamp</th>
+                          <th className="p-3 font-semibold">Sync Type</th>
+                          <th className="p-3 font-semibold">Status</th>
+                          <th className="p-3 font-semibold">File Name</th>
+                          <th className="p-3 font-semibold">Records</th>
+                          <th className="p-3 font-semibold">Details / Error</th>
                         </tr>
-                      ) : (
-                        sftpLogs.map((log) => (
-                          <tr key={log.id} className="hover:bg-surface-2/50 transition-colors">
-                            <td className="py-3 px-3 font-mono text-muted-foreground">
-                              {new Date(log.createdAt || log.timestamp).toLocaleString()}
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {sftpLogs.map((log) => (
+                          <tr key={log.id} className="hover:bg-surface-2/50">
+                            <td className="p-3 font-mono text-[11px] text-muted-foreground">
+                              {new Date(log.createdAt).toLocaleString()}
                             </td>
-                            <td className="py-3 px-3 font-mono font-semibold text-ink">{log.fileName}</td>
-                            <td className="py-3 px-3 capitalize text-muted-foreground">{log.syncType || log.sync_type}</td>
-                            <td className="py-3 px-3 font-medium text-ink">{log.rowCount || log.row_count} items</td>
-                            <td className="py-3 px-3">
+                            <td className="p-3 capitalize font-semibold">{log.syncType}</td>
+                            <td className="p-3">
                               <Badge
                                 variant="outline"
                                 className={
                                   log.status === "success"
                                     ? "border-success/30 bg-success/10 text-success font-semibold"
                                     : log.status === "preview_only"
-                                    ? "border-primary/30 bg-primary/10 text-primary font-semibold"
+                                    ? "border-blue-500/30 bg-blue-500/10 text-blue-600 font-semibold"
                                     : "border-destructive/30 bg-destructive/10 text-destructive font-semibold"
                                 }
                               >
                                 {log.status}
                               </Badge>
                             </td>
-                            <td className="py-3 px-3 text-muted-foreground max-w-[250px] truncate">
-                              {log.errorMessage || log.message || "Completed cleanly"}
+                            <td className="p-3 font-mono text-[11px]">{log.fileName}</td>
+                            <td className="p-3 font-mono">{log.rowCount}</td>
+                            <td className="p-3 text-muted-foreground max-w-xs truncate">
+                              {log.errorMessage || "—"}
                             </td>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           )}
         </TabsContent>
 
-        {/* --- ORDER QUEUE TAB --- */}
+        {/* --- ORDER QUEUE TAB (HONEST EMPTY PENDING STATE) --- */}
         <TabsContent value="queue" className="mt-5">
-          <div className="mb-4 flex flex-wrap gap-2">
-            {(["All", ...aggregators] as const).map((c) => (
-              <button
-                key={c}
-                onClick={() => setTab(c)}
-                className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${
-                  tab === c
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-surface text-muted-foreground hover:text-ink"
-                }`}
-              >
-                {c}
-                <span className="ml-2 text-xs opacity-80">
-                  {c === "All" ? aggOrders.length : aggOrders.filter((o) => o.channel === c).length}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {visible.map((o) => (
-              <div key={o.id} className="panel p-5">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="font-mono text-xs text-muted-foreground">{o.id}</p>
-                    <p className="mt-1 text-sm font-bold text-ink">{o.customer}</p>
-                  </div>
-                  <Badge variant="outline" className="rounded-full font-semibold">
-                    {o.channel}
-                  </Badge>
-                </div>
-                <div className="mt-4 flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">
-                    {o.items} items · {o.branch}
-                  </span>
-                  <span className="font-extrabold text-ink">{aed(o.total)}</span>
-                </div>
-                <div className="mt-4 flex items-center justify-between">
-                  <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusTone[o.status]}`}>
-                    {o.status}
-                  </span>
-                  <span className="text-xs text-muted-foreground">{o.minutesAgo} min ago</span>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-4 w-full rounded-lg"
-                  onClick={() => toast.success(`${o.id} injected into ${o.branch} POS queue · picking slip printed`)}
-                >
-                  Send to POS & print slip
-                </Button>
-              </div>
-            ))}
-          </div>
-        </TabsContent>
-
-        {/* --- STOCK SYNC TAB --- */}
-        <TabsContent value="stock" className="mt-5">
-          <div className="grid gap-5 lg:grid-cols-2">
-            <div className="panel p-6">
-              <h2 className="text-sm font-bold text-ink">Stock auto-sync per branch</h2>
-              <p className="mt-1 text-xs text-muted-foreground">
-                When enabled, every till sale instantly deducts availability across all connected aggregator menus.
-              </p>
-              <div className="mt-5 space-y-3">
-                {outlets.map((o) => (
-                  <div key={o.id} className="flex items-center justify-between rounded-xl bg-surface-2 px-4 py-3">
-                    <div>
-                      <p className="text-sm font-semibold text-ink">{o.name}</p>
-                      <p className="text-xs text-muted-foreground">{o.emirate} · 4 channels + SFTP linked</p>
-                    </div>
-                    <Switch
-                      checked={sync[o.id] ?? false}
-                      onCheckedChange={(v) => {
-                        setSync((s) => ({ ...s, [o.id]: v }));
-                        toast.success(`${o.name}: auto-sync ${v ? "enabled" : "paused"}`);
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
+          <div className="panel p-12 text-center space-y-3">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <RefreshCw className="h-6 w-6" />
             </div>
-
-            <div className="panel p-6">
-              <h2 className="text-sm font-bold text-ink">Price & menu publisher</h2>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Last published 14 minutes ago · 1,284 SKUs · 36 promotions
-              </p>
-              <div className="mt-5 space-y-3">
-                {aggregators.map((a) => (
-                  <div key={a} className="flex items-center justify-between rounded-xl border border-border px-4 py-3">
-                    <span className="text-sm font-semibold text-ink">{a}</span>
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-success">
-                      <span className="h-2 w-2 rounded-full bg-success" /> In sync
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <Button
-                className="mt-5 w-full rounded-xl font-semibold"
-                onClick={() => toast.success("Catalog, promos and stock status published to all channels")}
-              >
-                <Rocket className="mr-1.5 h-4 w-4" /> Publish now
+            <h3 className="text-base font-bold text-ink">No Delivery Orders in Queue</h3>
+            <p className="max-w-md mx-auto text-xs text-muted-foreground">
+              Live aggregator order ingestion (push webhooks / order polling API) is not connected yet. Real-time delivery orders will appear here once an active ingestion channel is configured.
+            </p>
+            <div className="pt-2">
+              <Button variant="outline" size="sm" className="rounded-xl" disabled>
+                Order Ingestion Disconnected
               </Button>
             </div>
           </div>
         </TabsContent>
 
-        {/* --- API VAULT TAB --- */}
-        <TabsContent value="vault" className="mt-5">
-          <div className="grid gap-5 sm:grid-cols-2">
-            {outlets.slice(0, 2).map((o) =>
-              aggregators.map((a) => {
-                const key = `${o.id}-${a}`;
-                const shown = revealed === key;
-                return (
-                  <div key={key} className="panel p-5">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-bold text-ink">{a}</p>
-                        <p className="text-xs text-muted-foreground">{o.name}</p>
-                      </div>
-                      <KeyRound className="h-4 w-4 text-primary" />
-                    </div>
-                    <div className="mt-4 flex items-center gap-2 rounded-xl bg-surface-2 px-3 py-2.5 font-mono text-xs text-ink">
-                      <span className="flex-1 truncate">
-                        {shown ? `sk_live_${a.toLowerCase()}_${o.id}_9f42ab77c1` : "•••• •••• •••• ••••"}
-                      </span>
-                      <button
-                        onClick={() => setRevealed(shown ? null : key)}
-                        aria-label="Toggle key visibility"
-                        className="text-muted-foreground hover:text-ink"
-                      >
-                        {shown ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                    <div className="mt-4 flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="flex-1 rounded-lg"
-                        onClick={() => toast.success(`${a} reconnected for ${o.name}`)}
-                      >
-                        Connect
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="rounded-lg"
-                        onClick={() => toast.success("Sandbox credentials rotated")}
-                      >
-                        Rotate
-                      </Button>
-                    </div>
-                  </div>
-                );
-              }),
-            )}
+        {/* --- STOCK SYNC TAB (HONEST EMPTY PENDING STATE) --- */}
+        <TabsContent value="stock" className="mt-5">
+          <div className="panel p-12 text-center space-y-3">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <Rocket className="h-6 w-6" />
+            </div>
+            <h3 className="text-base font-bold text-ink">Real-Time Stock Auto-Sync Disconnected</h3>
+            <p className="max-w-md mx-auto text-xs text-muted-foreground">
+              Instant till sale stock deductions across delivery aggregator APIs are not connected yet. Menu price and stock catalog syncing is managed through the <strong>Central SFTP Server</strong> tab.
+            </p>
+            <div className="pt-2">
+              <Button variant="outline" size="sm" className="rounded-xl" disabled>
+                Real-Time Stock Push Disabled
+              </Button>
+            </div>
           </div>
-          <p className="mt-5 text-xs text-muted-foreground">
-            OAuth tokens and API keys are stored per branch, encrypted at rest with AES-256 and never exposed to the till.
-          </p>
         </TabsContent>
       </Tabs>
 
