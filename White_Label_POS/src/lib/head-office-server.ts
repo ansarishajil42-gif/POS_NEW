@@ -132,7 +132,9 @@ export const getBranchDetailsFn = createServerFn({ method: "GET" })
     return { branch };
   });
 
-export const getHeadOfficeDataFn = createServerFn({ method: "GET" }).handler(async () => {
+export const getHeadOfficeDataFn = createServerFn({ method: "GET" })
+  .validator((d?: { page?: number; pageSize?: number; search?: string }) => d)
+  .handler(async ({ data }) => {
   try {
     const tenantId = await getHeadOfficeTenant();
 
@@ -154,51 +156,92 @@ export const getHeadOfficeDataFn = createServerFn({ method: "GET" }).handler(asy
       where: eq(branches.tenantId, tenantId),
     });
 
-    // Products
-    const [dbProducts, dbBarcodes, dbVariants, dbConversions] = await Promise.all([
+    // Products (Paginated with O(N+M) mapping)
+    const page = Math.max(1, Number(data?.page) || 1);
+    const pageSize = Math.max(1, Math.min(200, Number(data?.pageSize) || 50));
+    const offset = (page - 1) * pageSize;
+
+    let prodWhere = eq(products.tenantId, tenantId);
+    if (data?.search && data.search.trim()) {
+      const q = `%${data.search.trim()}%`;
+      prodWhere = and(
+        eq(products.tenantId, tenantId),
+        or(ilike(products.name, q), ilike(products.barcode, q), ilike(products.sku, q)),
+      )!;
+    }
+
+    const [dbProducts, totalProductsCountRes] = await Promise.all([
       db.query.products.findMany({
-        where: eq(products.tenantId, tenantId),
+        where: prodWhere,
+        limit: pageSize,
+        offset: offset,
+        orderBy: [desc(products.createdAt)],
       }),
-      db.select().from(productBarcodes),
-      db.select().from(productVariants),
-      db.select().from(unitConversions),
+      db.execute(sql`SELECT count(*)::int as total FROM products WHERE ${prodWhere};`),
     ]);
 
-    const productsWithDetails = dbProducts.map((p) => {
-      const alternateBarcodes = dbBarcodes
-        .filter((b) => b.productId === p.id)
-        .map((b) => b.barcode);
-      const variants = dbVariants
-        .filter((v) => v.productId === p.id)
-        .map((v) => ({
-          variantName: v.variantName,
-          variantValue: v.variantValue,
-          sku: v.sku,
-          priceAdjustment: v.priceAdjustment,
-        }));
-      const conversions = dbConversions
-        .filter((c) => c.productId === p.id)
-        .map((c) => ({
-          fromUnit: c.fromUnit,
-          toUnit: c.toUnit,
-          conversionFactor: c.conversionFactor,
-        }));
+    const productIds = dbProducts.map((p) => p.id);
 
-      return {
-        ...p,
-        alternateBarcodes,
-        variants,
-        conversions,
-      };
-    });
+    // Only query barcodes, variants, conversions, and stock for the returned page of products
+    const [dbBarcodes, dbVariants, dbConversions, dbStock] = await Promise.all([
+      productIds.length > 0
+        ? db.select().from(productBarcodes).where(inArray(productBarcodes.productId, productIds))
+        : [],
+      productIds.length > 0
+        ? db.select().from(productVariants).where(inArray(productVariants.productId, productIds))
+        : [],
+      productIds.length > 0
+        ? db.select().from(unitConversions).where(inArray(unitConversions.productId, productIds))
+        : [],
+      productIds.length > 0 && dbBranches.length > 0
+        ? db.query.stockLevels.findMany({
+            where: and(
+              inArray(stockLevels.productId, productIds),
+              inArray(stockLevels.branchId, dbBranches.map((b) => b.id)),
+            ),
+          })
+        : [],
+    ]);
 
-    // Stock Levels
-    const dbStock = await db.query.stockLevels.findMany({
-      where: inArray(
-        stockLevels.branchId,
-        dbBranches.map((b) => b.id).concat(["00000000-0000-0000-0000-000000000000"]),
-      ),
-    });
+    // O(N+M) Map Lookups
+    const barcodesMap = new Map<string, string[]>();
+    for (const b of dbBarcodes) {
+      const arr = barcodesMap.get(b.productId) || [];
+      arr.push(b.barcode);
+      barcodesMap.set(b.productId, arr);
+    }
+
+    const variantsMap = new Map<string, any[]>();
+    for (const v of dbVariants) {
+      const arr = variantsMap.get(v.productId) || [];
+      arr.push({
+        variantName: v.variantName,
+        variantValue: v.variantValue,
+        sku: v.sku,
+        priceAdjustment: v.priceAdjustment,
+      });
+      variantsMap.set(v.productId, arr);
+    }
+
+    const conversionsMap = new Map<string, any[]>();
+    for (const c of dbConversions) {
+      const arr = conversionsMap.get(c.productId) || [];
+      arr.push({
+        fromUnit: c.fromUnit,
+        toUnit: c.toUnit,
+        conversionFactor: c.conversionFactor,
+      });
+      conversionsMap.set(c.productId, arr);
+    }
+
+    const productsWithDetails = dbProducts.map((p) => ({
+      ...p,
+      alternateBarcodes: barcodesMap.get(p.id) || [],
+      variants: variantsMap.get(p.id) || [],
+      conversions: conversionsMap.get(p.id) || [],
+    }));
+
+    const totalProducts = Number((totalProductsCountRes[0] as any)?.total || 0);
 
     // Batches
     const dbBatches = await db.query.batches.findMany({
@@ -326,6 +369,9 @@ export const getHeadOfficeDataFn = createServerFn({ method: "GET" }).handler(asy
       priceRequests: dbPriceOverrideRequests,
       branches: dbBranches,
       products: productsWithDetails,
+      totalProducts,
+      page,
+      pageSize,
       stock: dbStock,
       batches: dbBatches,
       purchases: dbPos,

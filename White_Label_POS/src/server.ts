@@ -1,4 +1,8 @@
 import "./lib/error-capture";
+import { startAggregatorScheduler } from "./lib/aggregator-scheduler.server";
+
+// Initialize automatic aggregator sync background scheduler
+startAggregatorScheduler();
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";

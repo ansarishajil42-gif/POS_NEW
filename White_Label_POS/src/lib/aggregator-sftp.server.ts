@@ -22,7 +22,7 @@ export async function getAggregatorBranchesFromDb() {
 
 export async function getAggregatorConnectionsFromDb() {
   const rows: any[] = await db.execute(sql`
-    SELECT id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, sftp_password, remote_directory, vendor_id, store_vendor_id, price_format, sync_frequency, is_paused, consecutive_failures, last_scheduled_sync_at, is_active, created_at, updated_at
+    SELECT id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, sftp_password, remote_directory, vendor_id, store_vendor_id, price_format, sync_frequency, is_paused, consecutive_failures, last_scheduled_sync_at, has_pending_changes, is_active, created_at, updated_at
     FROM aggregator_connections
     ORDER BY created_at DESC;
   `);
@@ -44,6 +44,7 @@ export async function getAggregatorConnectionsFromDb() {
     isPaused: Boolean(r.is_paused),
     consecutiveFailures: r.consecutive_failures || 0,
     lastScheduledSyncAt: r.last_scheduled_sync_at,
+    hasPendingChanges: Boolean(r.has_pending_changes),
     isActive: Boolean(r.is_active),
     createdAt: r.created_at,
     updatedAt: r.updated_at,

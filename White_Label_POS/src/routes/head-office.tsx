@@ -24,6 +24,10 @@ import {
   Ban,
   Clock,
   Menu,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
 } from "lucide-react";
 import {
   Bar,
@@ -214,10 +218,53 @@ function HeadOffice() {
     }));
   }, [data?.branches]);
 
+  // Catalog pagination and search states
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogPage, setCatalogPage] = useState(data?.page || 1);
+  const catalogPageSize = data?.pageSize || 50;
+  const [catalogTotal, setCatalogTotal] = useState(data?.totalProducts || data?.products?.length || 0);
+  const [catalogProductsList, setCatalogProductsList] = useState<any[]>(data?.products || []);
+  const [catalogStockList, setCatalogStockList] = useState<any[]>(data?.stock || []);
+  const [isCatalogLoading, setIsCatalogLoading] = useState(false);
+
+  useEffect(() => {
+    if (data?.products) {
+      setCatalogProductsList(data.products);
+      setCatalogStockList(data.stock || []);
+      setCatalogTotal(data.totalProducts || data.products.length);
+      setCatalogPage(data.page || 1);
+    }
+  }, [data?.products, data?.stock, data?.totalProducts, data?.page]);
+
+  const handleFetchCatalog = async (targetPage: number, searchStr: string) => {
+    setIsCatalogLoading(true);
+    try {
+      const res = await getHeadOfficeDataFn({
+        data: {
+          page: targetPage,
+          pageSize: catalogPageSize,
+          search: searchStr,
+        },
+      });
+      if (res && res.success) {
+        setCatalogProductsList(res.products || []);
+        setCatalogStockList(res.stock || []);
+        setCatalogTotal(res.totalProducts || 0);
+        setCatalogPage(res.page || targetPage);
+      } else {
+        toast.error(res?.error || "Failed to load catalog");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to load catalog");
+    } finally {
+      setIsCatalogLoading(false);
+    }
+  };
+
   const mappedProducts = useMemo(() => {
-    return (data?.products || []).map((p: any) => {
+    return (catalogProductsList || []).map((p: any) => {
       // calculate total stock across all branches from data.stock
-      const totalStock = (data?.stock || [])
+      const totalStock = (catalogStockList || [])
         .filter((s: any) => s.productId === p.id)
         .reduce((acc: number, s: any) => acc + s.stock, 0);
 
@@ -237,7 +284,7 @@ function HeadOffice() {
         salePriceRaw: p.salePrice,
       };
     });
-  }, [data?.products, data?.stock]);
+  }, [catalogProductsList, catalogStockList]);
 
   const mappedBatches = useMemo(() => {
     return (data?.batches || []).map((b: any) => {
@@ -637,6 +684,7 @@ function HeadOffice() {
   // Invoice Detail view & PDF State
   const [invoiceDetailModalOpen, setInvoiceDetailModalOpen] = useState(false);
   const [invoiceDetail, setInvoiceDetail] = useState<any>(null);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isGeneratingFtaReport, setIsGeneratingFtaReport] = useState(false);
 
@@ -1534,98 +1582,233 @@ function HeadOffice() {
             </div>
           </TabsContent>
 
-          <TabsContent value="catalog" className="mt-0">
-            <div className="flex justify-end mb-4">
-              <Button
-                onClick={() => {
-                  setProductForm({
-                    name: "",
-                    barcode: "",
-                    category: "",
-                    unit: "",
-                    costPrice: "",
-                    salePrice: "",
-                    isBatchTracked: false,
-                  });
-                  setIsEditingProduct(false);
-                  setProductFormOpen(true);
-                }}
-                className="rounded-xl"
-              >
-                <Plus className="h-4 w-4 mr-2" /> Add Product
-              </Button>
+          <TabsContent value="catalog" className="mt-0 space-y-4">
+            {/* Top Controls: Search Bar & Add Product */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="relative flex-1 max-w-md">
+                <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Search by name, barcode, or SKU..."
+                  value={catalogSearch}
+                  onChange={(e) => setCatalogSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      handleFetchCatalog(1, catalogSearch);
+                    }
+                  }}
+                  className="pl-9 h-10 rounded-xl bg-surface-2/50 border-border/50 text-sm w-full"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => handleFetchCatalog(1, catalogSearch)}
+                  disabled={isCatalogLoading}
+                  className="rounded-xl h-10 px-4 text-xs font-semibold"
+                >
+                  {isCatalogLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+                  ) : (
+                    <Search className="h-4 w-4 mr-1.5" />
+                  )}
+                  Search
+                </Button>
+
+                <Button
+                  onClick={() => {
+                    setProductForm({
+                      name: "",
+                      barcode: "",
+                      category: "",
+                      unit: "",
+                      costPrice: "",
+                      salePrice: "",
+                      isBatchTracked: false,
+                    });
+                    setIsEditingProduct(false);
+                    setProductFormOpen(true);
+                  }}
+                  className="rounded-xl h-10 px-4 font-semibold shrink-0"
+                >
+                  <Plus className="h-4 w-4 mr-1.5" /> Add Product
+                </Button>
+              </div>
             </div>
-            <div className="panel overflow-x-auto">
-              <Table className="min-w-[900px]">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>SKU</TableHead>
-                    <TableHead>Product</TableHead>
-                    <TableHead>Barcode</TableHead>
-                    <TableHead>Unit</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead className="text-right">Cost</TableHead>
-                    <TableHead className="text-right">Retail</TableHead>
-                    <TableHead className="text-right">On hand</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {mappedProducts.map((p: any) => (
-                    <TableRow key={p.id}>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {p.sku}
-                      </TableCell>
-                      <TableCell className="font-semibold text-ink">{p.name}</TableCell>
-                      <TableCell className="font-mono text-xs">{p.barcode}</TableCell>
-                      <TableCell className="text-sm">{p.unit}</TableCell>
-                      <TableCell className="text-sm">{p.category}</TableCell>
-                      <TableCell className="text-right tabular-nums">{p.cost.toFixed(2)}</TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums">
-                        {p.price.toFixed(2)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">{p.stock}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            size="icon"
-                            variant="outline"
-                            className="h-8 w-8 rounded-lg"
-                            onClick={() => {
-                              setProductForm({
-                                id: p.id,
-                                name: p.name,
-                                barcode: p.barcode ?? "",
-                                category: p.category,
-                                unit: p.unit,
-                                costPrice: p.costPriceRaw,
-                                salePrice: p.salePriceRaw,
-                                isBatchTracked: p.isBatchTracked,
-                              });
-                              setIsEditingProduct(true);
-                              setProductFormOpen(true);
-                            }}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="outline"
-                            className="h-8 w-8 rounded-lg text-destructive hover:bg-destructive/10"
-                            onClick={() => {
-                              setDeleteProductContext(p);
-                              setDeleteDialogOpen(true);
-                            }}
-                            title="Remove product"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+
+            {/* Catalog Table Container */}
+            <div className="rounded-2xl border border-border/50 bg-surface/50 shadow-sm backdrop-blur-xl overflow-hidden">
+              <div className="relative w-full overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                <table className="w-full caption-bottom text-sm">
+                  <thead className="bg-surface-2/80 [&_tr]:border-b-0">
+                    <tr className="border-b border-border/50">
+                      <th className="h-11 px-4 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                        SKU
+                      </th>
+                      <th className="h-11 px-4 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground min-w-[200px]">
+                        Product
+                      </th>
+                      <th className="h-11 px-4 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                        Barcode
+                      </th>
+                      <th className="h-11 px-3 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                        Unit
+                      </th>
+                      <th className="h-11 px-3 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                        Category
+                      </th>
+                      <th className="h-11 px-3 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                        Cost
+                      </th>
+                      <th className="h-11 px-3 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                        Retail
+                      </th>
+                      <th className="h-11 px-3 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                        Stock
+                      </th>
+                      <th className="h-11 px-4 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="[&_tr:last-child]:border-0">
+                    {mappedProducts.map((p: any) => (
+                      <tr
+                        key={p.id}
+                        className="group border-b border-border/50 transition-all duration-200 hover:bg-primary/[0.03]"
+                      >
+                        <td className="px-4 py-3 align-middle font-mono text-xs text-muted-foreground whitespace-nowrap">
+                          {p.sku}
+                        </td>
+                        <td className="px-4 py-3 align-middle font-semibold text-ink">
+                          {p.name}
+                        </td>
+                        <td className="px-4 py-3 align-middle font-mono text-xs whitespace-nowrap">
+                          {p.barcode || "—"}
+                        </td>
+                        <td className="px-3 py-3 align-middle text-sm whitespace-nowrap">{p.unit}</td>
+                        <td className="px-3 py-3 align-middle text-sm whitespace-nowrap">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">
+                            {p.category}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 align-middle text-right tabular-nums whitespace-nowrap">
+                          {p.cost.toFixed(2)}
+                        </td>
+                        <td className="px-3 py-3 align-middle text-right font-semibold tabular-nums text-ink whitespace-nowrap">
+                          {p.price.toFixed(2)}
+                        </td>
+                        <td className="px-3 py-3 align-middle text-right tabular-nums font-medium whitespace-nowrap">
+                          {p.stock}
+                        </td>
+                        <td className="px-4 py-3 align-middle text-right whitespace-nowrap">
+                          <div className="flex justify-end gap-1.5">
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              className="h-7 w-7 rounded-lg"
+                              onClick={() => {
+                                setProductForm({
+                                  id: p.id,
+                                  name: p.name,
+                                  barcode: p.barcode ?? "",
+                                  category: p.category,
+                                  unit: p.unit,
+                                  costPrice: p.costPriceRaw,
+                                  salePrice: p.salePriceRaw,
+                                  isBatchTracked: p.isBatchTracked,
+                                });
+                                setIsEditingProduct(true);
+                                setProductFormOpen(true);
+                              }}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              className="h-7 w-7 rounded-lg text-destructive hover:bg-destructive/10"
+                              onClick={() => {
+                                setDeleteProductContext(p);
+                                setDeleteDialogOpen(true);
+                              }}
+                              title="Remove product"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {mappedProducts.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={9}
+                          className="p-8 text-center text-sm text-muted-foreground"
+                        >
+                          {isCatalogLoading ? (
+                            <div className="flex items-center justify-center gap-2">
+                              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                              <span>Loading catalog items...</span>
+                            </div>
+                          ) : (
+                            <span>No products found matching your search.</span>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Clean Pagination Footer */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-3.5 border-t border-border/50 bg-surface-2/40 text-xs text-muted-foreground">
+                <div>
+                  Showing{" "}
+                  <span className="font-semibold text-ink">
+                    {catalogTotal > 0 ? (catalogPage - 1) * catalogPageSize + 1 : 0}
+                  </span>{" "}
+                  to{" "}
+                  <span className="font-semibold text-ink">
+                    {Math.min(catalogPage * catalogPageSize, catalogTotal)}
+                  </span>{" "}
+                  of{" "}
+                  <span className="font-semibold text-ink">
+                    {catalogTotal.toLocaleString()}
+                  </span>{" "}
+                  products
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="mr-2">
+                    Page <span className="font-semibold text-ink">{catalogPage}</span> of{" "}
+                    <span className="font-semibold text-ink">
+                      {Math.max(1, Math.ceil(catalogTotal / catalogPageSize))}
+                    </span>
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={catalogPage <= 1 || isCatalogLoading}
+                    onClick={() => handleFetchCatalog(catalogPage - 1, catalogSearch)}
+                    className="h-8 px-2.5 rounded-lg text-xs"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5 mr-1" /> Prev
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={
+                      catalogPage >= Math.ceil(catalogTotal / catalogPageSize) ||
+                      isCatalogLoading
+                    }
+                    onClick={() => handleFetchCatalog(catalogPage + 1, catalogSearch)}
+                    className="h-8 px-2.5 rounded-lg text-xs"
+                  >
+                    Next <ChevronRight className="h-3.5 w-3.5 ml-1" />
+                  </Button>
+                </div>
+              </div>
             </div>
 
             <Dialog open={productFormOpen} onOpenChange={setProductFormOpen}>
@@ -4943,7 +5126,7 @@ function HeadOffice() {
                       setAddBatchForm({ productId: "", branchId: "", batchNumber: "", expiryDate: "", initialStock: 0 });
                       router.invalidate();
                     } else {
-                      toast.error(res.error || "Failed to add batch");
+                      toast.error((res as any).error || "Failed to add batch");
                     }
                   } catch (e: any) {
                     toast.error(e.message || "Failed to add batch");

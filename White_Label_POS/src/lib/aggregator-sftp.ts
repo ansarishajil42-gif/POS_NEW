@@ -19,6 +19,7 @@ export interface ConnectionConfig {
   isPaused: boolean;
   consecutiveFailures?: number;
   lastScheduledSyncAt?: string;
+  hasPendingChanges?: boolean;
   isActive: boolean;
 }
 

@@ -706,6 +706,7 @@ export const aggregatorConnections = pgTable("aggregator_connections", {
   isPaused: boolean("is_paused").notNull().default(false), // Pause automation separate from isActive
   consecutiveFailures: integer("consecutive_failures").notNull().default(0),
   lastScheduledSyncAt: timestamp("last_scheduled_sync_at"),
+  hasPendingChanges: boolean("has_pending_changes").notNull().default(false),
   isActive: boolean("is_active").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

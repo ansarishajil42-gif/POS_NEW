@@ -310,17 +310,31 @@ function Aggregators() {
   }
 
   function calculateNextSyncTime(conn: ConnectionConfig): string {
-    if (conn.syncFrequency === "manual") return "Manual Sync Only";
-    if (conn.isPaused) return "Automation Paused";
     if (!conn.isActive) return "Connection Inactive";
+    if (conn.isPaused) return "Automation Paused";
 
-    const lastTime = conn.lastScheduledSyncAt ? new Date(conn.lastScheduledSyncAt).getTime() : Date.now();
-    let addMs = 15 * 60 * 1000;
-    if (conn.syncFrequency === "hourly") addMs = 60 * 60 * 1000;
-    if (conn.syncFrequency === "daily") addMs = 24 * 60 * 60 * 1000;
+    const lastTime = conn.lastScheduledSyncAt ? new Date(conn.lastScheduledSyncAt).getTime() : 0;
+    const now = Date.now();
+    const rateLimitMs = 5 * 60 * 1000;
 
-    const nextDate = new Date(lastTime + addMs);
-    return nextDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (conn.hasPendingChanges) {
+      if (now - lastTime >= rateLimitMs) {
+        return "Sync Due (Next Interval)";
+      }
+      const eligibleDate = new Date(lastTime + rateLimitMs);
+      return `Queued: ${eligibleDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+
+    if (conn.syncFrequency === "hourly") {
+      const nextDate = new Date((lastTime || now) + 60 * 60 * 1000);
+      return nextDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    if (conn.syncFrequency === "daily") {
+      const nextDate = new Date((lastTime || now) + 24 * 60 * 60 * 1000);
+      return nextDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    return "Up to date (Auto on sale)";
   }
 
   return (
@@ -387,9 +401,9 @@ function Aggregators() {
             <div className="flex items-start gap-3">
               <Clock className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
               <div className="text-xs">
-                <p className="font-bold">Background Automation & Multi-Branch Management Active</p>
+                <p className="font-bold">Real-time Background Automation Active</p>
                 <p className="mt-0.5 text-blue-800/90 dark:text-blue-300">
-                  Scheduled syncs enforce a <strong>5-minute minimum rate limit</strong> for assortment files. Automation can be paused/resumed independently without changing connection status. 3 consecutive failures will auto-deactivate connection for protection.
+                  Stock updates automatically sync after till sales with a <strong>5-minute minimum rate limit</strong> per Talabat guidelines. Automation can be paused/resumed independently. 3 consecutive failures will auto-deactivate connection for protection.
                 </p>
               </div>
             </div>

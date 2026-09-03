@@ -43,17 +43,31 @@ async function getPosContext() {
   };
 }
 
-export const getPosCatalogServerFn = createServerFn({ method: "GET" }).handler(async () => {
-  const { tenantId, branchId } = await getPosContext();
+export const getPosCatalogServerFn = createServerFn({ method: "GET" })
+  .validator((d?: { search?: string; page?: number; pageSize?: number }) => d)
+  .handler(async ({ data }) => {
+    const { tenantId, branchId } = await getPosContext();
 
-  const [catalog, dbBarcodes, dbVariants, dbConversions] = await Promise.all([
-    db
+    const page = Math.max(1, Number(data?.page) || 1);
+    const pageSize = Math.max(1, Math.min(200, Number(data?.pageSize) || 60));
+    const offset = (page - 1) * pageSize;
+
+    let prodWhere = eq(products.tenantId, tenantId);
+    if (data?.search && data.search.trim()) {
+      const q = `%${data.search.trim()}%`;
+      prodWhere = and(
+        eq(products.tenantId, tenantId),
+        or(ilike(products.name, q), ilike(products.barcode, q), ilike(products.sku, q)),
+      )!;
+    }
+
+    const catalog = await db
       .select({
         id: products.id,
         name: products.name,
         category: products.category,
         barcode: products.barcode,
-        sku: products.barcode,
+        sku: products.sku,
         unit: products.unit,
         basePrice: products.salePrice,
         stock: stockLevels.stock,
@@ -64,49 +78,170 @@ export const getPosCatalogServerFn = createServerFn({ method: "GET" }).handler(a
         stockLevels,
         and(eq(stockLevels.productId, products.id), eq(stockLevels.branchId, branchId)),
       )
-      .where(eq(products.tenantId, tenantId)),
-    db.select().from(productBarcodes),
-    db.select().from(productVariants),
-    db.select().from(unitConversions),
-  ]);
+      .where(prodWhere)
+      .limit(pageSize)
+      .offset(offset);
 
-  const catalogWithDetails = catalog.map((item) => {
-    const alternateBarcodes = dbBarcodes
-      .filter((b) => b.productId === item.id)
-      .map((b) => b.barcode);
-    const variants = dbVariants
-      .filter((v) => v.productId === item.id)
-      .map((v) => ({
+    const productIds = catalog.map((item) => item.id);
+
+    const [dbBarcodes, dbVariants, dbConversions, dbPromotions] = await Promise.all([
+      productIds.length > 0
+        ? db.select().from(productBarcodes).where(inArray(productBarcodes.productId, productIds))
+        : [],
+      productIds.length > 0
+        ? db.select().from(productVariants).where(inArray(productVariants.productId, productIds))
+        : [],
+      productIds.length > 0
+        ? db.select().from(unitConversions).where(inArray(unitConversions.productId, productIds))
+        : [],
+      db.query.promotions.findMany({
+        where: eq(promotions.tenantId, tenantId),
+      }),
+    ]);
+
+    // O(N+M) Map Lookups
+    const barcodesMap = new Map<string, string[]>();
+    for (const b of dbBarcodes) {
+      const arr = barcodesMap.get(b.productId) || [];
+      arr.push(b.barcode);
+      barcodesMap.set(b.productId, arr);
+    }
+
+    const variantsMap = new Map<string, any[]>();
+    for (const v of dbVariants) {
+      const arr = variantsMap.get(v.productId) || [];
+      arr.push({
         variantName: v.variantName,
         variantValue: v.variantValue,
         sku: v.sku,
         priceAdjustment: v.priceAdjustment,
-      }));
-    const conversions = dbConversions
-      .filter((c) => c.productId === item.id)
-      .map((c) => ({
+      });
+      variantsMap.set(v.productId, arr);
+    }
+
+    const conversionsMap = new Map<string, any[]>();
+    for (const c of dbConversions) {
+      const arr = conversionsMap.get(c.productId) || [];
+      arr.push({
         fromUnit: c.fromUnit,
         toUnit: c.toUnit,
         conversionFactor: c.conversionFactor,
-      }));
+      });
+      conversionsMap.set(c.productId, arr);
+    }
+
+    const catalogWithDetails = catalog.map((item) => ({
+      ...item,
+      alternateBarcodes: barcodesMap.get(item.id) || [],
+      variants: variantsMap.get(item.id) || [],
+      conversions: conversionsMap.get(item.id) || [],
+    }));
 
     return {
-      ...item,
-      alternateBarcodes,
-      variants,
-      conversions,
+      catalog: catalogWithDetails,
+      promotions: dbPromotions,
+      page,
+      pageSize,
     };
   });
 
-  const dbPromotions = await db.query.promotions.findMany({
-    where: eq(promotions.tenantId, tenantId),
-  });
+export const searchPosProductByBarcodeFn = createServerFn({ method: "POST" })
+  .validator((d: { query: string }) => d)
+  .handler(async ({ data }) => {
+    const { tenantId, branchId } = await getPosContext();
+    const q = data.query ? data.query.trim() : "";
+    if (!q) return { success: false, error: "Empty query" };
 
-  return {
-    catalog: JSON.parse(JSON.stringify(catalogWithDetails)),
-    promotions: JSON.parse(JSON.stringify(dbPromotions)),
-  };
-});
+    // Search by primary barcode, sku, exact alternate barcode, or partial name
+    const [matchingProducts] = await Promise.all([
+      db
+        .select({
+          id: products.id,
+          name: products.name,
+          category: products.category,
+          barcode: products.barcode,
+          sku: products.sku,
+          unit: products.unit,
+          basePrice: products.salePrice,
+          stock: stockLevels.stock,
+          priceOverride: stockLevels.priceOverride,
+        })
+        .from(products)
+        .innerJoin(
+          stockLevels,
+          and(eq(stockLevels.productId, products.id), eq(stockLevels.branchId, branchId)),
+        )
+        .where(
+          and(
+            eq(products.tenantId, tenantId),
+            or(
+              eq(products.barcode, q),
+              eq(products.sku, q),
+              ilike(products.name, `%${q}%`),
+              inArray(
+                products.id,
+                db
+                  .select({ productId: productBarcodes.productId })
+                  .from(productBarcodes)
+                  .where(eq(productBarcodes.barcode, q)),
+              ),
+            ),
+          ),
+        )
+        .limit(20),
+    ]);
+
+    if (!matchingProducts || matchingProducts.length === 0) {
+      return { success: false, products: [] };
+    }
+
+    const productIds = matchingProducts.map((p) => p.id);
+
+    const [dbBarcodes, dbVariants, dbConversions] = await Promise.all([
+      db.select().from(productBarcodes).where(inArray(productBarcodes.productId, productIds)),
+      db.select().from(productVariants).where(inArray(productVariants.productId, productIds)),
+      db.select().from(unitConversions).where(inArray(unitConversions.productId, productIds)),
+    ]);
+
+    const barcodesMap = new Map<string, string[]>();
+    for (const b of dbBarcodes) {
+      const arr = barcodesMap.get(b.productId) || [];
+      arr.push(b.barcode);
+      barcodesMap.set(b.productId, arr);
+    }
+
+    const variantsMap = new Map<string, any[]>();
+    for (const v of dbVariants) {
+      const arr = variantsMap.get(v.productId) || [];
+      arr.push({
+        variantName: v.variantName,
+        variantValue: v.variantValue,
+        sku: v.sku,
+        priceAdjustment: v.priceAdjustment,
+      });
+      variantsMap.set(v.productId, arr);
+    }
+
+    const conversionsMap = new Map<string, any[]>();
+    for (const c of dbConversions) {
+      const arr = conversionsMap.get(c.productId) || [];
+      arr.push({
+        fromUnit: c.fromUnit,
+        toUnit: c.toUnit,
+        conversionFactor: c.conversionFactor,
+      });
+      conversionsMap.set(c.productId, arr);
+    }
+
+    const result = matchingProducts.map((p) => ({
+      ...p,
+      alternateBarcodes: barcodesMap.get(p.id) || [],
+      variants: variantsMap.get(p.id) || [],
+      conversions: conversionsMap.get(p.id) || [],
+    }));
+
+    return { success: true, products: result };
+  });
 
 export const openShiftServerFn = createServerFn({ method: "POST" })
   .validator((d: { openingFloat: number; tillId?: string }) => d)
@@ -682,6 +817,14 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
           throw new Error(`Insufficient non-batch stock for ${product.name}`);
         }
       }
+
+      // Mark the branch's active Talabat aggregator connection as having pending changes
+      await tx.execute(sql`
+        UPDATE aggregator_connections
+        SET has_pending_changes = true, updated_at = NOW()
+        WHERE branch_id = ${branchId}::uuid
+          AND is_active = true;
+      `);
     });
 
     return { success: true, orderId };

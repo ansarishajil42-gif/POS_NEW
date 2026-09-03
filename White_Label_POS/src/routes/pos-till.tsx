@@ -42,7 +42,8 @@ import {
   checkoutServerFn,
   getBranchTillsServerFn,
   generateShiftReportFn,
-  searchPosCustomersFn
+  searchPosCustomersFn,
+  searchPosProductByBarcodeFn,
 } from "@/lib/pos-server";
 import { toast } from "sonner";
 
@@ -634,17 +635,36 @@ function PosTill() {
                     placeholder="Scan barcode or search item…"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    onKeyDown={(e) => {
+                    onKeyDown={async (e) => {
                       if (e.key === "Enter") {
+                        const q = search.trim();
+                        if (!q) return;
                         const match = catalog.find(
                           (p: any) =>
-                            p.barcode === search ||
-                            (p.alternateBarcodes || []).includes(search)
+                            p.barcode === q ||
+                            p.sku === q ||
+                            (p.alternateBarcodes || []).includes(q)
                         );
                         if (match) {
                           add(match);
                           setSearch("");
                           toast.success(`${match.name} added to cart`);
+                        } else {
+                          try {
+                            const res = await searchPosProductByBarcodeFn({ data: { query: q } });
+                            if (res.success && res.products && res.products.length > 0) {
+                              const product = res.products[0];
+                              if (product) {
+                                add(product);
+                                setSearch("");
+                                toast.success(`${product.name} added to cart`);
+                              }
+                            } else {
+                              toast.error(`Item not found for "${q}"`);
+                            }
+                          } catch (err: any) {
+                            toast.error(err.message || "Failed to search product");
+                          }
                         }
                       }
                     }}

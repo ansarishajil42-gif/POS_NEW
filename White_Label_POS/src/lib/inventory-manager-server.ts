@@ -44,8 +44,14 @@ async function getInventoryManagerContext() {
   };
 }
 
-export const getInventoryDataServerFn = createServerFn({ method: "GET" }).handler(async () => {
+export const getInventoryDataServerFn = createServerFn({ method: "GET" })
+  .validator((d?: { page?: number; pageSize?: number; search?: string; branchId?: string }) => d)
+  .handler(async ({ data }) => {
   const { tenantId, branchScope, role } = await getInventoryManagerContext();
+
+  const page = Math.max(1, Number(data?.page) || 1);
+  const pageSize = Math.max(1, Math.min(200, Number(data?.pageSize) || 50));
+  const offset = (page - 1) * pageSize;
 
   // 1. Get tenant info
   const tenant = await db.query.tenants.findFirst({
@@ -78,33 +84,64 @@ export const getInventoryDataServerFn = createServerFn({ method: "GET" }).handle
     console.warn("Table vendors might not exist yet:", e);
   }
 
-  // 2. Get stock levels across all branches with product info
+  // 2. Get stock levels across all branches with product info (Paginated)
   let allStockLevels: any[] = [];
+  let totalStockCount = 0;
+  let totalLowStockCount = 0;
+
   try {
-    allStockLevels = await db
-      .select({
-        id: stockLevels.id,
-        stock: stockLevels.stock,
-        reorderLevel: stockLevels.reorderLevel,
-        branchId: stockLevels.branchId,
-        branchName: branches.name,
-        productId: products.id,
-        productName: products.name,
-        sku: products.barcode, // use barcode as sku
-        barcode: products.barcode,
-        category: products.category,
-        unit: products.unit,
-      })
-      .from(stockLevels)
-      .innerJoin(products, eq(stockLevels.productId, products.id))
-      .innerJoin(branches, eq(stockLevels.branchId, branches.id))
-      .where(
-        branchScope
-          ? and(eq(products.tenantId, tenantId), inArray(stockLevels.branchId, branchScope))
-          : eq(products.tenantId, tenantId),
+    let stockWhereConditions: any[] = [eq(products.tenantId, tenantId)];
+    if (branchScope) {
+      stockWhereConditions.push(inArray(stockLevels.branchId, branchScope));
+    }
+    if (data?.branchId && data.branchId.trim()) {
+      stockWhereConditions.push(eq(stockLevels.branchId, data.branchId.trim()));
+    }
+    if (data?.search && data.search.trim()) {
+      const q = `%${data.search.trim()}%`;
+      stockWhereConditions.push(
+        or(ilike(products.name, q), ilike(products.barcode, q), ilike(products.sku, q)),
       );
+    }
+
+    const stockWhere = and(...stockWhereConditions)!;
+
+    const [stockRows, [statsRes]] = await Promise.all([
+      db
+        .select({
+          id: stockLevels.id,
+          stock: stockLevels.stock,
+          reorderLevel: stockLevels.reorderLevel,
+          branchId: stockLevels.branchId,
+          branchName: branches.name,
+          productId: products.id,
+          productName: products.name,
+          sku: products.sku,
+          barcode: products.barcode,
+          category: products.category,
+          unit: products.unit,
+        })
+        .from(stockLevels)
+        .innerJoin(products, eq(stockLevels.productId, products.id))
+        .innerJoin(branches, eq(stockLevels.branchId, branches.id))
+        .where(stockWhere)
+        .limit(pageSize)
+        .offset(offset),
+      db
+        .select({
+          totalItems: sql<number>`count(*)::int`,
+          lowStockCount: sql<number>`count(*) filter (where ${stockLevels.stock} <= ${stockLevels.reorderLevel})::int`,
+        })
+        .from(stockLevels)
+        .innerJoin(products, eq(stockLevels.productId, products.id))
+        .where(stockWhere),
+    ]);
+
+    allStockLevels = stockRows;
+    totalStockCount = Number(statsRes?.totalItems || 0);
+    totalLowStockCount = Number(statsRes?.lowStockCount || 0);
   } catch (e) {
-    console.warn("Table stockLevels might not exist yet:", e);
+    console.warn("Table stockLevels query error:", e);
   }
 
   // 3. Get batches (FEFO)
@@ -118,7 +155,7 @@ export const getInventoryDataServerFn = createServerFn({ method: "GET" }).handle
         stock: batches.stock,
         productId: products.id,
         productName: products.name,
-        sku: products.barcode,
+        sku: products.sku,
         branchId: batches.branchId,
         branchName: branches.name,
       })
@@ -130,14 +167,11 @@ export const getInventoryDataServerFn = createServerFn({ method: "GET" }).handle
           ? and(eq(products.tenantId, tenantId), inArray(batches.branchId, branchScope))
           : eq(products.tenantId, tenantId),
       )
-      .orderBy(batches.expiryDate);
+      .orderBy(batches.expiryDate)
+      .limit(100);
   } catch (e) {
     console.warn("Table batches might not exist yet:", e);
   }
-
-  // Calculate some global stats
-  const totalItems = allStockLevels.length;
-  const lowStockItems = allStockLevels.filter((s) => s.stock <= s.reorderLevel);
 
   const now = new Date();
   const thirtyDaysFromNow = new Date();
@@ -169,8 +203,20 @@ export const getInventoryDataServerFn = createServerFn({ method: "GET" }).handle
     }
 
     rawTransfers = await db
-      .select()
+      .select({
+        id: stockTransfers.id,
+        tenantId: stockTransfers.tenantId,
+        productId: stockTransfers.productId,
+        sourceBranchId: stockTransfers.sourceBranchId,
+        destinationBranchId: stockTransfers.destinationBranchId,
+        quantity: stockTransfers.quantity,
+        status: stockTransfers.status,
+        createdAt: stockTransfers.createdAt,
+        productName: products.name,
+        sku: products.sku,
+      })
       .from(stockTransfers)
+      .leftJoin(products, eq(stockTransfers.productId, products.id))
       .where(transfersWhere)
       .orderBy(desc(stockTransfers.createdAt))
       .limit(50);
@@ -178,18 +224,13 @@ export const getInventoryDataServerFn = createServerFn({ method: "GET" }).handle
     console.warn("Table stock_transfers might not exist yet:", e);
   }
 
-  // Map names manually to avoid needing drizzle relations definition
   const allTransfers = rawTransfers.map((t) => {
-    const product = allStockLevels.find((s) => s.productId === t.productId) || {
-      productName: "Unknown",
-      sku: "",
-    };
     const source = allTenantBranches.find((b) => b.id === t.sourceBranchId);
     const target = allTenantBranches.find((b) => b.id === t.destinationBranchId);
     return {
       ...t,
-      productName: product.productName,
-      sku: product.sku,
+      productName: t.productName || "Unknown",
+      sku: t.sku || "",
       sourceBranchName: source?.name || "Unknown",
       destinationBranchName: target?.name || "Unknown",
     };
@@ -206,14 +247,17 @@ export const getInventoryDataServerFn = createServerFn({ method: "GET" }).handle
     batches: allBatches,
     transfers: allTransfers,
     allowPoDraft: false, // Default to false for now until db is migrated
+    page,
+    pageSize,
+    totalStockCount,
     stats: {
-      totalSkus: Array.from(new Set(allStockLevels.map((s) => s.productId))).length,
-      lowStockCount: lowStockItems.length,
+      totalSkus: totalStockCount,
+      lowStockCount: totalLowStockCount,
       expiredCount: expiredBatches.length,
       nearExpiryCount: nearExpiryBatches.length,
     },
     alerts: {
-      lowStock: lowStockItems,
+      lowStock: allStockLevels.filter((s) => s.stock <= s.reorderLevel),
       expired: expiredBatches,
       nearExpiry: nearExpiryBatches,
     },
