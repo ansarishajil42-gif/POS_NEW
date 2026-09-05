@@ -113,7 +113,8 @@ export const talabatAdapter: AggregatorAdapter = {
     }
 
     const cleanVendorId = (connection.storeVendorId || connection.vendorId || "vendor_id").trim();
-    const fileName = `assortment_${cleanVendorId}.csv`;
+    const prefix = (connection.filenamePrefix || "assortment").trim();
+    const fileName = `${prefix}_${cleanVendorId}.csv`;
 
     return {
       fileName,

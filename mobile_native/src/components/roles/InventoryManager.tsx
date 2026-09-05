@@ -1,13 +1,15 @@
-import React, { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Alert } from 'react-native';
+import React, { useState, useMemo, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Alert, Platform } from 'react-native';
 import { AppHeader, ScreenBody } from '../Shell';
 import { Card, StatCard } from '../ui/Card';
 import { Badge, statusVariant } from '../ui/Badge';
 import { Button, Sheet, Field } from '../ui/Primitives';
 import { useAuth } from '../../lib/auth';
-import { useInventoryManager, FEFOBatch, StockTransfer, InventoryProduct } from '../../lib/InventoryManagerContext';
+import { useInventoryManager, FEFOBatch, StockTransfer, InventoryProduct, BulkUpdateResult } from '../../lib/InventoryManagerContext';
 import { formatCurrency } from '../../lib/utils';
 import { Toast, type ToastType } from '../ui/Toast';
+import { documentDirectory, writeAsStringAsync, EncodingType } from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import {
   Boxes,
   AlertTriangle,
@@ -17,18 +19,31 @@ import {
   Search,
   Plus,
   Download,
+  Upload,
   Clipboard,
   ShoppingCart,
-  FileText
+  FileText,
+  Filter,
+  CheckCircle,
+  XCircle,
+  FileSpreadsheet
 } from 'lucide-react-native';
 
 export function InventoryHome() {
   const { branch } = useAuth();
-  const { products, transfers, batches, adjustStock, fetchData } = useInventoryManager();
+  const { products, transfers, batches, adjustStock, exportOutOfStock, bulkUpdateStock, fetchData } = useInventoryManager();
 
   // Toast notifications state
   const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
   const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
+
+  // Bulk Excel/CSV Import & Export states
+  const [outOfStockOnly, setOutOfStockOnly] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importSummary, setImportSummary] = useState<BulkUpdateResult | null>(null);
+  const [importSummaryOpen, setImportSummaryOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Stock Adjustment Form State
   const [adjustOpen, setAdjustOpen] = useState(false);
@@ -62,8 +77,169 @@ export function InventoryHome() {
     Alert.alert('Stock Count Started', 'Physical stock count sequence initiated. Scanner terminals synchronized.');
   };
 
-  const handleExportStock = () => {
-    showToast('Branch stock levels sheet has been exported to CSV.', 'success');
+  const handleExportStock = async () => {
+    try {
+      setExporting(true);
+      const activeBranchObj = uniqueBranchRecords.find((b) => b.name === selectedBranch);
+      const branchIdToExport = selectedBranch === 'All' ? undefined : activeBranchObj?.id;
+
+      const res = await exportOutOfStock(branchIdToExport, outOfStockOnly);
+      if (!res || !res.success || !res.rows) {
+        showToast(res?.error || 'Failed to export inventory records', 'error');
+        return;
+      }
+
+      if (res.rows.length === 0) {
+        showToast('No products match export criteria.', 'warn' as any);
+        return;
+      }
+
+      // Build CSV string with proper quoting
+      const headers = ['SKU', 'Product', 'Barcode', 'Unit', 'Category', 'Cost', 'Retail', 'Stock'];
+      const csvRows = [
+        headers.join(','),
+        ...res.rows.map((r: any) => [
+          `"${String(r.SKU || '').replace(/"/g, '""')}"`,
+          `"${String(r.Product || '').replace(/"/g, '""')}"`,
+          `"${String(r.Barcode || '').replace(/"/g, '""')}"`,
+          `"${String(r.Unit || 'pcs').replace(/"/g, '""')}"`,
+          `"${String(r.Category || 'General').replace(/"/g, '""')}"`,
+          r.Cost || 0,
+          r.Retail || 0,
+          r.Stock || 0,
+        ].join(',')),
+      ];
+      const csvContent = csvRows.join('\n');
+      const filename =
+        res.filename ||
+        `stock_update_${selectedBranch.toLowerCase().replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+
+      if (Platform.OS === 'web') {
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        showToast(`Exported ${res.rows.length} products to spreadsheet.`, 'success');
+      } else {
+        const fileUri = `${documentDirectory}${filename}`;
+        await writeAsStringAsync(fileUri, csvContent, { encoding: EncodingType.UTF8 });
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(fileUri, {
+            mimeType: 'text/csv',
+            dialogTitle: 'Export Stock Sheet',
+            UTI: 'public.comma-separated-values-text',
+          });
+        } else {
+          Alert.alert('Export Complete', `File saved as ${filename}`);
+        }
+        showToast(`Exported ${res.rows.length} products to spreadsheet.`, 'success');
+      }
+    } catch (err: any) {
+      console.error('Export error:', err);
+      showToast(err.message || 'Export failed', 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleFileChange = async (e: any) => {
+    const file = e.target?.files?.[0];
+    if (!file) return;
+
+    // Reset input
+    e.target.value = '';
+
+    const activeBranchObj = uniqueBranchRecords.find((b) => b.name === selectedBranch);
+    const targetBranchId = activeBranchObj?.id || (uniqueBranchRecords.length === 1 ? uniqueBranchRecords[0].id : '');
+
+    if (!targetBranchId) {
+      showToast('Please select a specific branch filter above before importing stock.', 'error');
+      return;
+    }
+
+    try {
+      setImporting(true);
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
+
+      if (lines.length < 2) {
+        showToast('The selected file is empty or missing data rows.', 'error');
+        return;
+      }
+
+      // Parse headers
+      const headerCols = lines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map((h: string) =>
+        h.replace(/^"|"$/g, '').trim().toLowerCase()
+      );
+
+      const skuIdx = headerCols.findIndex((h: string) => h === 'sku' || h.includes('sku') || h.includes('code'));
+      const barcodeIdx = headerCols.findIndex((h: string) => h === 'barcode' || h.includes('barcode') || h.includes('upc'));
+      const stockIdx = headerCols.findIndex((h: string) => h === 'stock' || h === 'qty' || h.includes('stock'));
+
+      const rowsToUpdate: Array<{ sku?: string; barcode?: string; stock: number }> = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map((c: string) => c.replace(/^"|"$/g, '').trim());
+        if (!cols || cols.length === 0 || (cols.length === 1 && !cols[0])) continue;
+
+        const sku = skuIdx >= 0 ? cols[skuIdx] : cols[0];
+        const barcode = barcodeIdx >= 0 ? cols[barcodeIdx] : cols[2];
+        const rawStock = stockIdx >= 0 ? cols[stockIdx] : cols[cols.length - 1];
+        const stockNum = Number(rawStock);
+
+        if (!isNaN(stockNum)) {
+          rowsToUpdate.push({
+            sku: sku || undefined,
+            barcode: barcode || undefined,
+            stock: stockNum,
+          });
+        }
+      }
+
+      if (rowsToUpdate.length === 0) {
+        showToast('No valid product stock rows found in file.', 'error');
+        return;
+      }
+
+      const result = await bulkUpdateStock(targetBranchId, rowsToUpdate);
+      setImportSummary(result);
+      setImportSummaryOpen(true);
+      if (result.success) {
+        showToast(`Bulk stock update completed: ${result.totalUpdated} updated.`, 'success');
+      } else {
+        showToast(result.error || 'Bulk update encountered errors.', 'error');
+      }
+    } catch (err: any) {
+      console.error('Import parse error:', err);
+      showToast(err.message || 'Failed to process file import', 'error');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const triggerImportPicker = () => {
+    const activeBranchObj = uniqueBranchRecords.find((b) => b.name === selectedBranch);
+    const targetBranchId = activeBranchObj?.id || (uniqueBranchRecords.length === 1 ? uniqueBranchRecords[0].id : '');
+
+    if (!targetBranchId) {
+      showToast('Please select a specific branch from the filter pills above before importing stock.', 'error');
+      return;
+    }
+
+    if (Platform.OS === 'web' && fileInputRef.current) {
+      fileInputRef.current.click();
+    } else {
+      Alert.alert(
+        'Import Stock File',
+        `Ready to import stock for branch "${selectedBranch}". To import via mobile web, select your CSV/Excel stock update template file.`,
+        [{ text: 'OK' }]
+      );
+    }
   };
 
   const handleAdjustSubmit = async () => {
@@ -126,9 +302,10 @@ export function InventoryHome() {
     return products.filter((p) => {
       const matchesQuery = p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase());
       const matchesBranch = selectedBranch === 'All' || p.branch === selectedBranch;
-      return matchesQuery && matchesBranch;
+      const matchesOutOfStock = outOfStockOnly ? p.stock <= 0 : true;
+      return matchesQuery && matchesBranch && matchesOutOfStock;
     });
-  }, [products, q, selectedBranch]);
+  }, [products, q, selectedBranch, outOfStockOnly]);
 
   return (
     <View style={styles.flex1}>
@@ -177,7 +354,7 @@ export function InventoryHome() {
           />
         </View>
 
-        {/* Branch Filter & Export Buttons */}
+        {/* Branch Filter Tabs */}
         <View style={{ marginBottom: 12 }}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryScrollContainer}>
             {branchesFilter.map((brName) => (
@@ -194,12 +371,55 @@ export function InventoryHome() {
           </ScrollView>
         </View>
 
-        <View style={{ marginBottom: 12 }}>
-          <Button variant="secondary" onClick={handleExportStock}>
-            <Download size={14} color="#475569" style={{ marginRight: 6 }} />
-            Export Inventory Report
-          </Button>
+        {/* Bulk Stock Actions Toolbar */}
+        <View style={{ marginBottom: 12, gap: 8 }}>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              style={[
+                styles.bulkToggleBtn,
+                outOfStockOnly && styles.bulkToggleBtnActive,
+              ]}
+              onPress={() => setOutOfStockOnly(!outOfStockOnly)}
+            >
+              <Filter size={14} color={outOfStockOnly ? '#0f172a' : '#475569'} style={{ marginRight: 6 }} />
+              <Text style={[styles.bulkToggleBtnText, outOfStockOnly && styles.bulkToggleBtnTextActive]}>
+                {outOfStockOnly ? 'Out of Stock Only (Active)' : 'Out of Stock Only'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Button
+              variant="secondary"
+              style={{ flex: 1 }}
+              onClick={handleExportStock}
+              disabled={exporting}
+            >
+              <Download size={14} color="#475569" style={{ marginRight: 6 }} />
+              {exporting ? 'Exporting...' : 'Export Excel / CSV'}
+            </Button>
+            <Button
+              variant="secondary"
+              style={{ flex: 1 }}
+              onClick={triggerImportPicker}
+              disabled={importing}
+            >
+              <Upload size={14} color="#475569" style={{ marginRight: 6 }} />
+              {importing ? 'Importing...' : 'Import Excel / CSV'}
+            </Button>
+          </View>
         </View>
+
+        {/* Hidden Web File Input for Import */}
+        {Platform.OS === 'web' && (
+          <input
+            type="file"
+            ref={fileInputRef as any}
+            onChange={handleFileChange}
+            accept=".csv,.xlsx,.xls,text/csv"
+            style={{ display: 'none' }}
+          />
+        )}
 
         <ScrollView style={styles.flex1} showsVerticalScrollIndicator={false} nestedScrollEnabled>
           <View style={styles.listContainer}>
@@ -229,6 +449,54 @@ export function InventoryHome() {
           </View>
         </ScrollView>
       </ScreenBody>
+
+      {/* Import Summary Modal */}
+      <Sheet
+        open={importSummaryOpen}
+        onClose={() => setImportSummaryOpen(false)}
+        title="Bulk Stock Import Summary"
+        footer={
+          <View style={styles.sheetFooterBtnRow}>
+            <Button variant="primary" style={styles.sheetFooterBtn} onClick={() => setImportSummaryOpen(false)}>
+              Done
+            </Button>
+          </View>
+        }
+      >
+        <View style={styles.modalForm}>
+          {importSummary && (
+            <>
+              <View style={styles.statsGrid}>
+                <View style={styles.halfCol}>
+                  <StatCard label="Total Processed" value={String(importSummary.totalProcessed)} icon={<FileSpreadsheet size={16} color="#0284c7" />} accent="sky" />
+                </View>
+                <View style={styles.halfCol}>
+                  <StatCard label="Successfully Updated" value={String(importSummary.totalUpdated)} icon={<CheckCircle size={16} color="#16a34a" />} accent="brand" />
+                </View>
+                {importSummary.totalSkipped > 0 && (
+                  <View style={{ width: '100%', padding: 4 }}>
+                    <StatCard label="Skipped / Unmatched" value={String(importSummary.totalSkipped)} icon={<XCircle size={16} color="#ef4444" />} accent="amber" />
+                  </View>
+                )}
+              </View>
+
+              {importSummary.skippedDetails && importSummary.skippedDetails.length > 0 && (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={[styles.sectionTitle, { color: '#ef4444' }]}>Skipped Rows Details:</Text>
+                  <ScrollView style={{ maxHeight: 160 }} nestedScrollEnabled>
+                    {importSummary.skippedDetails.map((item, idx) => (
+                      <View key={idx} style={styles.skippedItemRow}>
+                        <Text style={styles.skippedItemSku}>SKU / Barcode: {item.sku}</Text>
+                        <Text style={styles.skippedItemReason}>{item.reason}</Text>
+                      </View>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+            </>
+          )}
+        </View>
+      </Sheet>
 
       {/* Manual Stock Adjust Sheet */}
       <Sheet
@@ -1441,5 +1709,45 @@ const styles = StyleSheet.create({
   },
   sheetFooterBtn: {
     flex: 1,
+  },
+  bulkToggleBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  bulkToggleBtnActive: {
+    backgroundColor: '#39ff14',
+    borderColor: '#39ff14',
+  },
+  bulkToggleBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  bulkToggleBtnTextActive: {
+    color: '#0f172a',
+    fontWeight: 'bold',
+  },
+  skippedItemRow: {
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  skippedItemSku: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#0f172a',
+  },
+  skippedItemReason: {
+    fontSize: 11,
+    color: '#ef4444',
   },
 });

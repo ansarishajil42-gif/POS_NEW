@@ -439,7 +439,7 @@ function VendorPortal() {
                 </div>
               </div>
 
-              <div className="max-h-[250px] overflow-y-auto rounded-xl border border-border">
+              <div className="max-h-[250px] overflow-y-auto overflow-x-auto rounded-xl border border-border">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-surface-2 font-semibold text-muted-foreground border-b border-border">
                     <tr>

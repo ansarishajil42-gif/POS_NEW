@@ -1078,7 +1078,8 @@ function StoreManager() {
                   </div>
 
                   <div className="panel overflow-hidden">
-                    <table className="w-full text-left text-sm">
+                    <div className="overflow-x-auto w-full">
+                      <table className="w-full text-left text-sm">
                       <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
                         <tr>
                           <th className="px-4 py-3 font-medium">Item</th>
@@ -1137,6 +1138,7 @@ function StoreManager() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   </div>
 
                   <Dialog
@@ -1295,7 +1297,8 @@ function StoreManager() {
                         Manage Roster
                       </Button>
                     </div>
-                    <table className="w-full text-left text-sm">
+                    <div className="overflow-x-auto w-full">
+                      <table className="w-full text-left text-sm">
                       <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
                         <tr>
                           <th className="px-4 py-3 font-medium">Cashier</th>
@@ -1411,6 +1414,8 @@ function StoreManager() {
                         })}
                       </tbody>
                     </table>
+                    </div>
+                  </div>
 
                     <Dialog
                       open={rosterModalOpen}
@@ -1597,7 +1602,6 @@ function StoreManager() {
                         </form>
                       </DialogContent>
                     </Dialog>
-                  </div>
 
                   <div className="panel overflow-hidden mt-6">
                     <div className="flex items-center justify-between border-b border-border p-4">
@@ -1622,7 +1626,8 @@ function StoreManager() {
                         </Button>
                       )}
                     </div>
-                    <table className="w-full text-left text-sm">
+                    <div className="overflow-x-auto w-full">
+                      <table className="w-full text-left text-sm">
                       <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
                         <tr>
                           <th className="px-4 py-3 font-medium">Till Name / Number</th>
@@ -1672,6 +1677,7 @@ function StoreManager() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
 
                     {/* Create Till Modal Dialog */}
                     <Dialog
@@ -1792,7 +1798,8 @@ function StoreManager() {
                         </p>
                       </div>
                     </div>
-                    <table className="w-full text-left text-sm">
+                    <div className="overflow-x-auto w-full">
+                      <table className="w-full text-left text-sm">
                       <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
                         <tr>
                           <th className="px-4 py-3 font-medium">Cashier Name</th>
@@ -1844,6 +1851,7 @@ function StoreManager() {
                           ))}
                       </tbody>
                     </table>
+                    </div>
                   </div>
 
                   {/* Manager Reset Cashier PIN Modal Dialog */}

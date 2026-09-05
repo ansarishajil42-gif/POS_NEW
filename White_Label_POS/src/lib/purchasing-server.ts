@@ -563,12 +563,12 @@ export const updateGrnServerFn = createServerFn({ method: "POST" })
       for (const item of existingGrn.items) {
         if (item.receivedQty > 0) {
           const existingStock = await tx.select().from(stockLevels).where(
-            and(eq(stockLevels.tenantId, tenantId), eq(stockLevels.branchId, existingGrn.branchId), eq(stockLevels.productId, item.productId))
+            and(eq(stockLevels.branchId, existingGrn.branchId), eq(stockLevels.productId, item.productId))
           ).limit(1);
 
           if (existingStock.length > 0) {
             await tx.update(stockLevels).set({
-              quantity: sql`${stockLevels.quantity} - ${item.receivedQty}`
+              stock: sql`${stockLevels.stock} - ${item.receivedQty}`
             }).where(eq(stockLevels.id, existingStock[0].id));
           }
         }
@@ -598,20 +598,18 @@ export const updateGrnServerFn = createServerFn({ method: "POST" })
       for (const item of data.items) {
         if (item.receivedQty > 0) {
           const existingStock = await tx.select().from(stockLevels).where(
-            and(eq(stockLevels.tenantId, tenantId), eq(stockLevels.branchId, existingGrn.branchId), eq(stockLevels.productId, item.productId))
+            and(eq(stockLevels.branchId, existingGrn.branchId), eq(stockLevels.productId, item.productId))
           ).limit(1);
 
           if (existingStock.length > 0) {
             await tx.update(stockLevels).set({
-              quantity: sql`${stockLevels.quantity} + ${item.receivedQty}`,
-              updatedAt: sql`NOW()`
+              stock: sql`${stockLevels.stock} + ${item.receivedQty}`
             }).where(eq(stockLevels.id, existingStock[0].id));
           } else {
             await tx.insert(stockLevels).values({
-              tenantId,
               branchId: existingGrn.branchId,
               productId: item.productId,
-              quantity: item.receivedQty
+              stock: item.receivedQty
             });
           }
           

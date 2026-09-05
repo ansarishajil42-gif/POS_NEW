@@ -15,6 +15,7 @@ import {
   vendors,
 } from "../server/db/schema";
 import * as schema from "../server/db/schema";
+import * as XLSX from "xlsx";
 
 // Middleware
 async function getInventoryManagerContext() {
@@ -697,5 +698,267 @@ export const deleteStockTransferServerFn = createServerFn({ method: "POST" })
     });
 
     return { success: true };
+  });
+
+export const exportOutOfStockExcelServerFn = createServerFn({ method: "POST" })
+  .validator((d?: { branchId?: string; outOfStockOnly?: boolean }) => d)
+  .handler(async ({ data }) => {
+    try {
+      const { tenantId, branchScope } = await getInventoryManagerContext();
+      let branchId = data?.branchId;
+      if (branchScope && branchScope.length > 0) {
+        branchId = branchScope[0];
+      }
+      const outOfStockOnly = data?.outOfStockOnly ?? true;
+
+      let rows: any[] = [];
+
+      if (branchId && branchId !== "all") {
+        if (outOfStockOnly) {
+          const res: any = await db.execute(sql`
+            SELECT 
+              p.sku, 
+              p.name as "Product", 
+              p.barcode, 
+              p.unit, 
+              p.category, 
+              p.cost_price as "Cost", 
+              p.sale_price as "Retail", 
+              COALESCE(sl.stock, 0) as "Stock"
+            FROM products p
+            LEFT JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+            WHERE p.tenant_id = ${tenantId}::uuid
+              AND (sl.stock IS NULL OR sl.stock <= 0)
+            ORDER BY p.name ASC;
+          `);
+          rows = Array.isArray(res) ? res : res?.rows || [];
+        } else {
+          const res: any = await db.execute(sql`
+            SELECT 
+              p.sku, 
+              p.name as "Product", 
+              p.barcode, 
+              p.unit, 
+              p.category, 
+              p.cost_price as "Cost", 
+              p.sale_price as "Retail", 
+              COALESCE(sl.stock, 0) as "Stock"
+            FROM products p
+            LEFT JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+            WHERE p.tenant_id = ${tenantId}::uuid
+            ORDER BY p.name ASC;
+          `);
+          rows = Array.isArray(res) ? res : res?.rows || [];
+        }
+      } else {
+        if (outOfStockOnly) {
+          const res: any = await db.execute(sql`
+            SELECT 
+              p.sku, 
+              p.name as "Product", 
+              p.barcode, 
+              p.unit, 
+              p.category, 
+              p.cost_price as "Cost", 
+              p.sale_price as "Retail", 
+              COALESCE(SUM(sl.stock), 0) as "Stock"
+            FROM products p
+            LEFT JOIN stock_levels sl ON p.id = sl.product_id
+            WHERE p.tenant_id = ${tenantId}::uuid
+            GROUP BY p.id, p.sku, p.name, p.barcode, p.unit, p.category, p.cost_price, p.sale_price
+            HAVING COALESCE(SUM(sl.stock), 0) <= 0
+            ORDER BY p.name ASC;
+          `);
+          rows = Array.isArray(res) ? res : res?.rows || [];
+        } else {
+          const res: any = await db.execute(sql`
+            SELECT 
+              p.sku, 
+              p.name as "Product", 
+              p.barcode, 
+              p.unit, 
+              p.category, 
+              p.cost_price as "Cost", 
+              p.sale_price as "Retail", 
+              COALESCE(SUM(sl.stock), 0) as "Stock"
+            FROM products p
+            LEFT JOIN stock_levels sl ON p.id = sl.product_id
+            WHERE p.tenant_id = ${tenantId}::uuid
+            GROUP BY p.id, p.sku, p.name, p.barcode, p.unit, p.category, p.cost_price, p.sale_price
+            ORDER BY p.name ASC;
+          `);
+          rows = Array.isArray(res) ? res : res?.rows || [];
+        }
+      }
+
+      const exportData = rows.map((r: any) => ({
+        SKU: r.sku || "",
+        Product: r.Product || r.name || "",
+        Barcode: r.barcode || "",
+        Unit: r.unit || "pcs",
+        Category: r.category || "General",
+        Cost: Number(r.Cost ?? r.cost_price) || 0,
+        Retail: Number(r.Retail ?? r.sale_price) || 0,
+        Stock: 0,
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Stock Update");
+
+      const base64 = XLSX.write(workbook, { type: "base64", bookType: "xlsx" });
+      const branchLabel = branchId && branchId !== "all" ? "branch" : "all_branches";
+      const filename = `stock_update_${branchLabel}_${new Date().toISOString().split("T")[0]}.xlsx`;
+
+      return {
+        success: true,
+        base64,
+        filename,
+        count: exportData.length,
+      };
+    } catch (err: any) {
+      console.error("exportOutOfStockExcelServerFn error:", err);
+      return { success: false, error: err.message || "Failed to export Excel" };
+    }
+  });
+
+export const bulkUpdateStockFromExcelServerFn = createServerFn({ method: "POST" })
+  .validator(
+    (d: {
+      branchId: string;
+      rows: Array<{
+        sku?: string;
+        barcode?: string;
+        stock: number;
+      }>;
+    }) => d,
+  )
+  .handler(async ({ data }) => {
+    try {
+      const { tenantId, branchScope } = await getInventoryManagerContext();
+      let { branchId, rows } = data;
+
+      if (branchScope && branchScope.length > 0) {
+        branchId = branchScope[0];
+      }
+
+      if (!branchId || branchId === "all") {
+        throw new Error("Please select a specific branch for bulk stock update.");
+      }
+
+      const [branch] = await db
+        .select({ id: branches.id, name: branches.name })
+        .from(branches)
+        .where(and(eq(branches.id, branchId), eq(branches.tenantId, tenantId)));
+      if (!branch) throw new Error("Unauthorized or invalid branch selected.");
+
+      if (!rows || rows.length === 0) {
+        return {
+          success: true,
+          totalProcessed: 0,
+          totalUpdated: 0,
+          totalSkipped: 0,
+          skippedDetails: [],
+        };
+      }
+
+      const tenantProducts = await db
+        .select({
+          id: products.id,
+          sku: products.sku,
+          barcode: products.barcode,
+        })
+        .from(products)
+        .where(eq(products.tenantId, tenantId));
+
+      const skuMap = new Map<string, string>();
+      const barcodeMap = new Map<string, string>();
+      for (const p of tenantProducts) {
+        if (p.sku) skuMap.set(String(p.sku).trim().toLowerCase(), p.id);
+        if (p.barcode) barcodeMap.set(String(p.barcode).trim().toLowerCase(), p.id);
+      }
+
+      let totalUpdated = 0;
+      const skippedDetails: Array<{ sku: string; reason: string }> = [];
+
+      const batchSize = 500;
+      for (let i = 0; i < rows.length; i += batchSize) {
+        const batch = rows.slice(i, i + batchSize);
+
+        await db.transaction(async (tx) => {
+          for (const row of batch) {
+            const rowSku = row.sku ? String(row.sku).trim() : "";
+            const rowBarcode = row.barcode ? String(row.barcode).trim() : "";
+            const newStock = Number(row.stock);
+
+            if (isNaN(newStock)) {
+              skippedDetails.push({
+                sku: rowSku || rowBarcode || `Row ${i + 1}`,
+                reason: "Invalid stock value (not a number)",
+              });
+              continue;
+            }
+
+            let productId: string | undefined = undefined;
+            if (rowSku) {
+              productId = skuMap.get(rowSku.toLowerCase());
+            }
+            if (!productId && rowBarcode) {
+              productId = barcodeMap.get(rowBarcode.toLowerCase());
+            }
+
+            if (!productId) {
+              skippedDetails.push({
+                sku: rowSku || rowBarcode || `Row ${i + 1}`,
+                reason: "Product not found in tenant catalog",
+              });
+              continue;
+            }
+
+            const existingRows = await tx
+              .select({ id: stockLevels.id })
+              .from(stockLevels)
+              .where(
+                and(
+                  eq(stockLevels.productId, productId),
+                  eq(stockLevels.branchId, branchId),
+                ),
+              )
+              .limit(1);
+            const existing = existingRows[0];
+
+            if (existing) {
+              await tx
+                .update(stockLevels)
+                .set({ stock: newStock })
+                .where(eq(stockLevels.id, existing.id));
+            } else {
+              await tx.insert(stockLevels).values({
+                productId: productId,
+                branchId: branchId,
+                stock: newStock,
+                reorderLevel: 10,
+              });
+            }
+
+            totalUpdated++;
+          }
+        });
+      }
+
+      return {
+        success: true,
+        totalProcessed: rows.length,
+        totalUpdated,
+        totalSkipped: skippedDetails.length,
+        skippedDetails,
+      };
+    } catch (err: any) {
+      console.error("bulkUpdateStockFromExcelServerFn error:", err);
+      return {
+        success: false,
+        error: err.message || "Failed to process bulk stock update",
+      };
+    }
   });
 

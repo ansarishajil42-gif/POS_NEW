@@ -61,6 +61,26 @@ export interface VendorInfo {
   name: string;
 }
 
+export interface OutOfStockExportRow {
+  SKU: string;
+  Product: string;
+  Barcode: string;
+  Unit: string;
+  Category: string;
+  Cost: number;
+  Retail: number;
+  Stock: number;
+}
+
+export interface BulkUpdateResult {
+  success: boolean;
+  totalProcessed: number;
+  totalUpdated: number;
+  totalSkipped: number;
+  skippedDetails: Array<{ sku: string; reason: string }>;
+  error?: string;
+}
+
 interface InventoryManagerContextProps {
   products: InventoryProduct[];
   transfers: StockTransfer[];
@@ -77,6 +97,8 @@ interface InventoryManagerContextProps {
   adjustStock: (productId: string, branchId: string, batchId: string | null, quantityChange: number, reason: string) => Promise<void>;
   editTransfer: (id: string, quantity: number) => Promise<void>;
   deleteTransfer: (id: string) => Promise<void>;
+  exportOutOfStock: (branchId?: string, outOfStockOnly?: boolean) => Promise<{ success: boolean; rows: OutOfStockExportRow[]; count: number; filename: string }>;
+  bulkUpdateStock: (branchId: string, rows: Array<{ sku?: string; barcode?: string; stock: number }>) => Promise<BulkUpdateResult>;
 }
 
 const InventoryManagerContext = createContext<InventoryManagerContextProps | null>(null);
@@ -211,6 +233,28 @@ export function InventoryManagerProvider({ children }: { children: ReactNode }) 
     await fetchData();
   };
 
+  const exportOutOfStock = async (branchId?: string, outOfStockOnly = true) => {
+    const params = new URLSearchParams();
+    if (branchId && branchId !== 'All' && branchId !== 'all') {
+      params.append('branchId', branchId);
+    }
+    params.append('outOfStockOnly', String(outOfStockOnly));
+    const res = (await apiClient.get(`/inventory/export-out-of-stock?${params.toString()}`)) as any;
+    return res;
+  };
+
+  const bulkUpdateStock = async (
+    branchId: string,
+    rows: Array<{ sku?: string; barcode?: string; stock: number }>
+  ) => {
+    const res = (await apiClient.post('/inventory/bulk-update-stock', {
+      branchId,
+      rows,
+    })) as BulkUpdateResult;
+    await fetchData();
+    return res;
+  };
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -232,6 +276,8 @@ export function InventoryManagerProvider({ children }: { children: ReactNode }) 
       adjustStock,
       editTransfer,
       deleteTransfer,
+      exportOutOfStock,
+      bulkUpdateStock,
     }),
     [products, transfers, batches, ledger, branches, allTenantBranches, vendors, loading]
   );

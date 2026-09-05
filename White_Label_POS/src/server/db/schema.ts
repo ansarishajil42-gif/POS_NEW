@@ -113,6 +113,7 @@ export const products = pgTable("products", {
   isBatchTracked: boolean("is_batch_tracked").default(true),
   isExpiryTracked: boolean("is_expiry_tracked").default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => {
   return {
     skuIdx: uniqueIndex("products_tenant_sku_idx").on(table.tenantId, table.sku),
@@ -161,6 +162,8 @@ export const stockLevels = pgTable("stock_levels", {
   stock: integer("stock").notNull().default(0),
   reorderLevel: integer("reorder_level").notNull().default(10),
   priceOverride: decimal("price_override", { precision: 10, scale: 2 }), // Branch-specific pricing
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
   branchIdx: index("stock_levels_branch_idx").on(table.branchId),
 }));

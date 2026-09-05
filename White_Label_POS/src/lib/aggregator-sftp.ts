@@ -14,6 +14,7 @@ export interface ConnectionConfig {
   remoteDirectory: string;
   vendorId: string;
   storeVendorId?: string;
+  filenamePrefix?: string;
   priceFormat: "price_discounted" | "original_discounted" | "original_price";
   syncFrequency: "manual" | "15min" | "hourly" | "daily";
   isPaused: boolean;
@@ -81,23 +82,39 @@ export const deleteAggregatorConnectionServerFn = createServerFn({ method: "POST
     }
   });
 
-export const previewAggregatorCsvServerFn = createServerFn({ method: "POST" })
-  .validator((data: { connectionId: string }) => data)
+export const getSyncSummaryServerFn = createServerFn({ method: "POST" })
+  .validator((data: { connectionId: string; windowStart?: string | null }) => data)
   .handler(async ({ data }) => {
     try {
-      const { generateDirectCsvPreviewFromDb } = await import("./aggregator-sftp.server");
-      return await generateDirectCsvPreviewFromDb(data.connectionId);
+      const { getSyncSummaryFromDb } = await import("./aggregator-sftp.server");
+      return await getSyncSummaryFromDb(data.connectionId, data.windowStart);
     } catch (err: any) {
+      return { success: false, error: "Unable to get sync summary: " + err.message };
+    }
+  });
+
+export const previewAggregatorCsvServerFn = createServerFn({ method: "POST" })
+  .validator((data: { connectionId: string; windowStart?: string | null }) => data)
+  .handler(async ({ data }) => {
+    const t0 = Date.now();
+    console.log(`[TIMING SERVER_FN] previewAggregatorCsvServerFn received call for conn ${data.connectionId} at ${new Date(t0).toISOString()}`);
+    try {
+      const { generateDirectCsvPreviewFromDb } = await import("./aggregator-sftp.server");
+      const res = await generateDirectCsvPreviewFromDb(data.connectionId, data.windowStart);
+      console.log(`[TIMING SERVER_FN] previewAggregatorCsvServerFn completed in ${Date.now() - t0}ms`);
+      return res;
+    } catch (err: any) {
+      console.error(`[TIMING SERVER_FN] previewAggregatorCsvServerFn ERRORED in ${Date.now() - t0}ms:`, err);
       return { success: false, error: "Unable to generate CSV preview: " + err.message };
     }
   });
 
 export const triggerAggregatorSyncServerFn = createServerFn({ method: "POST" })
-  .validator((data: { connectionId: string }) => data)
+  .validator((data: { connectionId: string; preGeneratedPayload?: { fileName: string; csvContent: string; recordCount?: number }; windowStart?: string | null }) => data)
   .handler(async ({ data }) => {
     try {
       const { triggerAggregatorSyncFromDb } = await import("./aggregator-sftp.server");
-      return await triggerAggregatorSyncFromDb(data.connectionId);
+      return await triggerAggregatorSyncFromDb(data.connectionId, data.preGeneratedPayload, data.windowStart);
     } catch (e: any) {
       return { success: false, error: "Error triggering SFTP sync: " + e.message };
     }

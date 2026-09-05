@@ -73,12 +73,14 @@ export const products = pgTable("products", {
   tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   barcode: text("barcode"),
+  sku: text("sku"),
   category: text("category").notNull(),
   unit: text("unit").notNull(),
   costPrice: decimal("cost_price", { precision: 10, scale: 2 }).notNull(),
   salePrice: decimal("sale_price", { precision: 10, scale: 2 }).notNull(),
   isBatchTracked: boolean("is_batch_tracked").default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
   tenantIdx: index("products_tenant_idx").on(table.tenantId),
   barcodeIdx: index("products_barcode_idx").on(table.barcode),
@@ -122,6 +124,8 @@ export const stockLevels = pgTable("stock_levels", {
   stock: integer("stock").notNull().default(0),
   reorderLevel: integer("reorder_level").notNull().default(10),
   priceOverride: decimal("price_override", { precision: 10, scale: 2 }), // Branch-specific pricing
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => ({
   prodBranchIdx: index("stock_levels_prod_branch_idx").on(table.productId, table.branchId),
 }));
@@ -186,7 +190,7 @@ export const purchaseOrders = pgTable("purchase_orders", {
 export const purchaseOrderItems = pgTable("purchase_order_items", {
   id: uuid("id").primaryKey().defaultRandom(),
   purchaseOrderId: uuid("purchase_order_id").notNull().references(() => purchaseOrders.id, { onDelete: "cascade" }),
-  productId: uuid("product_id").notNull().references(() => products.id),
+  productId: uuid("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
   qty: integer("qty").notNull(),
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
 });
@@ -210,7 +214,7 @@ export const grn = pgTable("grn", {
 export const grnItems = pgTable("grn_items", {
   id: uuid("id").primaryKey().defaultRandom(),
   grnId: uuid("grn_id").notNull().references(() => grn.id, { onDelete: "cascade" }),
-  productId: uuid("product_id").notNull().references(() => products.id),
+  productId: uuid("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
   orderedQty: integer("ordered_qty").notNull(),
   receivedQty: integer("received_qty").notNull(),
   variance: integer("variance").notNull().default(0),
@@ -314,7 +318,7 @@ export const orderPayments = pgTable("order_payments", {
 export const orderItems = pgTable("order_items", {
   id: uuid("id").primaryKey().defaultRandom(),
   orderId: uuid("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
-  productId: uuid("product_id").notNull().references(() => products.id),
+  productId: uuid("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
   qty: integer("qty").notNull(),
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
 });
@@ -674,7 +678,7 @@ export const inventoryLedger = pgTable("inventory_ledger", {
     .references(() => branches.id, { onDelete: "cascade" }),
   productId: uuid("product_id")
     .notNull()
-    .references(() => products.id),
+    .references(() => products.id, { onDelete: "cascade" }),
   batchId: uuid("batch_id").references(() => batches.id),
   transactionType: text("transaction_type").notNull(), // 'Sale', 'GRN', 'Adjustment', 'Transfer'
   previousQuantity: integer("previous_quantity").notNull(),
@@ -701,6 +705,8 @@ export const aggregatorConnections = pgTable("aggregator_connections", {
   sftpPassword: text("sftp_password"), // Encrypted AES-256-GCM
   remoteDirectory: text("remote_directory").default("/Assortment"),
   vendorId: text("vendor_id"),
+  storeVendorId: text("store_vendor_id"),
+  filenamePrefix: text("filename_prefix"),
   priceFormat: text("price_format").notNull().default("price_discounted"), // price_discounted, original_discounted, original_price
   syncFrequency: text("sync_frequency").notNull().default("manual"), // manual, 15min, hourly, daily
   isPaused: boolean("is_paused").notNull().default(false), // Pause automation separate from isActive

@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
-import { ArrowLeft, Building2, Layers, Monitor, Truck, Store, Boxes, ShoppingCart, Briefcase } from "lucide-react";
-import type { ReactNode } from "react";
+import { ArrowLeft, Building2, Layers, Monitor, Truck, Store, Boxes, ShoppingCart, Briefcase, Menu, X } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { Logo } from "@/components/site/Logo";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +30,7 @@ export function DemoShell({
     children: ReactNode;
 }) {
     const { role, isLoaded, logout } = useAuth();
+    const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
     const nav = allNav.filter((n) => {
         if (!role) return false;
@@ -46,39 +47,54 @@ export function DemoShell({
     return (
         <div className="min-h-screen bg-surface-2">
             <div className="mx-auto flex max-w-[1500px] flex-col lg:flex-row">
-                <aside className="sticky top-0 z-40 border-b border-border bg-surface px-4 py-3 flex lg:h-screen lg:w-64 lg:shrink-0 lg:flex-col lg:border-r lg:border-b-0 lg:px-5 lg:py-6">
-                    <Link to="/" className="inline-flex">
-                        <Logo />
-                    </Link>
-                    <nav className="mt-4 flex gap-1.5 overflow-x-auto lg:mt-8 lg:flex-col lg:overflow-visible">
-                        {nav.map((n) => (
-                            <Link
-                                key={n.to}
-                                to={n.to}
-                                activeProps={{ "data-active": "true" }}
-                                className={cn(
-                                    "group flex shrink-0 items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-ink",
-                                    "data-[active=true]:bg-primary/10 data-[active=true]:text-primary",
-                                )}
-                            >
-                                <n.icon className="h-4 w-4" />
-                                {n.label}
-                            </Link>
-                        ))}
-                    </nav>
-                    <div className="mt-auto hidden rounded-2xl border border-border bg-surface-2 p-4 lg:block">
-                        {isLoaded && role && (
-                            <div className="flex flex-col gap-3">
-                                <div>
-                                    <p className="text-xs font-semibold text-ink">Logged in as:</p>
-                                    <p className="mt-1 text-xs font-extrabold text-primary">{role}</p>
-                                </div>
-                                <button
-                                    onClick={logout}
-                                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-destructive hover:underline"
+                <aside className="sticky top-0 z-40 border-b border-border bg-surface px-4 py-3 flex flex-col lg:h-screen lg:w-64 lg:shrink-0 lg:border-r lg:border-b-0 lg:px-5 lg:py-6">
+                    <div className="flex items-center justify-between w-full">
+                        <Link to="/" className="inline-flex" onClick={() => setIsMobileNavOpen(false)}>
+                            <Logo />
+                        </Link>
+                        <button
+                            type="button"
+                            onClick={() => setIsMobileNavOpen(!isMobileNavOpen)}
+                            className="grid h-9 w-9 place-items-center rounded-xl border border-border bg-surface-2 text-ink lg:hidden"
+                            aria-label="Toggle navigation menu"
+                        >
+                            {isMobileNavOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+                        </button>
+                    </div>
+
+                    <div className={cn("w-full transition-all duration-200", isMobileNavOpen ? "block mt-3" : "hidden lg:block")}>
+                        <nav className="flex flex-col gap-1.5 lg:mt-8">
+                            {nav.map((n) => (
+                                <Link
+                                    key={n.to}
+                                    to={n.to}
+                                    onClick={() => setIsMobileNavOpen(false)}
+                                    activeProps={{ "data-active": "true" }}
+                                    className={cn(
+                                        "group flex shrink-0 items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-ink",
+                                        "data-[active=true]:bg-primary/10 data-[active=true]:text-primary",
+                                    )}
                                 >
-                                    <ArrowLeft className="h-3.5 w-3.5" /> Logout
-                                </button>
+                                    <n.icon className="h-4 w-4" />
+                                    {n.label}
+                                </Link>
+                            ))}
+                        </nav>
+
+                        {isLoaded && role && (
+                            <div className="mt-4 rounded-2xl border border-border bg-surface-2 p-4 lg:mt-auto lg:absolute lg:bottom-6 lg:left-5 lg:right-5">
+                                <div className="flex flex-col gap-2.5">
+                                    <div>
+                                        <p className="text-xs font-semibold text-ink">Logged in as:</p>
+                                        <p className="mt-0.5 text-xs font-extrabold text-primary">{role}</p>
+                                    </div>
+                                    <button
+                                        onClick={logout}
+                                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-destructive hover:underline cursor-pointer"
+                                    >
+                                        <ArrowLeft className="h-3.5 w-3.5" /> Logout
+                                    </button>
+                                </div>
                             </div>
                         )}
                     </div>

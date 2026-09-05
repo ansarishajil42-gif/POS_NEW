@@ -460,6 +460,7 @@ function SuperAdmin() {
                 </TabsList>
 
                 <TabsContent value="tenants" className="mt-8">
+                    <div className="overflow-x-auto w-full">
                     <Table className="w-full">
                         <TableHeader className="bg-surface-2/80">
                             <TableRow className="hover:bg-transparent">
@@ -604,6 +605,7 @@ function SuperAdmin() {
                         ))}
                     </TableBody>
                 </Table>
+                </div>
             </TabsContent>
 
                 <TabsContent value="analytics" className="mt-5">

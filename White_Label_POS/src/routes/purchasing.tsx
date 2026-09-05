@@ -540,13 +540,13 @@ function PurchasingOfficer() {
               <Plus className="mr-1.5 h-4 w-4" /> Create PO
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-3xl">
+          <DialogContent className="max-w-3xl w-[95vw] sm:w-full max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{poForm.id ? "Edit Purchase Order" : "Create Purchase Order"}</DialogTitle>
               <DialogDescription>{poForm.id ? "Update PO details and items." : "Draft a new PO and add line items."}</DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Vendor</Label>
                   <select 
@@ -585,7 +585,7 @@ function PurchasingOfficer() {
                 </div>
                 <div className="space-y-3">
                   {poLines.map((line, idx) => (
-                    <div key={idx} className="flex items-center gap-3">
+                    <div key={idx} className="grid grid-cols-1 sm:flex sm:items-center gap-2.5 sm:gap-3 p-3 sm:p-0 rounded-xl bg-surface-2 sm:bg-transparent border border-border/60 sm:border-0">
                       <select 
                         className="flex-1 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                         value={line.productId} 
@@ -594,9 +594,11 @@ function PurchasingOfficer() {
                         <option value="">Select Product...</option>
                         {products.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
                       </select>
-                      <Input type="number" className="w-24" placeholder="Qty" value={line.qty || ""} onChange={e => { const newL = [...poLines]; if (newL[idx]) { newL[idx]!.qty = Number(e.target.value); setPoLines(newL); } }} />
-                      <Input type="number" className="w-28" placeholder="Price" value={line.unitPrice || ""} onChange={e => { const newL = [...poLines]; if (newL[idx]) { newL[idx]!.unitPrice = Number(e.target.value); setPoLines(newL); } }} />
-                      <div className="w-20 text-right font-medium text-sm">{aed(line.qty * line.unitPrice)}</div>
+                      <div className="flex items-center gap-2">
+                        <Input type="number" className="flex-1 sm:w-24" placeholder="Qty" value={line.qty || ""} onChange={e => { const newL = [...poLines]; if (newL[idx]) { newL[idx]!.qty = Number(e.target.value); setPoLines(newL); } }} />
+                        <Input type="number" className="flex-1 sm:w-28" placeholder="Price" value={line.unitPrice || ""} onChange={e => { const newL = [...poLines]; if (newL[idx]) { newL[idx]!.unitPrice = Number(e.target.value); setPoLines(newL); } }} />
+                        <div className="min-w-20 text-right font-semibold text-sm tabular-nums text-ink">{aed(line.qty * line.unitPrice)}</div>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -653,7 +655,8 @@ function PurchasingOfficer() {
                   />
                 </div>
               </div>
-              <table className="w-full text-left text-sm">
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-left text-sm">
                 <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 font-medium">PO Number</th>
@@ -748,6 +751,7 @@ function PurchasingOfficer() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           </TabsContent>
 
@@ -807,8 +811,8 @@ function PurchasingOfficer() {
                     {editGrnForm.items.length > 0 && (
                       <div className="mt-4 space-y-4">
                         <Label>Received Items</Label>
-                        <div className="rounded-md border border-border">
-                          <table className="w-full text-sm">
+                        <div className="rounded-md border border-border overflow-x-auto w-full">
+                          <table className="w-full text-sm min-w-[480px]">
                             <thead className="bg-surface-2 text-muted-foreground">
                               <tr>
                                 <th className="px-3 py-2 text-left font-medium">Product</th>
@@ -818,7 +822,7 @@ function PurchasingOfficer() {
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
-                              {editGrnForm.items.map((item, idx) => (
+                              {editGrnForm.items.map((item: any, idx: number) => (
                                 <React.Fragment key={idx}>
                                   <tr>
                                     <td className="px-3 py-3 font-medium">{item.productName}</td>
@@ -936,7 +940,8 @@ function PurchasingOfficer() {
               </Dialog>
             </div>
             <div className="panel overflow-hidden">
-              <table className="w-full text-left text-sm">
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-left text-sm">
                 <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 font-medium">GRN Number</th>
@@ -971,6 +976,7 @@ function PurchasingOfficer() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           </TabsContent>
 
@@ -1027,7 +1033,8 @@ function PurchasingOfficer() {
                   </DialogContent>
                 </Dialog>
               </div>
-              <table className="w-full text-left text-sm">
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-left text-sm">
                 <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 font-medium">Invoice No.</th>
@@ -1061,6 +1068,7 @@ function PurchasingOfficer() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           </TabsContent>
 
@@ -1084,7 +1092,8 @@ function PurchasingOfficer() {
               <div className="border-b border-border p-4">
                 <h3 className="font-bold text-ink">Outstanding Vendor Invoices</h3>
               </div>
-              <table className="w-full text-left text-sm">
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-left text-sm">
                 <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 font-medium">Invoice No.</th>
@@ -1143,6 +1152,7 @@ function PurchasingOfficer() {
                     )})}
                 </tbody>
               </table>
+              </div>
             </div>
             <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
               <DialogContent className="max-w-md">
@@ -1268,7 +1278,8 @@ function PurchasingOfficer() {
                   </DialogContent>
                 </Dialog>
               </div>
-              <table className="w-full text-left text-sm">
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-left text-sm">
                 <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 font-medium">Vendor Name</th>
@@ -1328,6 +1339,7 @@ function PurchasingOfficer() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           </TabsContent>
 
@@ -1368,7 +1380,7 @@ function PurchasingOfficer() {
               
               <div>
                 <h3 className="font-semibold text-ink mb-3">Items</h3>
-                <div className="border border-border rounded-xl overflow-hidden">
+                <div className="border border-border rounded-xl overflow-x-auto w-full">
                   <table className="w-full text-left text-sm">
                     <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
                       <tr>

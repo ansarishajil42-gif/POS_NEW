@@ -23,6 +23,8 @@ import {
   ChevronLeft,
   ChevronRight,
   AlertTriangle,
+  Download,
+  Loader2,
 } from "lucide-react";
 import { DemoShell, StatCard } from "@/components/demo/DemoShell";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +47,7 @@ import {
   saveAggregatorConnectionServerFn,
   togglePauseAutomationServerFn,
   deleteAggregatorConnectionServerFn,
+  getSyncSummaryServerFn,
   previewAggregatorCsvServerFn,
   triggerAggregatorSyncServerFn,
   getAggregatorSyncLogsServerFn,
@@ -95,9 +98,26 @@ function Aggregators() {
   } | null>(null);
 
   const [showConfigModal, setShowConfigModal] = useState(false);
+  const [showSyncConfirmModal, setShowSyncConfirmModal] = useState(false);
+  const [syncSummary, setSyncSummary] = useState<{
+    fileName: string;
+    remotePath: string;
+    recordCount: number;
+    estimatedSizeBytes: number;
+  } | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [showPass, setShowPass] = useState(false);
+  const [timeWindow, setTimeWindow] = useState<"all" | "1h" | "24h" | "7d" | "30d">("all");
+
+  function getWindowStartDate(window: "all" | "1h" | "24h" | "7d" | "30d"): string | null {
+    const now = Date.now();
+    if (window === "1h") return new Date(now - 60 * 60 * 1000).toISOString();
+    if (window === "24h") return new Date(now - 24 * 60 * 60 * 1000).toISOString();
+    if (window === "7d") return new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+    if (window === "30d") return new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+    return null;
+  }
 
   // Audit Log Pagination & Deletion State
   const [logPage, setLogPage] = useState(1);
@@ -180,7 +200,8 @@ function Aggregators() {
 
     setIsLoadingPreview(true);
     try {
-      const res = await previewAggregatorCsvServerFn({ data: { connectionId: targetId } });
+      const windowStart = getWindowStartDate(timeWindow);
+      const res = await previewAggregatorCsvServerFn({ data: { connectionId: targetId, windowStart } });
       if (res?.success) {
         setCsvPreview(res);
         toast.success("Single File CSV preview generated in-memory", {
@@ -200,12 +221,39 @@ function Aggregators() {
     }
   }
 
+  function handleDownloadCsv(fileName: string, content: string) {
+    if (!content) return;
+    const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", fileName || "assortment.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.success("CSV file downloaded", { description: fileName });
+  }
+
   async function handleExecuteSync() {
     if (!selectedConnId || !activeConnection) return;
     setIsSyncing(true);
 
     try {
-      const res = await triggerAggregatorSyncServerFn({ data: { connectionId: selectedConnId } });
+      const payloadToSend = csvPreview ? {
+        fileName: csvPreview.fileName,
+        csvContent: csvPreview.csvContent,
+        recordCount: csvPreview.recordCount,
+      } : undefined;
+
+      const windowStart = getWindowStartDate(timeWindow);
+      const res = await triggerAggregatorSyncServerFn({
+        data: {
+          connectionId: selectedConnId,
+          preGeneratedPayload: payloadToSend,
+          windowStart,
+        },
+      });
       if (!res.success) {
         toast.error("Sync Rejected (Protection Active)", {
           description: res.error || "Sync is disabled until this connection is verified and activated.",
@@ -219,6 +267,72 @@ function Aggregators() {
       toast.error("SFTP Sync error: " + e.message);
     } finally {
       setIsSyncing(false);
+    }
+  }
+
+  async function handleOpenSyncModal() {
+    const targetId = selectedConnId || activeConnection?.id;
+    if (!targetId || !activeConnection?.isActive) return;
+
+    setCsvPreview(null);
+    const t_client_start = Date.now();
+    console.log(`[TIMING CLIENT] (click) 'Sync Now' clicked at ${new Date(t_client_start).toISOString()}, timeWindow: ${timeWindow}`);
+    setIsLoadingPreview(true);
+    try {
+      const windowStart = getWindowStartDate(timeWindow);
+      console.log(`[TIMING CLIENT] Dispatching lightweight getSyncSummaryServerFn with windowStart: ${windowStart}`);
+      const res = await getSyncSummaryServerFn({ data: { connectionId: targetId, windowStart } });
+      const t_client_end = Date.now();
+      console.log(`[TIMING CLIENT] (f) Client received sync summary: +${t_client_end - t_client_start}ms total roundtrip!`, res);
+      if (res?.success) {
+        setSyncSummary({
+          fileName: res.fileName,
+          remotePath: res.remotePath,
+          recordCount: res.recordCount,
+          estimatedSizeBytes: res.estimatedSizeBytes,
+        });
+        setShowSyncConfirmModal(true);
+      } else if (res?.error) {
+        toast.error("Failed to prepare sync: " + res.error);
+      }
+    } catch (e: any) {
+      console.error(`[TIMING CLIENT] Error after ${Date.now() - t_client_start}ms:`, e);
+      toast.error("Failed to prepare sync: " + e.message);
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  }
+
+  async function handleSendToTalabatFromModal() {
+    setShowSyncConfirmModal(false);
+    await handleExecuteSync();
+  }
+
+  async function handleDownloadOnlyFromModal() {
+    if (csvPreview?.csvContent) {
+      handleDownloadCsv(csvPreview.fileName, csvPreview.csvContent);
+      setShowSyncConfirmModal(false);
+      return;
+    }
+
+    const targetId = selectedConnId || activeConnection?.id;
+    if (!targetId) return;
+
+    setIsLoadingPreview(true);
+    try {
+      const windowStart = getWindowStartDate(timeWindow);
+      const res = await previewAggregatorCsvServerFn({ data: { connectionId: targetId, windowStart } });
+      if (res?.success && res.csvContent) {
+        setCsvPreview(res);
+        handleDownloadCsv(res.fileName, res.csvContent);
+        setShowSyncConfirmModal(false);
+      } else {
+        toast.error("Failed to download CSV: " + (res?.error || "Unknown error"));
+      }
+    } catch (e: any) {
+      toast.error("Failed to download CSV: " + e.message);
+    } finally {
+      setIsLoadingPreview(false);
     }
   }
 
@@ -342,10 +456,10 @@ function Aggregators() {
       title="Aggregator & SFTP Sync Engine"
       subtitle="Phase 3 multi-branch SFTP engine with background automation scheduler."
       actions={
-        <div className="flex gap-2">
+        <div className="flex flex-wrap sm:flex-nowrap gap-2 w-full sm:w-auto">
           <Button
             variant="outline"
-            className="rounded-xl font-semibold border-primary/30 text-primary hover:bg-primary/5"
+            className="rounded-xl font-semibold border-primary/30 text-primary hover:bg-primary/5 flex-1 sm:flex-initial text-xs sm:text-sm"
             onClick={() => {
               setFormConn({
                 aggregatorName: "talabat",
@@ -364,15 +478,16 @@ function Aggregators() {
               setShowConfigModal(true);
             }}
           >
-            <Plus className="mr-1.5 h-4 w-4" /> Add SFTP Connection
+            <Plus className="mr-1.5 h-4 w-4 shrink-0" /> Add SFTP Connection
           </Button>
-          <div title="Live channel API publishing is disconnected. Assortment & promo sync is managed via Central SFTP Server tab.">
+          <div className="flex-1 sm:flex-initial" title="Live channel API publishing is disconnected. Assortment & promo sync is managed via Central SFTP Server tab.">
             <Button
-              className="rounded-xl font-semibold opacity-50 cursor-not-allowed"
+              className="rounded-xl font-semibold opacity-50 cursor-not-allowed w-full sm:w-auto text-xs sm:text-sm"
               disabled
             >
-              <Rocket className="mr-1.5 h-4 w-4" />
-              Publish to channels (API Disconnected)
+              <Rocket className="mr-1.5 h-4 w-4 shrink-0" />
+              <span className="hidden sm:inline">Publish to channels (API Disconnected)</span>
+              <span className="sm:hidden">Publish (Disconnected)</span>
             </Button>
           </div>
         </div>
@@ -386,24 +501,26 @@ function Aggregators() {
       </div>
 
       <Tabs defaultValue="sftp" className="mt-8">
-        <TabsList className="rounded-xl">
-          <TabsTrigger value="sftp" className="font-semibold text-primary">
+        <TabsList className="rounded-xl w-full sm:w-auto justify-start overflow-x-auto flex flex-nowrap p-1 max-w-full">
+          <TabsTrigger value="sftp" className="font-semibold text-primary shrink-0 text-xs sm:text-sm">
             Central SFTP Server
           </TabsTrigger>
-          <TabsTrigger value="queue">Order queue</TabsTrigger>
-          <TabsTrigger value="stock">Stock sync</TabsTrigger>
+          <TabsTrigger value="queue" className="shrink-0 text-xs sm:text-sm">Order queue</TabsTrigger>
+          <TabsTrigger value="stock" className="shrink-0 text-xs sm:text-sm">Stock sync</TabsTrigger>
         </TabsList>
 
         {/* --- CENTRAL SFTP SERVER TAB --- */}
         <TabsContent value="sftp" className="mt-5 space-y-6">
           {/* Automation Notice */}
-          <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-4 text-blue-900 dark:text-blue-200">
-            <div className="flex items-start gap-3">
-              <Clock className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+          <div className="rounded-2xl border border-blue-200/80 bg-gradient-to-r from-blue-50/90 via-indigo-50/50 to-sky-50/90 p-4 sm:p-5 shadow-sm">
+            <div className="flex items-start gap-3.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-500/15 text-blue-600 shrink-0 shadow-2xs">
+                <Clock className="h-5 w-5" />
+              </div>
               <div className="text-xs">
-                <p className="font-bold">Real-time Background Automation Active</p>
-                <p className="mt-0.5 text-blue-800/90 dark:text-blue-300">
-                  Stock updates automatically sync after till sales with a <strong>5-minute minimum rate limit</strong> per Talabat guidelines. Automation can be paused/resumed independently. 3 consecutive failures will auto-deactivate connection for protection.
+                <p className="font-bold text-slate-900 text-sm">Real-time Background Automation Active</p>
+                <p className="mt-1 text-slate-600 leading-relaxed">
+                  Stock updates automatically sync after till sales with a <strong className="text-slate-800 font-bold">5-minute minimum rate limit</strong> per Talabat guidelines. Automation can be paused/resumed independently. 3 consecutive failures will auto-deactivate connection for protection.
                 </p>
               </div>
             </div>
@@ -423,21 +540,21 @@ function Aggregators() {
                     setSelectedConnId(conn.id || "");
                     loadLogs(conn.id || "");
                   }}
-                  className={`cursor-pointer rounded-2xl border p-5 transition-all ${
+                  className={`cursor-pointer rounded-2xl border p-5 transition-all duration-200 ${
                     isSelected
-                      ? "border-primary bg-primary/5 ring-2 ring-primary/20 shadow-sm"
-                      : "border-border bg-surface hover:border-primary/40"
+                      ? "border-[#39ff14] bg-[#39ff14]/5 ring-2 ring-[#39ff14]/30 shadow-md shadow-[#39ff14]/10 -translate-y-0.5"
+                      : "border-slate-200/90 bg-white hover:border-[#39ff14]/60 hover:shadow-md hover:-translate-y-0.5 shadow-2xs"
                   }`}
                 >
                   <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary font-bold capitalize">
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#39ff14] text-slate-950 font-black text-sm capitalize shadow-sm shadow-[#39ff14]/30">
                         {conn.aggregatorName.substring(0, 2)}
                       </div>
                       <div>
-                        <h3 className="font-bold text-ink text-sm capitalize">{conn.aggregatorName} SFTP</h3>
-                        <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-                          <Building className="h-3 w-3 text-primary" /> {branchMatch?.name || "Main Branch"}
+                        <h3 className="font-bold text-slate-900 text-sm capitalize tracking-tight">{conn.aggregatorName} SFTP</h3>
+                        <p className="text-[11px] font-medium text-slate-500 flex items-center gap-1 mt-0.5">
+                          <Building className="h-3 w-3 text-[#25b507] shrink-0" /> {branchMatch?.name || "Main Branch"}
                         </p>
                       </div>
                     </div>
@@ -446,10 +563,10 @@ function Aggregators() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className={`h-7 text-xs font-semibold rounded-lg ${
+                        className={`h-7 text-xs font-bold rounded-full shrink-0 transition-all ${
                           conn.isActive
-                            ? "border-success/30 bg-success/10 text-success hover:bg-success/20"
-                            : "border-amber-500/30 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20"
+                            ? "border-[#39ff14] bg-[#39ff14]/20 text-[#25b507] hover:bg-[#39ff14]/30 shadow-2xs"
+                            : "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100/80 shadow-2xs"
                         }`}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -457,23 +574,23 @@ function Aggregators() {
                         }}
                         title={conn.isActive ? "Click to Deactivate Connection" : "Click to Activate Connection"}
                       >
-                        {conn.isActive ? "Active" : "Inactive (Click to Activate)"}
+                        {conn.isActive ? "Active" : <span>Inactive<span className="hidden sm:inline"> (Activate)</span></span>}
                       </Button>
                     </div>
                   </div>
 
-                  <div className="mt-4 space-y-1.5 text-xs text-muted-foreground">
-                    <div className="flex justify-between">
-                      <span>Vendor ID:</span>
-                      <span className="font-mono font-semibold text-ink">{conn.vendorId || "—"}</span>
+                  <div className="mt-4 space-y-2 text-xs text-slate-500">
+                    <div className="flex justify-between items-center bg-slate-50/80 rounded-lg px-2.5 py-1.5 border border-slate-100">
+                      <span className="font-medium text-slate-500">Vendor ID:</span>
+                      <span className="font-mono font-bold text-slate-800 truncate max-w-[150px]">{conn.vendorId || "—"}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Sync Schedule:</span>
-                      <span className="capitalize font-semibold text-ink">{conn.syncFrequency || "manual"}</span>
+                    <div className="flex justify-between items-center px-1">
+                      <span className="font-medium">Sync Schedule:</span>
+                      <span className="capitalize font-bold text-slate-800">{conn.syncFrequency || "manual"}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Next Scheduled:</span>
-                      <span className="font-mono text-xs text-primary font-semibold">{nextSync}</span>
+                    <div className="flex justify-between items-center px-1">
+                      <span className="font-medium">Next Scheduled:</span>
+                      <span className="font-mono text-xs text-[#25b507] font-bold">{nextSync}</span>
                     </div>
                   </div>
 
@@ -542,71 +659,96 @@ function Aggregators() {
 
           {/* Active Connection Controls */}
           {activeConnection && (
-            <div className="panel p-6 space-y-6">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border pb-5">
+            <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm space-y-6">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-5">
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-base font-bold text-ink capitalize">
+                  <div className="flex items-center gap-2.5">
+                    <h3 className="text-base font-bold text-slate-900 capitalize tracking-tight">
                       {activeConnection.aggregatorName} SFTP Controls
                     </h3>
-                    <Badge variant="outline" className="font-mono text-xs">
+                    <Badge variant="outline" className="font-mono text-[11px] bg-slate-50 text-slate-700 border-slate-200 font-bold">
                       {activeConnection.priceFormat || "price_discounted"}
                     </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Host: <code className="font-semibold text-ink">{activeConnection.sftpHost}</code> | Target Directory:{" "}
-                    <code className="font-semibold text-primary">{activeConnection.remoteDirectory}</code> | Vendor ID:{" "}
-                    <code className="font-semibold text-ink">{activeConnection.vendorId}</code>
+                  <p className="text-xs text-slate-500 mt-1 break-all sm:break-normal">
+                    Host: <code className="font-semibold text-slate-800 break-all bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200/80">{activeConnection.sftpHost}</code> | Target Directory:{" "}
+                    <code className="font-semibold text-[#25b507] break-all bg-[#39ff14]/20 px-1.5 py-0.5 rounded border border-[#39ff14]/40 font-bold">{activeConnection.remoteDirectory}</code> | Vendor ID:{" "}
+                    <code className="font-semibold text-slate-800 break-all bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200/80">{activeConnection.vendorId}</code>
                   </p>
                 </div>
 
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+                  {/* Time Window Filter Selector */}
+                  <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200/90 rounded-xl px-2.5 py-1.5 text-xs shadow-2xs">
+                    <Clock className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                    <span className="text-[11px] font-semibold text-slate-500 shrink-0">Filter:</span>
+                    <select
+                      className="bg-transparent font-bold text-slate-800 text-xs focus:outline-none cursor-pointer"
+                      value={timeWindow}
+                      onChange={(e) => {
+                        const val = e.target.value as any;
+                        setTimeWindow(val);
+                        setCsvPreview(null);
+                      }}
+                    >
+                      <option value="all">Current / All (Full Catalog)</option>
+                      <option value="1h">Last 1 Hour</option>
+                      <option value="24h">Last 24 Hours</option>
+                      <option value="7d">Last 1 Week</option>
+                      <option value="30d">Last 1 Month</option>
+                    </select>
+                  </div>
+
                   <Button
                     variant="outline"
-                    className="rounded-xl font-semibold"
+                    className="rounded-xl font-bold border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900 hover:border-slate-400 shadow-2xs transition-all text-xs sm:text-sm flex-1 sm:flex-initial"
                     onClick={() => handlePreviewCsv(activeConnection.id)}
                     disabled={isLoadingPreview}
                   >
-                    <FileText className="mr-1.5 h-4 w-4" />
+                    <FileText className="mr-1.5 h-4 w-4 text-slate-600" />
                     {isLoadingPreview ? "Generating..." : "Preview CSV"}
                   </Button>
 
-                  <div title={!activeConnection.isActive ? "Sync is disabled until this connection is verified and activated." : ""}>
+                  <div className="flex-1 sm:flex-initial" title={!activeConnection.isActive ? "Sync is disabled until this connection is verified and activated." : ""}>
                     <Button
-                      className={`rounded-xl font-semibold ${!activeConnection.isActive ? "opacity-50 cursor-not-allowed" : ""}`}
-                      disabled={!activeConnection.isActive || isSyncing}
-                      onClick={handleExecuteSync}
+                      className={`rounded-xl font-black border-0 shadow-md transition-all text-xs sm:text-sm w-full sm:w-auto ${
+                        !activeConnection.isActive
+                          ? "bg-slate-200 text-slate-400 cursor-not-allowed shadow-none"
+                          : "bg-[#39ff14] hover:bg-[#32e012] text-slate-950 shadow-[#39ff14]/35 hover:shadow-lg hover:shadow-[#39ff14]/45 hover:scale-[1.02] active:scale-[0.98]"
+                      }`}
+                      disabled={!activeConnection.isActive || isSyncing || isLoadingPreview}
+                      onClick={handleOpenSyncModal}
                     >
                       <UploadCloud className="mr-1.5 h-4 w-4" />
-                      Sync Now
+                      {isLoadingPreview ? "Preparing..." : "Sync Now"}
                     </Button>
                   </div>
                 </div>
               </div>
 
               {/* Single File Format Rules & Column Spec */}
-              <div className="rounded-xl bg-surface-2 p-4 text-xs text-muted-foreground space-y-2">
-                <p className="font-bold text-ink flex items-center gap-1.5">
-                  <Info className="h-4 w-4 text-primary" /> Delivery Hero Single File Format Specification Rules
+              <div className="rounded-2xl bg-gradient-to-br from-slate-50 via-[#39ff14]/10 to-slate-50 border border-slate-200/90 p-5 shadow-2xs space-y-3">
+                <p className="font-bold text-slate-800 text-xs flex items-center gap-2 tracking-wide uppercase">
+                  <Info className="h-4 w-4 text-[#25b507]" /> Delivery Hero Single File Format Specification Rules
                 </p>
-                <div className="grid gap-2 sm:grid-cols-3 font-mono text-[11px]">
-                  <div>
-                    <span className="text-ink font-semibold">1. Product ID:</span> <code className="text-primary">barcode</code> OR <code className="text-primary">sku</code> (Exclusive)
+                <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 font-mono text-[11px] break-words">
+                  <div className="bg-white/90 border border-slate-200/80 rounded-xl p-2.5 shadow-2xs">
+                    <span className="text-slate-900 font-bold">1. Product ID:</span> <code className="text-[#25b507] font-bold bg-[#39ff14]/20 px-1 py-0.5 rounded border border-[#39ff14]/30">barcode</code> OR <code className="text-[#25b507] font-bold bg-[#39ff14]/20 px-1 py-0.5 rounded border border-[#39ff14]/30">sku</code> (Exclusive)
                   </div>
-                  <div>
-                    <span className="text-ink font-semibold">2. Assortment:</span> <code className="text-primary">price</code> & <code className="text-primary">active</code> (Always required)
+                  <div className="bg-white/90 border border-slate-200/80 rounded-xl p-2.5 shadow-2xs">
+                    <span className="text-slate-900 font-bold">2. Assortment:</span> <code className="text-[#25b507] font-bold bg-[#39ff14]/20 px-1 py-0.5 rounded border border-[#39ff14]/30">price</code> & <code className="text-[#25b507] font-bold bg-[#39ff14]/20 px-1 py-0.5 rounded border border-[#39ff14]/30">active</code> (Always required)
                   </div>
-                  <div>
-                    <span className="text-ink font-semibold">3. Promo Reason:</span> <code className="text-primary">'competitiveness'</code>
+                  <div className="bg-white/90 border border-slate-200/80 rounded-xl p-2.5 shadow-2xs">
+                    <span className="text-slate-900 font-bold">3. Promo Reason:</span> <code className="text-[#25b507] font-bold bg-[#39ff14]/20 px-1 py-0.5 rounded border border-[#39ff14]/30">'competitiveness'</code>
                   </div>
-                  <div>
-                    <span className="text-ink font-semibold">4. Promo Dates:</span> <code className="text-primary">YYYY-MM-DD HH:MM:SS</code>
+                  <div className="bg-white/90 border border-slate-200/80 rounded-xl p-2.5 shadow-2xs">
+                    <span className="text-slate-900 font-bold">4. Promo Dates:</span> <code className="text-[#25b507] font-bold bg-[#39ff14]/20 px-1 py-0.5 rounded border border-[#39ff14]/30">YYYY-MM-DD HH:MM:SS</code>
                   </div>
-                  <div>
-                    <span className="text-ink font-semibold">5. Promo Fields:</span> All filled together or all left blank
+                  <div className="bg-white/90 border border-slate-200/80 rounded-xl p-2.5 shadow-2xs">
+                    <span className="text-slate-900 font-bold">5. Promo Fields:</span> All filled together or all left blank
                   </div>
-                  <div>
-                    <span className="text-ink font-semibold">6. File Name:</span> <code className="text-primary">assortment_&lt;vendor_id&gt;.csv</code>
+                  <div className="bg-white/90 border border-slate-200/80 rounded-xl p-2.5 shadow-2xs">
+                    <span className="text-slate-900 font-bold">6. File Name:</span> <code className="text-[#25b507] font-bold break-all bg-[#39ff14]/20 px-1 py-0.5 rounded border border-[#39ff14]/30">&lt;filename_prefix&gt;_&lt;store_vendor_id&gt;.csv (e.g. danah_776282.csv)</code>
                   </div>
                 </div>
               </div>
@@ -617,26 +759,35 @@ function Aggregators() {
                   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
                     <div>
                       <h4 className="text-xs font-bold text-ink flex items-center gap-2">
-                        <FileText className="h-4 w-4 text-primary" /> Generated Single File Payload Preview ({csvPreview.fileName})
+                        <FileText className="h-4 w-4 text-primary shrink-0" /> Generated Single File Payload Preview ({csvPreview.fileName})
                       </h4>
-                      <p className="text-[11px] text-muted-foreground">
-                        Target Path: <code className="font-mono text-primary">{csvPreview.remotePath}</code> | {csvPreview.recordCount} Items | {csvPreview.fileSizeBytes} Bytes
+                      <p className="text-[11px] text-muted-foreground break-all">
+                        Target Path: <code className="font-mono text-primary break-all">{csvPreview.remotePath}</code> | {csvPreview.recordCount} Items | {csvPreview.fileSizeBytes} Bytes
                       </p>
                     </div>
+
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="rounded-xl font-bold text-xs border-[#39ff14]/60 bg-[#39ff14]/15 text-[#25b507] hover:bg-[#39ff14] hover:text-slate-950 shadow-2xs transition-all"
+                      onClick={() => handleDownloadCsv(csvPreview.fileName, csvPreview.csvContent)}
+                    >
+                      <Download className="mr-1.5 h-3.5 w-3.5" /> Download CSV
+                    </Button>
                   </div>
 
-                  <div className="max-h-60 overflow-y-auto rounded-lg bg-surface-2 p-3 font-mono text-xs text-ink leading-relaxed">
-                    <pre>{csvPreview.csvContent}</pre>
+                  <div className="max-h-60 overflow-y-auto overflow-x-auto rounded-lg bg-surface-2 p-3 font-mono text-xs text-ink leading-relaxed">
+                    <pre className="whitespace-pre overflow-x-auto max-w-full">{csvPreview.csvContent}</pre>
                   </div>
                 </div>
               )}
 
               {/* Audit Log Table for Selected Connection */}
-              <div className="space-y-3">
+              <div className="space-y-3 pt-2">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-ink flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-primary" /> SFTP Sync Audit Trail & Execution History
-                    <Badge variant="outline" className="font-mono text-[10px]">
+                  <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-[#25b507]" /> SFTP Sync Audit Trail & Execution History
+                    <Badge variant="outline" className="font-mono text-[10px] bg-slate-100 text-slate-700 border-slate-200 font-bold">
                       {sftpLogs.length} Records
                     </Badge>
                   </h4>
@@ -644,17 +795,17 @@ function Aggregators() {
                   {sftpLogs.length > 0 && (
                     <Button
                       size="sm"
-                      variant="ghost"
-                      className="h-7 text-[11px] font-semibold text-destructive hover:bg-destructive/10"
+                      variant="outline"
+                      className="h-8 px-3 text-xs font-bold border border-rose-200 bg-rose-50/80 text-rose-600 hover:bg-rose-500 hover:text-white transition-all rounded-xl shadow-2xs flex items-center gap-1.5"
                       onClick={() => setShowClearAllLogsModal(true)}
                     >
-                      <Trash2 className="mr-1 h-3 w-3" /> Clear All Logs
+                      <Trash2 className="h-3.5 w-3.5" /> Clear All Logs
                     </Button>
                   )}
                 </div>
 
                 {sftpLogs.length === 0 ? (
-                  <p className="text-xs text-muted-foreground italic bg-surface-2 p-4 rounded-xl text-center">
+                  <p className="text-xs text-slate-500 italic bg-slate-50 p-6 rounded-2xl border border-slate-200/80 text-center font-medium">
                     No sync logs recorded yet for this connection.
                   </p>
                 ) : (
@@ -667,57 +818,57 @@ function Aggregators() {
 
                       return (
                         <div className="space-y-3">
-                          <div className="overflow-x-auto rounded-xl border border-border">
-                            <table className="w-full text-left text-xs">
-                              <thead className="bg-surface-2 text-muted-foreground">
+                          <div className="overflow-x-auto rounded-2xl border border-slate-200/90 bg-white w-full shadow-2xs">
+                            <table className="w-full text-left text-xs min-w-[650px]">
+                              <thead className="bg-slate-100/70 text-slate-600 border-b border-slate-200/80">
                                 <tr>
-                                  <th className="p-3 font-semibold">Timestamp</th>
-                                  <th className="p-3 font-semibold">Sync Type</th>
-                                  <th className="p-3 font-semibold">Status</th>
-                                  <th className="p-3 font-semibold">File Name</th>
-                                  <th className="p-3 font-semibold">Records</th>
-                                  <th className="p-3 font-semibold">Details / Error</th>
-                                  <th className="p-3 font-semibold text-right">Action</th>
+                                  <th className="p-3.5 font-bold uppercase text-[10px] tracking-wider">Timestamp</th>
+                                  <th className="p-3.5 font-bold uppercase text-[10px] tracking-wider">Sync Type</th>
+                                  <th className="p-3.5 font-bold uppercase text-[10px] tracking-wider">Status</th>
+                                  <th className="p-3.5 font-bold uppercase text-[10px] tracking-wider">File Name</th>
+                                  <th className="p-3.5 font-bold uppercase text-[10px] tracking-wider">Records</th>
+                                  <th className="p-3.5 font-bold uppercase text-[10px] tracking-wider">Details / Error</th>
+                                  <th className="p-3.5 font-bold uppercase text-[10px] tracking-wider text-right">Action</th>
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-border">
+                              <tbody className="divide-y divide-slate-100 text-slate-700">
                                 {paginatedLogs.map((log) => (
-                                  <tr key={log.id} className="hover:bg-surface-2/50">
-                                    <td className="p-3 font-mono text-[11px] text-muted-foreground">
+                                  <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
+                                    <td className="p-3.5 font-mono text-[11px] text-slate-500 font-medium">
                                       {new Date(log.createdAt).toLocaleString()}
                                     </td>
-                                    <td className="p-3 capitalize font-semibold">{log.syncType}</td>
-                                    <td className="p-3">
+                                    <td className="p-3.5 capitalize font-bold text-slate-900">{log.syncType}</td>
+                                    <td className="p-3.5">
                                       <Badge
                                         variant="outline"
                                         className={
                                           log.status === "success"
-                                            ? "border-success/30 bg-success/10 text-success font-semibold"
+                                            ? "border-[#39ff14]/50 bg-[#39ff14]/20 text-[#25b507] font-bold rounded-full shadow-2xs"
                                             : log.status === "preview_only"
-                                            ? "border-blue-500/30 bg-blue-500/10 text-blue-600 font-semibold"
-                                            : "border-destructive/30 bg-destructive/10 text-destructive font-semibold"
+                                            ? "border-sky-200 bg-sky-50 text-sky-700 font-bold shadow-2xs"
+                                            : "border-rose-200 bg-rose-50 text-rose-700 font-bold shadow-2xs"
                                         }
                                       >
                                         {log.status}
                                       </Badge>
                                     </td>
-                                    <td className="p-3 font-mono text-[11px]">{log.fileName}</td>
-                                    <td className="p-3 font-mono">{log.rowCount}</td>
-                                    <td className="p-3 text-muted-foreground max-w-xs truncate" title={log.errorMessage || ""}>
+                                    <td className="p-3.5 font-mono text-[11px] font-semibold text-slate-800">{log.fileName}</td>
+                                    <td className="p-3.5 font-mono font-bold text-slate-800">{log.rowCount}</td>
+                                    <td className="p-3.5 text-slate-500 max-w-xs truncate font-medium" title={log.errorMessage || ""}>
                                       {log.errorMessage || "—"}
                                     </td>
-                                    <td className="p-3 text-right">
+                                    <td className="p-3.5 text-right">
                                       <Button
                                         size="icon"
                                         variant="ghost"
-                                        className="h-7 w-7 rounded-lg text-destructive hover:bg-destructive/10"
+                                        className="h-8 w-8 rounded-xl text-rose-600 hover:bg-rose-500 hover:text-white transition-all"
                                         title="Delete Log Record (Warning: Database Delete)"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setLogToDelete(log);
                                         }}
                                       >
-                                        <Trash2 className="h-3.5 w-3.5" />
+                                        <Trash2 className="h-4 w-4" />
                                       </Button>
                                     </td>
                                   </tr>
@@ -817,7 +968,7 @@ function Aggregators() {
 
       {/* --- ADD / EDIT CONNECTION MODAL --- */}
       <Dialog open={showConfigModal} onOpenChange={setShowConfigModal}>
-        <DialogContent className="sm:max-w-[550px] rounded-2xl">
+        <DialogContent className="w-[95vw] sm:max-w-[550px] max-h-[90vh] overflow-y-auto rounded-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-ink">
               <Server className="h-5 w-5 text-primary" /> Add / Edit SFTP Connection
@@ -864,7 +1015,7 @@ function Aggregators() {
                 </select>
               </div>
 
-              <div className="space-y-1.5 sm:col-span-2">
+              <div className="space-y-1.5">
                 <Label htmlFor="vendorId" className="text-xs font-semibold">Username / Vendor ID</Label>
                 <Input
                   id="vendorId"
@@ -874,6 +1025,18 @@ function Aggregators() {
                   onChange={(e) => setFormConn({ ...formConn, vendorId: e.target.value, sftpUsername: e.target.value })}
                   placeholder="e.g. TB_AE_4e9a0d34-3ba4-4396"
                   required
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="filenamePrefix" className="text-xs font-semibold">Filename Prefix</Label>
+                <Input
+                  id="filenamePrefix"
+                  name="filename_prefix"
+                  autoComplete="off"
+                  value={formConn.filenamePrefix || ""}
+                  onChange={(e) => setFormConn({ ...formConn, filenamePrefix: e.target.value })}
+                  placeholder="e.g. danah, khaldiya, nahyan"
                 />
               </div>
 
@@ -1000,7 +1163,7 @@ function Aggregators() {
 
       {/* --- CONFIRM DELETE SINGLE LOG RECORD WARNING DIALOG --- */}
       <Dialog open={!!logToDelete} onOpenChange={(open) => !open && setLogToDelete(null)}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="w-[95vw] sm:max-w-md rounded-2xl">
           <DialogHeader>
             <DialogTitle className="text-base font-bold text-destructive flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-destructive" /> Confirm Database Deletion
@@ -1043,7 +1206,7 @@ function Aggregators() {
 
       {/* --- CONFIRM CLEAR ALL LOGS WARNING DIALOG --- */}
       <Dialog open={showClearAllLogsModal} onOpenChange={setShowClearAllLogsModal}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="w-[95vw] sm:max-w-md rounded-2xl">
           <DialogHeader>
             <DialogTitle className="text-base font-bold text-destructive flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-destructive" /> Clear All Audit Logs Warning
@@ -1068,6 +1231,126 @@ function Aggregators() {
             </Button>
             <Button variant="destructive" size="sm" onClick={handleConfirmClearAllLogs} disabled={isDeletingLog}>
               {isDeletingLog ? "Clearing All..." : "Yes, Clear All Logs"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* --- CONFIRM AGGREGATOR SYNC DIALOG (DOWNLOAD ONLY VS SEND TO TALABAT) --- */}
+      <Dialog open={showSyncConfirmModal} onOpenChange={(open) => !open && !isSyncing && setShowSyncConfirmModal(false)}>
+        <DialogContent className="w-[95vw] sm:max-w-lg rounded-2xl p-6">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <UploadCloud className="h-5 w-5 text-[#25b507]" /> Confirm Aggregator Sync
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500 pt-1">
+              Review the generated file payload before deciding to download locally or transmit directly to Talabat SFTP.
+            </DialogDescription>
+          </DialogHeader>
+
+          {activeConnection && (syncSummary || csvPreview) && (() => {
+            const displayData = syncSummary || csvPreview!;
+            const sizeBytes = syncSummary?.estimatedSizeBytes ?? csvPreview?.fileSizeBytes ?? 0;
+            return (
+              <div className="rounded-xl border border-slate-200/90 bg-gradient-to-br from-slate-50 via-[#39ff14]/5 to-slate-50 p-4 text-xs space-y-2.5 my-2">
+                <div className="flex justify-between items-center pb-2 border-b border-slate-200/80">
+                  <span className="text-slate-500 font-medium">Store & Branch:</span>
+                  <span className="font-bold text-slate-900">
+                    {realBranches.find((b) => b.id === activeConnection.branchId)?.name || "Al Danah"} ({activeConnection.storeVendorId || activeConnection.vendorId})
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Time Window:</span>
+                  <Badge variant="outline" className="font-semibold text-[11px] bg-white border-slate-300 text-slate-800">
+                    {timeWindow === "all" ? "Current / All (Full Catalog)" :
+                     timeWindow === "1h" ? "Last 1 Hour" :
+                     timeWindow === "24h" ? "Last 24 Hours" :
+                     timeWindow === "7d" ? "Last 1 Week" : "Last 1 Month"}
+                  </Badge>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">File Name:</span>
+                  <code className="font-mono font-bold text-[#25b507] bg-[#39ff14]/20 px-1.5 py-0.5 rounded border border-[#39ff14]/30">
+                    {displayData.fileName}
+                  </code>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Target Directory:</span>
+                  <code className="font-mono text-slate-700 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                    {displayData.remotePath || activeConnection.remoteDirectory || "/assortment"}
+                  </code>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Total Products:</span>
+                  <span className="font-bold text-slate-900">
+                    {displayData.recordCount.toLocaleString()} items
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-medium">Estimated Payload Size:</span>
+                  <span className="font-mono text-slate-700">
+                    {sizeBytes.toLocaleString()} bytes ({(sizeBytes / (1024 * 1024)).toFixed(2)} MB)
+                  </span>
+                </div>
+                <div className="pt-2 border-t border-slate-200/80 text-[11px] text-slate-600 flex items-center gap-1.5">
+                  <Info className="h-3.5 w-3.5 text-[#25b507] shrink-0" />
+                  <span>
+                    <strong>Download Only</strong> saves the file to your computer. <strong>Send to Talabat</strong> immediately transmits to the live SFTP server.
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
+
+          <DialogFooter className="flex flex-col-reverse sm:flex-row gap-2 mt-4 sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-xl text-xs font-semibold text-slate-700 bg-white border-slate-300 hover:bg-slate-100 hover:text-slate-900"
+              onClick={() => setShowSyncConfirmModal(false)}
+              disabled={isSyncing || isLoadingPreview}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-xl text-xs font-bold border-2 border-slate-300 bg-white text-slate-900 hover:bg-slate-100 hover:text-slate-950 shadow-sm"
+              onClick={handleDownloadOnlyFromModal}
+              disabled={isSyncing || (!syncSummary && !csvPreview) || isLoadingPreview}
+            >
+              {isLoadingPreview ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-slate-800" />
+                  Generating CSV...
+                </>
+              ) : (
+                <>
+                  <Download className="mr-1.5 h-3.5 w-3.5 text-slate-800" />
+                  Download Only
+                </>
+              )}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="rounded-xl text-xs font-black bg-[#39ff14] hover:bg-[#32e012] text-slate-950 shadow-md shadow-[#39ff14]/30 hover:scale-[1.02] active:scale-[0.98] transition-all"
+              onClick={handleSendToTalabatFromModal}
+              disabled={isSyncing || (!syncSummary && !csvPreview) || isLoadingPreview}
+            >
+              {isSyncing ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  Sending to SFTP...
+                </>
+              ) : (
+                <>
+                  <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
+                  Send to Talabat
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

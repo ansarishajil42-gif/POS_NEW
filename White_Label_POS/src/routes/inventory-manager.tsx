@@ -26,7 +26,25 @@ import {
   Download,
   Edit,
   Trash,
+  FileSpreadsheet,
+  Upload,
+  Loader2,
 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import {
   getInventoryDataServerFn,
   stockTransferServerFn,
@@ -35,6 +53,8 @@ import {
   applyClearanceFn,
   editStockTransferServerFn,
   deleteStockTransferServerFn,
+  exportOutOfStockExcelServerFn,
+  bulkUpdateStockFromExcelServerFn,
 } from "@/lib/inventory-manager-server";
 
 export const Route = createFileRoute("/inventory-manager")({
@@ -176,13 +196,162 @@ function InventoryManager() {
         : `${tenant?.name || "Company"} · Assigned Branches`
       : `${tenant?.name || "Company"} · Global View`;
 
+  const [selectedBranchId, setSelectedBranchId] = useState<string>(
+    branchScope && branchScope.length === 1 ? branchScope[0] : "all"
+  );
+  const [outOfStockOnly, setOutOfStockOnly] = useState(false);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [isImportingExcel, setIsImportingExcel] = useState(false);
+  const [importSummary, setImportSummary] = useState<{
+    totalProcessed: number;
+    totalUpdated: number;
+    totalSkipped: number;
+    skippedDetails: Array<{ sku: string; reason: string }>;
+  } | null>(null);
+  const [isImportSummaryModalOpen, setIsImportSummaryModalOpen] = useState(false);
+
   const filteredStockLevels = stockLevels.filter((s: any) => {
+    if (selectedBranchId && selectedBranchId !== "all" && s.branchId !== selectedBranchId) {
+      return false;
+    }
+    if (outOfStockOnly && Number(s.stock) > 0) {
+      return false;
+    }
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     const productName = (s.productName || "").toLowerCase();
     const sku = (s.sku || s.barcode || "").toLowerCase();
     return productName.includes(query) || sku.includes(query);
   });
+
+  const handleExportExcel = async () => {
+    setIsExportingExcel(true);
+    try {
+      const res = await exportOutOfStockExcelServerFn({
+        data: {
+          branchId: selectedBranchId,
+          outOfStockOnly: outOfStockOnly,
+        },
+      });
+
+      if (!res.success || !res.base64) {
+        throw new Error(res.error || "Failed to generate Excel file");
+      }
+
+      const byteCharacters = atob(res.base64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = res.filename || "stock_update.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      toast.success(`Exported ${res.count || 0} products to Excel`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to export Excel");
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
+  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    let targetBranchId = selectedBranchId;
+    if (branchScope && branchScope.length === 1) {
+      targetBranchId = branchScope[0];
+    }
+
+    if (!targetBranchId || targetBranchId === "all") {
+      toast.error("Please select a specific branch from the dropdown before importing stock.");
+      e.target.value = "";
+      return;
+    }
+
+    setIsImportingExcel(true);
+    try {
+      const XLSX = await import("xlsx");
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) throw new Error("Excel file contains no sheets");
+
+      const worksheet = workbook.Sheets[firstSheetName];
+      const rawJson: any[] = XLSX.utils.sheet_to_json(worksheet);
+
+      if (!rawJson || rawJson.length === 0) {
+        throw new Error("No data rows found in the uploaded Excel file.");
+      }
+
+      const parsedRows: Array<{ sku?: string; barcode?: string; stock: number }> = [];
+      for (const row of rawJson) {
+        const sku = row["SKU"] || row["sku"] || row["Sku"] || "";
+        const barcode = row["Barcode"] || row["barcode"] || row["BARCODE"] || "";
+        const rawStock =
+          row["Stock"] ??
+          row["stock"] ??
+          row["STOCK"] ??
+          row["Qty"] ??
+          row["qty"] ??
+          row["Quantity"] ??
+          row["quantity"];
+
+        if (rawStock !== undefined && rawStock !== null && rawStock !== "") {
+          const numStock = Number(rawStock);
+          if (!isNaN(numStock)) {
+            parsedRows.push({
+              sku: sku ? String(sku).trim() : undefined,
+              barcode: barcode ? String(barcode).trim() : undefined,
+              stock: numStock,
+            });
+          }
+        }
+      }
+
+      if (parsedRows.length === 0) {
+        throw new Error("No valid rows with Stock numbers found in Excel file.");
+      }
+
+      const res = await bulkUpdateStockFromExcelServerFn({
+        data: {
+          branchId: targetBranchId,
+          rows: parsedRows,
+        },
+      });
+
+      if (!res.success) {
+        throw new Error(res.error || "Bulk stock update failed");
+      }
+
+      setImportSummary({
+        totalProcessed: res.totalProcessed,
+        totalUpdated: res.totalUpdated,
+        totalSkipped: res.totalSkipped,
+        skippedDetails: res.skippedDetails || [],
+      });
+      setIsImportSummaryModalOpen(true);
+
+      toast.success(`Updated stock for ${res.totalUpdated} products!`);
+      router.invalidate();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to process Excel file");
+    } finally {
+      setIsImportingExcel(false);
+      e.target.value = "";
+    }
+  };
 
   const handleExport = () => {
     if (filteredStockLevels.length === 0) {
@@ -311,24 +480,93 @@ function InventoryManager() {
             </div>
 
             <div className="panel overflow-hidden">
-              <div className="flex items-center justify-between border-b border-border p-4">
-                <div className="relative w-72">
-                  <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Search SKU or Product Name..."
-                    className="pl-9 h-9 text-sm"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                  />
+              <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between border-b border-border p-4 gap-3">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1 max-w-xl">
+                  <div className="relative flex-1">
+                    <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      placeholder="Search SKU or Product Name..."
+                      className="pl-9 h-9 text-sm w-full"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                  </div>
+
+                  {branches.length > 1 && (
+                    <Select
+                      value={selectedBranchId}
+                      onValueChange={(val) => setSelectedBranchId(val)}
+                    >
+                      <SelectTrigger className="w-full sm:w-[180px] h-9 text-xs font-medium">
+                        <Building2 className="h-3.5 w-3.5 mr-1.5 text-muted-foreground shrink-0" />
+                        <SelectValue placeholder="Branch" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Branches</SelectItem>
+                        {branches.map((b: any) => (
+                          <SelectItem key={b.id} value={b.id}>
+                            {b.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
-                <div className="flex gap-2">
-                  {role !== "Inventory Manager" || (branchScope && branchScope.length > 1) ? (
-                    <Button variant="outline" size="sm" className="h-9">
-                      Filter by Branch
-                    </Button>
-                  ) : null}
-                  <Button variant="outline" size="sm" className="h-9" onClick={handleExport}>
-                    Export
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setOutOfStockOnly(!outOfStockOnly)}
+                    className={`h-9 rounded-xl text-xs font-bold border transition-all ${
+                      outOfStockOnly
+                        ? "bg-amber-600 hover:bg-amber-700 text-white border-amber-600 shadow-sm"
+                        : "bg-white hover:bg-amber-50/60 text-slate-800 hover:text-slate-950 border-slate-300"
+                    }`}
+                  >
+                    <AlertTriangle className="mr-1.5 h-3.5 w-3.5 text-amber-500" />
+                    {outOfStockOnly ? "Out of Stock (ON)" : "Out of Stock Only"}
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleExportExcel}
+                    disabled={isExportingExcel}
+                    className="h-9 rounded-xl text-xs font-bold bg-white hover:bg-emerald-50 text-emerald-800 hover:text-emerald-950 border-2 border-emerald-400 hover:border-emerald-500 shadow-sm transition-all"
+                  >
+                    {isExportingExcel ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-emerald-700" />
+                    ) : (
+                      <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
+                    )}
+                    Export Excel
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => document.getElementById("inv-excel-upload")?.click()}
+                    disabled={isImportingExcel}
+                    className="h-9 rounded-xl text-xs font-bold bg-white hover:bg-blue-50 text-blue-800 hover:text-blue-950 border-2 border-blue-400 hover:border-blue-500 shadow-sm transition-all"
+                  >
+                    {isImportingExcel ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-blue-700" />
+                    ) : (
+                      <Upload className="mr-1.5 h-3.5 w-3.5 text-blue-600" />
+                    )}
+                    Import Excel
+                  </Button>
+                  <input
+                    id="inv-excel-upload"
+                    type="file"
+                    accept=".xlsx, .xls"
+                    className="hidden"
+                    onChange={handleImportExcel}
+                  />
+
+                  <Button variant="outline" size="sm" className="h-9 rounded-xl text-xs font-semibold bg-white hover:bg-slate-100 text-slate-800 hover:text-slate-950 border-slate-300" onClick={handleExport}>
+                    <Download className="mr-1.5 h-3.5 w-3.5 text-slate-600" /> Export CSV
                   </Button>
                 </div>
               </div>
@@ -413,7 +651,8 @@ function InventoryManager() {
             </div>
 
             <div className="panel overflow-hidden">
-              <table className="w-full text-left text-sm">
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-left text-sm">
                 <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 font-medium">TRN ID</th>
@@ -479,6 +718,7 @@ function InventoryManager() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           </TabsContent>
 
@@ -491,7 +731,8 @@ function InventoryManager() {
                   <Input placeholder="Search batch number..." className="pl-9 h-9 text-sm" />
                 </div>
               </div>
-              <table className="w-full text-left text-sm">
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-left text-sm">
                 <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 font-medium">Batch No.</th>
@@ -552,6 +793,7 @@ function InventoryManager() {
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
           </TabsContent>
 
@@ -717,7 +959,8 @@ function InventoryManager() {
             </div>
 
             <div className="panel overflow-hidden">
-              <table className="w-full text-left text-sm">
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-left text-sm">
                 <thead className="bg-surface-2 text-xs font-semibold text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 font-medium">Product</th>
@@ -751,6 +994,7 @@ function InventoryManager() {
                   )}
                 </tbody>
               </table>
+              </div>
             </div>
           </TabsContent>
         </main>
@@ -997,6 +1241,61 @@ function InventoryManager() {
           </div>
         </div>
       )}
+      {/* --- BULK EXCEL IMPORT SUMMARY MODAL --- */}
+      <Dialog open={isImportSummaryModalOpen} onOpenChange={setIsImportSummaryModalOpen}>
+        <DialogContent className="max-w-md rounded-2xl p-6">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-emerald-500" /> Bulk Stock Import Summary
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground pt-1">
+              Results from your Excel bulk stock update.
+            </DialogDescription>
+          </DialogHeader>
+
+          {importSummary && (
+            <div className="space-y-3 my-2 text-xs">
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="p-3 rounded-xl bg-surface-2 border border-border/50">
+                  <span className="text-muted-foreground block text-[11px]">Total Rows</span>
+                  <span className="text-sm font-bold text-ink">{importSummary.totalProcessed}</span>
+                </div>
+                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400">
+                  <span className="block text-[11px]">Updated</span>
+                  <span className="text-sm font-bold">{importSummary.totalUpdated}</span>
+                </div>
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
+                  <span className="block text-[11px]">Skipped</span>
+                  <span className="text-sm font-bold">{importSummary.totalSkipped}</span>
+                </div>
+              </div>
+
+              {importSummary.skippedDetails && importSummary.skippedDetails.length > 0 && (
+                <div className="space-y-1.5 pt-2">
+                  <span className="font-semibold text-ink block">Skipped Details ({importSummary.skippedDetails.length}):</span>
+                  <div className="max-h-40 overflow-y-auto space-y-1 p-2 rounded-xl bg-surface-2 border border-border/50">
+                    {importSummary.skippedDetails.map((s, idx) => (
+                      <div key={idx} className="flex justify-between items-center text-[11px] py-0.5 border-b border-border/30 last:border-0">
+                        <span className="font-mono text-muted-foreground">{s.sku}</span>
+                        <span className="text-destructive font-medium">{s.reason}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="mt-4">
+            <Button
+              className="w-full rounded-xl font-semibold"
+              onClick={() => setIsImportSummaryModalOpen(false)}
+            >
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DemoShell>
   );
 }

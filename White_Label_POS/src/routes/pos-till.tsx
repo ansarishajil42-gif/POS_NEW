@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { DemoShell } from "@/components/demo/DemoShell";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -109,6 +110,7 @@ function PosTill() {
   const [payOpen, setPayOpen] = useState(false);
   const [split, setSplit] = useState({ cash: 0, card: 0, points: 0, credit: 0 });
   const [selectedTenders, setSelectedTenders] = useState<Record<string, boolean>>({});
+  const [mobileTillView, setMobileTillView] = useState<"items" | "cart">("items");
 
   // Shift states
   const [openingFloat, setOpeningFloat] = useState(500);
@@ -625,8 +627,36 @@ function PosTill() {
         </TabsList>
 
         <TabsContent value="checkout" className="mt-5">
+          {/* Mobile sub-toggle between Items and Cart */}
+          <div className="grid grid-cols-2 gap-1.5 rounded-2xl bg-surface-2 p-1.5 border border-border/70 mb-4 lg:hidden">
+            <button
+              type="button"
+              onClick={() => setMobileTillView("items")}
+              className={cn(
+                "py-2.5 text-xs font-bold rounded-xl transition-all cursor-pointer",
+                mobileTillView === "items"
+                  ? "bg-surface text-ink shadow-sm border border-border/50"
+                  : "text-muted-foreground hover:text-ink"
+              )}
+            >
+              Catalog & Items
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileTillView("cart")}
+              className={cn(
+                "py-2.5 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer",
+                mobileTillView === "cart"
+                  ? "bg-surface text-ink shadow-sm border border-border/50"
+                  : "text-muted-foreground hover:text-ink"
+              )}
+            >
+              Cart ({cart.length}) {cart.length > 0 && `· ${aed(total)}`}
+            </button>
+          </div>
+
           <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-            <div className="panel p-5">
+            <div className={cn("panel p-4 sm:p-5", mobileTillView === "cart" ? "hidden lg:block" : "block")}>
               <div className="flex flex-wrap items-center gap-3">
                 <div className="relative min-w-56 flex-1">
                   <ScanBarcode className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -710,7 +740,7 @@ function PosTill() {
               </div>
             </div>
 
-                        <div className="panel flex h-fit flex-col p-5 lg:sticky lg:top-6 gap-6">
+                        <div className={cn("panel flex h-fit flex-col p-4 sm:p-5 lg:sticky lg:top-6 gap-6", mobileTillView === "items" ? "hidden lg:flex" : "flex")}>
                             {/* Customer Section */}
                             <div className="rounded-xl border border-border p-4 bg-surface-2/50">
                                 <div className="flex items-center justify-between mb-3">
@@ -835,10 +865,10 @@ function PosTill() {
                                                 {aed(getPrice(l))} · VAT 5%
                                             </p>
                                         </div>
-                                        <div className="flex items-center gap-1">
+                                        <div className="flex items-center gap-1.5 sm:gap-1">
                                             <button
                                                 onClick={() => step(l, -1)}
-                                                className="grid h-7 w-7 place-items-center rounded-lg border border-border bg-surface"
+                                                className="grid h-8 w-8 sm:h-7 sm:w-7 place-items-center rounded-lg border border-border bg-surface active:scale-95 transition-transform"
                                                 aria-label="Decrease"
                                             >
                                                 <Minus className="h-3.5 w-3.5" />
@@ -846,7 +876,7 @@ function PosTill() {
                                             <span className="w-6 text-center text-sm font-bold tabular-nums text-ink">{l.qty}</span>
                                             <button
                                                 onClick={() => step(l, 1)}
-                                                className="grid h-7 w-7 place-items-center rounded-lg border border-border bg-surface"
+                                                className="grid h-8 w-8 sm:h-7 sm:w-7 place-items-center rounded-lg border border-border bg-surface active:scale-95 transition-transform"
                                                 aria-label="Increase"
                                             >
                                                 <Plus className="h-3.5 w-3.5" />

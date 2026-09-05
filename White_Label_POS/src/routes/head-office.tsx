@@ -16,6 +16,7 @@ import {
   Tag,
   Plus,
   Pencil,
+  Copy,
   Trash2,
   X,
   ArrowRight,
@@ -78,6 +79,7 @@ import { Label } from "@/components/ui/label";
 import { aed, aedShort } from "@/lib/demo-data";
 import { toast } from "sonner";
 import {
+  getCatalogProductsFn,
   getHeadOfficeDataFn,
   updateStockFn,
   updatePriceOverrideFn,
@@ -220,6 +222,7 @@ function HeadOffice() {
 
   // Catalog pagination and search states
   const [catalogSearch, setCatalogSearch] = useState("");
+  const [selectedCatalogBranch, setSelectedCatalogBranch] = useState<string>("all");
   const [catalogPage, setCatalogPage] = useState(data?.page || 1);
   const catalogPageSize = data?.pageSize || 50;
   const [catalogTotal, setCatalogTotal] = useState(data?.totalProducts || data?.products?.length || 0);
@@ -236,14 +239,16 @@ function HeadOffice() {
     }
   }, [data?.products, data?.stock, data?.totalProducts, data?.page]);
 
-  const handleFetchCatalog = async (targetPage: number, searchStr: string) => {
+  const handleFetchCatalog = async (targetPage: number, searchStr: string, branchId?: string) => {
     setIsCatalogLoading(true);
     try {
-      const res = await getHeadOfficeDataFn({
+      const bId = branchId !== undefined ? branchId : selectedCatalogBranch;
+      const res = await getCatalogProductsFn({
         data: {
           page: targetPage,
           pageSize: catalogPageSize,
           search: searchStr,
+          branchId: bId !== "all" ? bId : undefined,
         },
       });
       if (res && res.success) {
@@ -263,10 +268,25 @@ function HeadOffice() {
 
   const mappedProducts = useMemo(() => {
     return (catalogProductsList || []).map((p: any) => {
-      // calculate total stock across all branches from data.stock
-      const totalStock = (catalogStockList || [])
-        .filter((s: any) => s.productId === p.id)
-        .reduce((acc: number, s: any) => acc + s.stock, 0);
+      let displayStock = 0;
+      let displayPrice = Number(p.salePrice) || 0;
+
+      if (selectedCatalogBranch === "all") {
+        // calculate total stock across all branches from data.stock
+        displayStock = (catalogStockList || [])
+          .filter((s: any) => s.productId === p.id)
+          .reduce((acc: number, s: any) => acc + (Number(s.stock) || 0), 0);
+        displayPrice = Number(p.salePrice) || 0;
+      } else {
+        // show ONLY that branch's stock and price override
+        const branchStock = (catalogStockList || []).find(
+          (s: any) => s.productId === p.id && s.branchId === selectedCatalogBranch
+        );
+        displayStock = branchStock ? Number(branchStock.stock) || 0 : 0;
+        displayPrice = branchStock?.priceOverride
+          ? Number(branchStock.priceOverride)
+          : Number(p.salePrice) || 0;
+      }
 
       return {
         id: p.id,
@@ -276,15 +296,15 @@ function HeadOffice() {
         unit: p.unit ?? "pcs",
         category: p.category || "General",
         cost: Number(p.costPrice) || 0,
-        price: Number(p.salePrice) || 0,
+        price: displayPrice,
         vat: p.vatIncluded ? "Inc" : "Exc",
-        stock: totalStock,
+        stock: displayStock,
         isBatchTracked: p.isBatchTracked === false ? false : true,
         costPriceRaw: p.costPrice,
         salePriceRaw: p.salePrice,
       };
     });
-  }, [catalogProductsList, catalogStockList]);
+  }, [catalogProductsList, catalogStockList, selectedCatalogBranch]);
 
   const mappedBatches = useMemo(() => {
     return (data?.batches || []).map((b: any) => {
@@ -1583,21 +1603,45 @@ function HeadOffice() {
           </TabsContent>
 
           <TabsContent value="catalog" className="mt-0 space-y-4">
-            {/* Top Controls: Search Bar & Add Product */}
+            {/* Catalog Toolbar */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              <div className="relative flex-1 max-w-md">
-                <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search by name, barcode, or SKU..."
-                  value={catalogSearch}
-                  onChange={(e) => setCatalogSearch(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      handleFetchCatalog(1, catalogSearch);
-                    }
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1 max-w-2xl">
+                <div className="relative flex-1">
+                  <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Search by name, barcode, or SKU..."
+                    value={catalogSearch}
+                    onChange={(e) => setCatalogSearch(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        handleFetchCatalog(1, catalogSearch);
+                      }
+                    }}
+                    className="pl-9 h-10 rounded-xl bg-surface-2/50 border-border/50 text-sm w-full"
+                  />
+                </div>
+
+                <Select
+                  value={selectedCatalogBranch}
+                  onValueChange={(val) => {
+                    setSelectedCatalogBranch(val);
+                    setCatalogPage(1);
+                    handleFetchCatalog(1, catalogSearch, val);
                   }}
-                  className="pl-9 h-10 rounded-xl bg-surface-2/50 border-border/50 text-sm w-full"
-                />
+                >
+                  <SelectTrigger className="w-full sm:w-[190px] h-10 rounded-xl bg-surface-2/50 border-border/50 text-xs font-medium shrink-0">
+                    <Building2 className="h-3.5 w-3.5 mr-1.5 text-muted-foreground shrink-0" />
+                    <SelectValue placeholder="Branch" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Branches</SelectItem>
+                    {(data?.branches || []).map((b: any) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="flex items-center gap-2">
@@ -1638,35 +1682,35 @@ function HeadOffice() {
 
             {/* Catalog Table Container */}
             <div className="rounded-2xl border border-border/50 bg-surface/50 shadow-sm backdrop-blur-xl overflow-hidden">
-              <div className="relative w-full overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-                <table className="w-full caption-bottom text-sm">
-                  <thead className="bg-surface-2/80 [&_tr]:border-b-0">
+              <div className="relative w-full overflow-x-auto">
+                <table className="w-full caption-bottom text-sm min-w-[780px]">
+                  <thead className="bg-surface-2/90 [&_tr]:border-b-0">
                     <tr className="border-b border-border/50">
-                      <th className="h-11 px-4 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                      <th className="h-11 px-3 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
                         SKU
                       </th>
-                      <th className="h-11 px-4 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground min-w-[200px]">
+                      <th className="h-11 px-3 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">
                         Product
                       </th>
-                      <th className="h-11 px-4 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                      <th className="h-11 px-3 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
                         Barcode
                       </th>
-                      <th className="h-11 px-3 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                      <th className="h-11 px-2.5 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
                         Unit
                       </th>
-                      <th className="h-11 px-3 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                      <th className="h-11 px-2.5 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
                         Category
                       </th>
-                      <th className="h-11 px-3 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                      <th className="h-11 px-2.5 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
                         Cost
                       </th>
-                      <th className="h-11 px-3 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                      <th className="h-11 px-2.5 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
                         Retail
                       </th>
-                      <th className="h-11 px-3 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                      <th className="h-11 px-2.5 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
                         Stock
                       </th>
-                      <th className="h-11 px-4 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                      <th className="h-11 px-4 py-3 text-center align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap sticky right-0 bg-surface-2/95 backdrop-blur-md shadow-[-4px_0_12px_rgba(0,0,0,0.06)] min-w-[120px] z-10">
                         Actions
                       </th>
                     </tr>
@@ -1677,32 +1721,32 @@ function HeadOffice() {
                         key={p.id}
                         className="group border-b border-border/50 transition-all duration-200 hover:bg-primary/[0.03]"
                       >
-                        <td className="px-4 py-3 align-middle font-mono text-xs text-muted-foreground whitespace-nowrap">
+                        <td className="px-3 py-3 align-middle font-mono text-xs text-muted-foreground whitespace-nowrap">
                           {p.sku}
                         </td>
-                        <td className="px-4 py-3 align-middle font-semibold text-ink">
+                        <td className="px-3 py-3 align-middle font-semibold text-ink">
                           {p.name}
                         </td>
-                        <td className="px-4 py-3 align-middle font-mono text-xs whitespace-nowrap">
+                        <td className="px-3 py-3 align-middle font-mono text-xs whitespace-nowrap">
                           {p.barcode || "—"}
                         </td>
-                        <td className="px-3 py-3 align-middle text-sm whitespace-nowrap">{p.unit}</td>
-                        <td className="px-3 py-3 align-middle text-sm whitespace-nowrap">
+                        <td className="px-2.5 py-3 align-middle text-sm whitespace-nowrap">{p.unit}</td>
+                        <td className="px-2.5 py-3 align-middle text-sm whitespace-nowrap">
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">
                             {p.category}
                           </span>
                         </td>
-                        <td className="px-3 py-3 align-middle text-right tabular-nums whitespace-nowrap">
+                        <td className="px-2.5 py-3 align-middle text-right tabular-nums whitespace-nowrap">
                           {p.cost.toFixed(2)}
                         </td>
-                        <td className="px-3 py-3 align-middle text-right font-semibold tabular-nums text-ink whitespace-nowrap">
+                        <td className="px-2.5 py-3 align-middle text-right font-semibold tabular-nums text-ink whitespace-nowrap">
                           {p.price.toFixed(2)}
                         </td>
-                        <td className="px-3 py-3 align-middle text-right tabular-nums font-medium whitespace-nowrap">
+                        <td className="px-2.5 py-3 align-middle text-right tabular-nums font-medium whitespace-nowrap">
                           {p.stock}
                         </td>
-                        <td className="px-4 py-3 align-middle text-right whitespace-nowrap">
-                          <div className="flex justify-end gap-1.5">
+                        <td className="px-4 py-3 align-middle text-center whitespace-nowrap sticky right-0 bg-surface/95 backdrop-blur-md group-hover:bg-surface shadow-[-4px_0_12px_rgba(0,0,0,0.06)] z-10">
+                          <div className="flex items-center justify-center gap-1.5">
                             <Button
                               size="icon"
                               variant="outline"
@@ -1721,8 +1765,34 @@ function HeadOffice() {
                                 setIsEditingProduct(true);
                                 setProductFormOpen(true);
                               }}
+                              title="Edit product"
                             >
                               <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              className="h-7 w-7 rounded-lg text-primary hover:bg-primary/10"
+                              onClick={() => {
+                                setProductForm({
+                                  id: "",
+                                  name: `${p.name} (Copy)`,
+                                  barcode: "",
+                                  category: p.category,
+                                  unit: p.unit,
+                                  costPrice: p.costPriceRaw,
+                                  salePrice: p.salePriceRaw,
+                                  isBatchTracked: p.isBatchTracked,
+                                  barcodes: [],
+                                  variants: [],
+                                  conversions: [],
+                                });
+                                setIsEditingProduct(false);
+                                setProductFormOpen(true);
+                              }}
+                              title="Duplicate product"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
                             </Button>
                             <Button
                               size="icon"
@@ -2232,6 +2302,8 @@ function HeadOffice() {
                               "Cannot delete product because it is part of purchase orders.",
                             PRODUCT_USED_IN_GRN:
                               "Cannot delete product because it has recorded goods received notes (GRN).",
+                            PRODUCT_USED_IN_LEDGER:
+                              "Cannot delete product because it has historical inventory ledger transactions.",
                           };
                           toast.error(errMap[res?.error || ""] || res?.error || "Failed to delete");
                         }
@@ -2888,7 +2960,8 @@ function HeadOffice() {
               <div className="border-b border-border p-5">
                 <h3 className="font-bold text-ink">Directory</h3>
               </div>
-              <Table>
+              <div className="overflow-x-auto w-full">
+                <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Name</TableHead>
@@ -2960,6 +3033,7 @@ function HeadOffice() {
                     })}
                 </TableBody>
               </Table>
+              </div>
             </div>
           </TabsContent>
 
@@ -4577,7 +4651,8 @@ function HeadOffice() {
                 </div>
               </div>
 
-              <table className="w-full text-left border-collapse my-6 text-sm">
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-left border-collapse my-6 text-sm">
                 <thead>
                   <tr className="border-b-2 border-gray-300 bg-gray-100">
                     <th className="py-2 px-3">Product Description</th>
@@ -4599,6 +4674,7 @@ function HeadOffice() {
                   ))}
                 </tbody>
               </table>
+              </div>
 
               <div className="flex justify-end mt-8">
                 <div className="w-64 space-y-2 text-right text-sm">

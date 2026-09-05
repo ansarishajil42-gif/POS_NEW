@@ -71,6 +71,8 @@ export interface AggregatorConnection {
   sftpPasswordEncrypted: string;
   remoteDirectory: string;
   vendorId: string;
+  storeVendorId?: string;
+  filenamePrefix?: string;
   priceFormat: "price_discounted" | "original_discounted" | "original_price";
   syncFrequency: "manual" | "15min" | "hourly" | "daily"; // Default manual
   isPaused: boolean; // Pause automation without deactivating connection

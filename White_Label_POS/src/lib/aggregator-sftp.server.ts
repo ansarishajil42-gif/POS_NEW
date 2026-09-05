@@ -5,6 +5,7 @@ import { encryptSecret, decryptSecret, isEncrypted } from "./crypto";
 import { getAdapter, ProductData } from "./aggregator-adapters/index";
 import { createRequire } from "module";
 import crypto from "crypto";
+import postgres from "postgres";
 
 export async function getAggregatorBranchesFromDb() {
   const resBranches = await db
@@ -22,7 +23,7 @@ export async function getAggregatorBranchesFromDb() {
 
 export async function getAggregatorConnectionsFromDb() {
   const rows: any[] = await db.execute(sql`
-    SELECT id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, sftp_password, remote_directory, vendor_id, store_vendor_id, price_format, sync_frequency, is_paused, consecutive_failures, last_scheduled_sync_at, has_pending_changes, is_active, created_at, updated_at
+    SELECT id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, sftp_password, remote_directory, vendor_id, store_vendor_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, last_scheduled_sync_at, has_pending_changes, is_active, created_at, updated_at
     FROM aggregator_connections
     ORDER BY created_at DESC;
   `);
@@ -39,6 +40,7 @@ export async function getAggregatorConnectionsFromDb() {
     remoteDirectory: r.remote_directory || "/Assortment",
     vendorId: r.vendor_id || "",
     storeVendorId: r.store_vendor_id || "",
+    filenamePrefix: r.filename_prefix || "",
     priceFormat: r.price_format || "price_discounted",
     syncFrequency: r.sync_frequency || "manual",
     isPaused: Boolean(r.is_paused),
@@ -55,14 +57,24 @@ export async function saveAggregatorConnectionToDb(data: any) {
   let tenantId = data.tenantId;
   let branchId = data.branchId;
 
+  if (branchId) {
+    const branchInfo: any[] = await db.execute(sql`SELECT id, tenant_id FROM branches WHERE id::text = ${branchId};`);
+    if (branchInfo.length > 0) {
+      tenantId = branchInfo[0].tenant_id;
+    }
+  }
+
   if (!tenantId) {
     const tenantsList: any[] = await db.execute(sql`SELECT id FROM tenants LIMIT 1;`);
     if (tenantsList.length > 0) tenantId = tenantsList[0].id;
   }
 
   if (!branchId) {
-    const branchList: any[] = await db.execute(sql`SELECT id FROM branches WHERE status = 'Active' LIMIT 1;`);
-    if (branchList.length > 0) branchId = branchList[0].id;
+    const branchList: any[] = await db.execute(sql`SELECT id, tenant_id FROM branches WHERE status = 'Active' LIMIT 1;`);
+    if (branchList.length > 0) {
+      branchId = branchList[0].id;
+      if (!tenantId) tenantId = branchList[0].tenant_id;
+    }
   }
 
   const rawHost = data.sftpHost || "";
@@ -72,6 +84,7 @@ export async function saveAggregatorConnectionToDb(data: any) {
   const rawPassword = data.sftpPassword && data.sftpPassword !== "••••••••" ? data.sftpPassword.trim() : null;
   const vendorId = (data.vendorId || "").trim();
   const storeVendorId = (data.storeVendorId || "").trim();
+  const filenamePrefix = (data.filenamePrefix || "").trim();
   const remoteDirectory = (data.remoteDirectory || "assortment").trim();
   const priceFormat = data.priceFormat || "price_discounted";
   const syncFrequency = data.syncFrequency || "manual";
@@ -95,13 +108,14 @@ export async function saveAggregatorConnectionToDb(data: any) {
             remote_directory = ${remoteDirectory},
             vendor_id = ${vendorId},
             store_vendor_id = ${storeVendorId},
+            filename_prefix = ${filenamePrefix},
             price_format = ${priceFormat},
             sync_frequency = ${syncFrequency},
             is_paused = ${isPaused},
             is_active = ${isActive},
             updated_at = NOW()
         WHERE id::text = ${data.id}
-        RETURNING id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, vendor_id, store_vendor_id, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at;
+        RETURNING id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, vendor_id, store_vendor_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at;
       `);
 
       const saved = updated[0];
@@ -120,6 +134,7 @@ export async function saveAggregatorConnectionToDb(data: any) {
           remoteDirectory: saved.remote_directory,
           vendorId: saved.vendor_id,
           storeVendorId: saved.store_vendor_id,
+          filenamePrefix: saved.filename_prefix,
           priceFormat: saved.price_format,
           syncFrequency: saved.sync_frequency,
           isPaused: saved.is_paused,
@@ -134,11 +149,11 @@ export async function saveAggregatorConnectionToDb(data: any) {
 
   const inserted: any[] = await db.execute(sql`
     INSERT INTO aggregator_connections (
-      tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, sftp_password, remote_directory, vendor_id, store_vendor_id, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at
+      tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, sftp_password, remote_directory, vendor_id, store_vendor_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at
     ) VALUES (
-      ${tenantId}::uuid, ${branchId}::uuid, ${aggregatorName}, ${sftpHost}, ${sftpPort}, ${sftpUsername}, ${encryptedPassword}, ${remoteDirectory}, ${vendorId}, ${storeVendorId}, ${priceFormat}, ${syncFrequency}, ${isPaused}, 0, ${isActive}, NOW(), NOW()
+      ${tenantId}::uuid, ${branchId}::uuid, ${aggregatorName}, ${sftpHost}, ${sftpPort}, ${sftpUsername}, ${encryptedPassword}, ${remoteDirectory}, ${vendorId}, ${storeVendorId}, ${filenamePrefix}, ${priceFormat}, ${syncFrequency}, ${isPaused}, 0, ${isActive}, NOW(), NOW()
     )
-    RETURNING id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, vendor_id, store_vendor_id, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at;
+    RETURNING id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, vendor_id, store_vendor_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at;
   `);
 
   const saved = inserted[0];
@@ -157,6 +172,7 @@ export async function saveAggregatorConnectionToDb(data: any) {
       remoteDirectory: saved.remote_directory,
       vendorId: saved.vendor_id,
       storeVendorId: saved.store_vendor_id,
+      filenamePrefix: saved.filename_prefix,
       priceFormat: saved.price_format,
       syncFrequency: saved.sync_frequency,
       isPaused: saved.is_paused,
@@ -211,17 +227,32 @@ export async function getAggregatorSyncLogsFromDb(connectionId: string) {
   }));
 }
 
-export async function generateDirectCsvPreviewFromDb(connectionId: string) {
+/**
+ * Lightweight sync summary for the "Sync Now" confirmation dialog.
+ * Uses a fast SELECT COUNT(*) query and connection metadata WITHOUT fetching or transferring full rows.
+ */
+export async function getSyncSummaryFromDb(connectionId: string, windowStart?: Date | string | null) {
+  const t0 = Date.now();
   let conn: any = null;
+  const filterDate = windowStart ? (windowStart instanceof Date ? windowStart.toISOString() : String(windowStart)) : null;
   if (connectionId) {
     try {
       const list: any[] = await db.execute(
-        sql`SELECT vendor_id, store_vendor_id, price_format, aggregator_name, remote_directory FROM aggregator_connections WHERE id::text = ${connectionId}`
+        sql`
+          SELECT c.id, c.tenant_id, c.branch_id, c.vendor_id, c.store_vendor_id, c.filename_prefix, c.price_format, c.aggregator_name, c.remote_directory, b.tenant_id as branch_tenant_id
+          FROM aggregator_connections c
+          LEFT JOIN branches b ON c.branch_id = b.id
+          WHERE c.id::text = ${connectionId}
+        `
       );
       if (list && list.length > 0) {
         conn = {
+          id: list[0].id,
+          tenantId: list[0].tenant_id || list[0].branch_tenant_id,
+          branchId: list[0].branch_id,
           vendorId: list[0].vendor_id,
           storeVendorId: list[0].store_vendor_id,
+          filenamePrefix: list[0].filename_prefix,
           priceFormat: list[0].price_format,
           aggregatorName: list[0].aggregator_name,
           remoteDirectory: list[0].remote_directory,
@@ -230,19 +261,177 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string) {
     } catch (e) {}
   }
 
-  const vendorId = (conn?.vendorId || "vendor_id").trim();
-  const storeVendorId = (conn?.storeVendorId || "").trim();
-  const priceFormat = conn?.priceFormat || "price_discounted";
-  const aggregatorName = conn?.aggregatorName || "talabat";
-
-  const dbProducts = await db.select().from(products);
-  if (!dbProducts || dbProducts.length === 0) {
-    throw new Error("Unable to load products from database — no products found.");
+  if (!conn || !conn.tenantId) {
+    throw new Error("Unable to load aggregator connection or connection is missing tenant_id.");
   }
 
+  const tenantId = conn.tenantId;
+  const branchId = conn.branchId;
+  const storeId = (conn.storeVendorId || conn.vendorId || "vendor").trim();
+  const prefix = (conn.filenamePrefix || "assortment").trim();
+  const fileName = `${prefix}_${storeId}.csv`;
+  const remotePath = `${conn.remoteDirectory || "/Assortment"}/${fileName}`;
+
+  // Ultra-fast COUNT query (counts matching products in <100ms without transferring row payloads)
+  const countResult: any[] = await db.execute(sql`
+    SELECT COUNT(*) as total
+    FROM products p
+    INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+    WHERE p.tenant_id = ${tenantId}::uuid
+      AND (
+        ${filterDate ? sql`(p.created_at >= ${filterDate}::timestamp OR p.updated_at >= ${filterDate}::timestamp OR sl.updated_at >= ${filterDate}::timestamp)` : sql`TRUE`}
+      );
+  `);
+
+  const recordCount = Number(countResult[0]?.total || 0);
+  // Average CSV row is ~28 bytes + header
+  const estimatedSizeBytes = recordCount > 0 ? recordCount * 28 + 120 : 0;
+  console.log(`[TIMING SERVER] getSyncSummaryFromDb finished in ${Date.now() - t0}ms: ${recordCount} records, file ${fileName}`);
+
+  return {
+    success: true,
+    fileName,
+    remotePath,
+    recordCount,
+    estimatedSizeBytes,
+    isSummaryOnly: true,
+  };
+}
+
+export async function generateDirectCsvPreviewFromDb(connectionId: string, windowStart?: Date | string | null) {
+  const t_func_start = Date.now();
+  console.log(`\n================================================================================`);
+  console.log(`[TIMING SERVER] (a) generateDirectCsvPreviewFromDb START at ${new Date(t_func_start).toISOString()} (windowStart: ${windowStart})`);
+  console.log(`================================================================================`);
+
+  let conn: any = null;
+  const filterDate = windowStart ? (windowStart instanceof Date ? windowStart.toISOString() : String(windowStart)) : null;
+  if (connectionId) {
+    try {
+      const list: any[] = await db.execute(
+        sql`
+          SELECT c.id, c.tenant_id, c.branch_id, c.vendor_id, c.store_vendor_id, c.filename_prefix, c.price_format, c.aggregator_name, c.remote_directory, b.tenant_id as branch_tenant_id
+          FROM aggregator_connections c
+          LEFT JOIN branches b ON c.branch_id = b.id
+          WHERE c.id::text = ${connectionId}
+        `
+      );
+      if (list && list.length > 0) {
+        conn = {
+          id: list[0].id,
+          tenantId: list[0].tenant_id || list[0].branch_tenant_id,
+          branchId: list[0].branch_id,
+          vendorId: list[0].vendor_id,
+          storeVendorId: list[0].store_vendor_id,
+          filenamePrefix: list[0].filename_prefix,
+          priceFormat: list[0].price_format,
+          aggregatorName: list[0].aggregator_name,
+          remoteDirectory: list[0].remote_directory,
+        };
+      }
+    } catch (e) {}
+  }
+
+  if (!conn || !conn.tenantId) {
+    throw new Error("Unable to load aggregator connection or connection is missing tenant_id.");
+  }
+
+  console.log(`[TIMING SERVER] (a.1) Connection loaded: +${Date.now() - t_func_start}ms`);
+
+  const tenantId = conn.tenantId;
+  const branchId = conn.branchId;
+
+  const vendorId = (conn.vendorId || "vendor_id").trim();
+  const storeVendorId = (conn.storeVendorId || "").trim();
+  const filenamePrefix = (conn.filenamePrefix || "").trim();
+  const priceFormat = conn.priceFormat || "price_discounted";
+  const aggregatorName = conn.aggregatorName || "talabat";
+
+  // 1. Single Lean SQL JOIN via Dedicated Session Mode Client (Port 5432)
+  // Prevents transaction pooler (:6543) proxy socket backpressure on large 61,018-row reads
+  const rawDbUrl = (process.env["DATABASE_URL"] || process.env["POSTGRES_URL"] || "").trim().replace(/\\$/, "");
+  const sessionDbUrl = rawDbUrl.includes(":6543") ? rawDbUrl.replace(":6543", ":5432") : rawDbUrl;
+
+  const sessionClient = postgres(sessionDbUrl, {
+    prepare: false,
+    ssl: "require",
+    max: 1,
+    idle_timeout: 5,
+    connect_timeout: 30,
+  });
+
+  let joinedRows: any[] = [];
+  const t_query_start = Date.now();
+  try {
+    if (filterDate) {
+      joinedRows = await sessionClient`
+        SELECT 
+          p.id, 
+          p.barcode, 
+          p.sku, 
+          p.sale_price, 
+          p.category, 
+          COALESCE(sl.stock, 0) as stock, 
+          sl.price_override
+        FROM products p
+        INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+        WHERE p.tenant_id = ${tenantId}::uuid
+          AND (
+            p.created_at >= ${filterDate}::timestamp 
+            OR p.updated_at >= ${filterDate}::timestamp 
+            OR sl.updated_at >= ${filterDate}::timestamp
+          );
+      `;
+    } else {
+      joinedRows = await sessionClient`
+        SELECT 
+          p.id, 
+          p.barcode, 
+          p.sku, 
+          p.sale_price, 
+          p.category, 
+          COALESCE(sl.stock, 0) as stock, 
+          sl.price_override
+        FROM products p
+        INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+        WHERE p.tenant_id = ${tenantId}::uuid;
+      `;
+    }
+  } finally {
+    // Always close and release dedicated session client immediately
+    try {
+      await sessionClient.end({ timeout: 2 });
+    } catch (e) {}
+  }
+  const t_query_end = Date.now();
+  console.log(`[TIMING SERVER] (b) DB query completed: +${t_query_end - t_func_start}ms (query duration: ${t_query_end - t_query_start}ms, returned ${joinedRows.length} rows via dedicated port 5432 Session client)`);
+
+  if (!joinedRows || joinedRows.length === 0) {
+    if (filterDate) {
+      const emptyAdapter = getAdapter(aggregatorName);
+      const emptyResult = emptyAdapter.generateFile([], { vendorId, storeVendorId, filenamePrefix, priceFormat });
+      return {
+        success: true,
+        isPreviewOnly: true,
+        fileName: emptyResult.fileName,
+        remotePath: `${conn?.remoteDirectory || "/Assortment"}/${emptyResult.fileName}`,
+        recordCount: 0,
+        fileSizeBytes: Buffer.byteLength(emptyResult.fileContent, "utf-8"),
+        csvContent: emptyResult.fileContent,
+        warning: `No products were created or modified since ${new Date(filterDate).toLocaleString()}.`,
+      };
+    }
+    throw new Error("Unable to load products from database — no products found for this tenant.");
+  }
+
+  // 2. Tenant Isolation: Query ONLY promotions belonging to this connection's tenant
+  const t_promo_start = Date.now();
   let dbPromotions: any[] = [];
   try {
-    dbPromotions = await db.select().from(promotions);
+    dbPromotions = await db
+      .select()
+      .from(promotions)
+      .where(eq(promotions.tenantId, tenantId));
   } catch (err) {}
 
   const now = new Date();
@@ -253,9 +442,12 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string) {
     return now >= start && now <= end;
   });
 
-  const adapterItems: ProductData[] = dbProducts.map((p) => {
+  const adapterItems: ProductData[] = joinedRows.map((p) => {
+    const branchStock = Number(p.stock) || 0;
+    const priceToUse = p.price_override ? String(p.price_override) : p.sale_price || "15.00";
+    const isProductActiveInBranch = branchStock > 0;
+
     const matchingPromo = activePromos.find((promo) => {
-      if (promo.tenantId && p.tenantId && promo.tenantId !== p.tenantId) return false;
       if (promo.targetProductIds) {
         try {
           const ids: string[] =
@@ -276,7 +468,7 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string) {
 
     let promoObj = null;
     if (matchingPromo) {
-      const priceNum = parseFloat(p.salePrice || "15.00");
+      const priceNum = parseFloat(priceToUse);
       const discountValNum = parseFloat(matchingPromo.discountValue || "0.00");
       let calculatedDisc = priceNum;
       const dType = (matchingPromo.discountType || "").toLowerCase();
@@ -298,19 +490,24 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string) {
       id: p.id,
       barcode: p.barcode ? p.barcode.trim() : "",
       sku: p.sku ? p.sku.trim() : "",
-      price: p.salePrice || "15.00",
-      active: p.status ? p.status.toLowerCase() !== "inactive" : true,
+      price: priceToUse,
+      active: isProductActiveInBranch,
       promotion: promoObj,
     };
   });
+  console.log(`[TIMING SERVER] (b.1) Promo & mapping done: +${Date.now() - t_func_start}ms (duration: ${Date.now() - t_promo_start}ms)`);
 
+  const t_csv_start = Date.now();
   const adapter = getAdapter(aggregatorName);
-  const fileResult = adapter.generateFile(adapterItems, { vendorId, storeVendorId, priceFormat });
+  const fileResult = adapter.generateFile(adapterItems, { vendorId, storeVendorId, filenamePrefix, priceFormat });
+  const t_csv_end = Date.now();
+  console.log(`[TIMING SERVER] (c) CSV string built: +${t_csv_end - t_func_start}ms (generateFile duration: ${t_csv_end - t_csv_start}ms, CSV length: ${fileResult.fileContent.length})`);
 
   const fileName = fileResult.fileName;
   const csvContent = fileResult.fileContent;
   const recordCount = fileResult.recordCount;
 
+  const t_log_start = Date.now();
   if (connectionId) {
     try {
       await db.execute(
@@ -318,6 +515,10 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string) {
       );
     } catch (e) {}
   }
+  const t_log_end = Date.now();
+  console.log(`[TIMING SERVER] (d) Audit log INSERT complete: +${t_log_end - t_func_start}ms (log insert duration: ${t_log_end - t_log_start}ms)`);
+
+  console.log(`[TIMING SERVER] (e) Right before return: +${Date.now() - t_func_start}ms total\n`);
 
   return {
     success: true,
@@ -331,35 +532,66 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string) {
   };
 }
 
-export async function triggerAggregatorSyncFromDb(connectionId: string) {
+export async function triggerAggregatorSyncFromDb(
+  connectionId: string,
+  preGeneratedPayload?: { fileName: string; csvContent: string; recordCount?: number },
+  windowStart?: Date | string | null
+) {
   const connList: any[] = await db.execute(sql`SELECT * FROM aggregator_connections WHERE id::text = ${connectionId};`);
   const conn = connList[0];
   if (!conn) return { success: false, error: "Connection configuration not found." };
 
   const storeId = (conn.store_vendor_id || conn.vendor_id || "vendor").trim();
-  const fileName = `assortment_${storeId}.csv`;
+  const prefix = (conn.filename_prefix || "assortment").trim();
+  const defaultFileName = `${prefix}_${storeId}.csv`;
 
   if (!conn.is_active) {
     await db.execute(sql`
       INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
-      VALUES (${connectionId}::uuid, 'manual', 'failed', ${fileName}, 0, 'Sync disabled: Connection is inactive. Activation is required before live SFTP transmission.', NOW());
+      VALUES (${connectionId}::uuid, 'manual', 'failed', ${defaultFileName}, 0, 'Sync disabled: Connection is inactive. Activation is required before live SFTP transmission.', NOW());
     `);
     return { success: false, error: "Sync is disabled until this connection is verified and activated." };
   }
 
-  let csvPreviewResult: any;
-  try {
-    csvPreviewResult = await generateDirectCsvPreviewFromDb(connectionId);
-  } catch (err: any) {
-    await db.execute(sql`
-      INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
-      VALUES (${connectionId}::uuid, 'manual', 'failed', ${fileName}, 0, ${"Failed generating CSV payload: " + err.message}, NOW());
-    `);
-    return { success: false, error: "Failed generating CSV payload: " + err.message };
+  // 5-Minute Rate Limit Cooldown: Strictly prevents uploads if less than 5 minutes have passed since the last upload
+  const FIVE_MINUTES_MS = 5 * 60 * 1000;
+  if (conn.last_scheduled_sync_at) {
+    const elapsedMs = Date.now() - new Date(conn.last_scheduled_sync_at).getTime();
+    if (elapsedMs < FIVE_MINUTES_MS) {
+      const remainingSec = Math.ceil((FIVE_MINUTES_MS - elapsedMs) / 1000);
+      const remainingMin = (remainingSec / 60).toFixed(1);
+      return {
+        success: false,
+        error: `Rate limit cooldown active: Please wait ${remainingSec}s (~${remainingMin} min) before syncing again. Talabat limits catalog updates to once every 5 minutes.`,
+      };
+    }
   }
 
-  const csvContent = csvPreviewResult.csvContent;
-  const recordCount = csvPreviewResult.recordCount;
+  let fileName = defaultFileName;
+  let csvContent: string;
+  let recordCount: number;
+  let csvPreviewResult: any = null;
+
+  if (preGeneratedPayload?.csvContent) {
+    // Reuse pre-generated CSV payload directly
+    fileName = preGeneratedPayload.fileName || defaultFileName;
+    csvContent = preGeneratedPayload.csvContent;
+    recordCount = preGeneratedPayload.recordCount ?? Math.max(0, csvContent.split("\n").length - 1);
+  } else {
+    // Fallback: Generate fresh from DB (used by background automation scheduler or direct calls)
+    try {
+      csvPreviewResult = await generateDirectCsvPreviewFromDb(connectionId, windowStart);
+    } catch (err: any) {
+      await db.execute(sql`
+        INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
+        VALUES (${connectionId}::uuid, 'manual', 'failed', ${defaultFileName}, 0, ${"Failed generating CSV payload: " + err.message}, NOW());
+      `);
+      return { success: false, error: "Failed generating CSV payload: " + err.message };
+    }
+    fileName = csvPreviewResult.fileName;
+    csvContent = csvPreviewResult.csvContent;
+    recordCount = csvPreviewResult.recordCount;
+  }
   const hostClean = (conn.sftp_host || "").trim().replace(/^(sftp:\/\/|ssh:\/\/|https:\/\/)/, "").split("/")[0];
 
   try {
@@ -418,7 +650,7 @@ export async function triggerAggregatorSyncFromDb(connectionId: string) {
     return {
       success: true,
       message: `Successfully uploaded and verified ${fileName} (${recordCount} records) in ${targetPath}`,
-      log: csvPreviewResult,
+      log: preGeneratedPayload || csvPreviewResult,
     };
   } catch (sftpErr: any) {
     const errorMsg = sftpErr.message || "SFTP connection error";

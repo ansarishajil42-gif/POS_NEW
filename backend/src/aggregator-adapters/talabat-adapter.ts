@@ -112,8 +112,9 @@ export const talabatAdapter: AggregatorAdapter = {
       warning = `Active promotions count (${activePromoCount}) exceeds the 20,000 SKU limit per campaign file.`;
     }
 
-    const cleanVendorId = (connection.vendorId || "vendor_id").trim();
-    const fileName = `assortment_${cleanVendorId}.csv`;
+    const cleanVendorId = (connection.storeVendorId || connection.vendorId || "vendor_id").trim();
+    const prefix = (connection.filenamePrefix || "assortment").trim();
+    const fileName = `${prefix}_${cleanVendorId}.csv`;
 
     return {
       fileName,

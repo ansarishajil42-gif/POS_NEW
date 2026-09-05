@@ -15,6 +15,7 @@ export interface ProductData {
 export interface ConnectionConfigAdapter {
   vendorId: string;
   storeVendorId?: string;
+  filenamePrefix?: string;
   priceFormat: "price_discounted" | "original_discounted" | "original_price";
   remoteDirectory?: string;
 }

@@ -26,6 +26,8 @@ import {
   productBarcodes,
   productVariants,
   unitConversions,
+  stockAdjustments,
+  inventoryLedger,
   blogPosts,
 } from "@/server/db/schema";
 import { eq, and, sql, desc, inArray, ne, or, ilike, lte, gte } from "drizzle-orm";
@@ -132,8 +134,166 @@ export const getBranchDetailsFn = createServerFn({ method: "GET" })
     return { branch };
   });
 
+export const getCatalogProductsFn = createServerFn({ method: "GET" })
+  .validator((d?: { page?: number; pageSize?: number; search?: string; branchId?: string }) => d)
+  .handler(async ({ data }) => {
+    try {
+      const tenantId = await getHeadOfficeTenant();
+
+      const dbBranches = await db.query.branches.findMany({
+        where: eq(branches.tenantId, tenantId),
+      });
+
+      const page = Math.max(1, Number(data?.page) || 1);
+      const pageSize = Math.max(1, Math.min(200, Number(data?.pageSize) || 50));
+      const offset = (page - 1) * pageSize;
+
+      let dbProducts: any[] = [];
+      let totalProducts = 0;
+
+      if (data?.branchId && data.branchId !== "all") {
+        const branchId = data.branchId;
+        let searchFilter = sql`TRUE`;
+        if (data?.search && data.search.trim()) {
+          const q = `%${data.search.trim()}%`;
+          searchFilter = sql`(p.name ILIKE ${q} OR p.barcode ILIKE ${q} OR p.sku ILIKE ${q})`;
+        }
+
+        const [prodsRes, countRes] = await Promise.all([
+          db.execute(sql`
+            SELECT p.*
+            FROM products p
+            INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+            WHERE p.tenant_id = ${tenantId}::uuid
+              AND ${searchFilter}
+            ORDER BY p.created_at DESC
+            LIMIT ${pageSize} OFFSET ${offset};
+          `),
+          db.execute(sql`
+            SELECT count(*)::int as total
+            FROM products p
+            INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+            WHERE p.tenant_id = ${tenantId}::uuid
+              AND ${searchFilter};
+          `),
+        ]);
+
+        const rawProds = Array.isArray(prodsRes) ? prodsRes : (prodsRes as any)?.rows || [];
+        dbProducts = rawProds.map((p: any) => ({
+          id: p.id,
+          tenantId: p.tenant_id,
+          name: p.name,
+          barcode: p.barcode,
+          sku: p.sku,
+          category: p.category,
+          unit: p.unit,
+          costPrice: p.cost_price,
+          salePrice: p.sale_price,
+          isBatchTracked: p.is_batch_tracked,
+          createdAt: p.created_at,
+          updatedAt: p.updated_at,
+        }));
+        const rawCount = Array.isArray(countRes) ? countRes : (countRes as any)?.rows || [];
+        totalProducts = Number(rawCount[0]?.total || 0);
+      } else {
+        let prodWhere = eq(products.tenantId, tenantId);
+        if (data?.search && data.search.trim()) {
+          const q = `%${data.search.trim()}%`;
+          prodWhere = and(
+            eq(products.tenantId, tenantId),
+            or(ilike(products.name, q), ilike(products.barcode, q), ilike(products.sku, q)),
+          )!;
+        }
+
+        const [allProds, totalProductsCountRes] = await Promise.all([
+          db.query.products.findMany({
+            where: prodWhere,
+            limit: pageSize,
+            offset: offset,
+            orderBy: [desc(products.createdAt)],
+          }),
+          db.execute(sql`SELECT count(*)::int as total FROM products WHERE ${prodWhere};`),
+        ]);
+        dbProducts = allProds;
+        const rawCount = Array.isArray(totalProductsCountRes) ? totalProductsCountRes : (totalProductsCountRes as any)?.rows || [];
+        totalProducts = Number(rawCount[0]?.total || 0);
+      }
+
+      const productIds = dbProducts.map((p) => p.id);
+
+      const [dbBarcodes, dbVariants, dbConversions, dbStock] = await Promise.all([
+        productIds.length > 0
+          ? db.select().from(productBarcodes).where(inArray(productBarcodes.productId, productIds))
+          : [],
+        productIds.length > 0
+          ? db.select().from(productVariants).where(inArray(productVariants.productId, productIds))
+          : [],
+        productIds.length > 0
+          ? db.select().from(unitConversions).where(inArray(unitConversions.productId, productIds))
+          : [],
+        productIds.length > 0 && dbBranches.length > 0
+          ? db.query.stockLevels.findMany({
+              where: and(
+                inArray(stockLevels.productId, productIds),
+                inArray(stockLevels.branchId, dbBranches.map((b) => b.id)),
+              ),
+            })
+          : [],
+      ]);
+
+      const barcodesMap = new Map<string, string[]>();
+      for (const b of dbBarcodes) {
+        const arr = barcodesMap.get(b.productId) || [];
+        arr.push(b.barcode);
+        barcodesMap.set(b.productId, arr);
+      }
+
+      const variantsMap = new Map<string, any[]>();
+      for (const v of dbVariants) {
+        const arr = variantsMap.get(v.productId) || [];
+        arr.push({
+          variantName: v.variantName,
+          variantValue: v.variantValue,
+          sku: v.sku,
+          priceAdjustment: v.priceAdjustment,
+        });
+        variantsMap.set(v.productId, arr);
+      }
+
+      const conversionsMap = new Map<string, any[]>();
+      for (const c of dbConversions) {
+        const arr = conversionsMap.get(c.productId) || [];
+        arr.push({
+          fromUnit: c.fromUnit,
+          toUnit: c.toUnit,
+          conversionFactor: c.conversionFactor,
+        });
+        conversionsMap.set(c.productId, arr);
+      }
+
+      const productsWithDetails = dbProducts.map((p) => ({
+        ...p,
+        alternateBarcodes: barcodesMap.get(p.id) || [],
+        variants: variantsMap.get(p.id) || [],
+        conversions: conversionsMap.get(p.id) || [],
+      }));
+
+      return {
+        success: true,
+        products: productsWithDetails,
+        totalProducts,
+        page,
+        pageSize,
+        stock: dbStock,
+      };
+    } catch (err: any) {
+      console.error("getCatalogProductsFn error:", err);
+      return { success: false, error: err.message || "Failed to fetch catalog products" };
+    }
+  });
+
 export const getHeadOfficeDataFn = createServerFn({ method: "GET" })
-  .validator((d?: { page?: number; pageSize?: number; search?: string }) => d)
+  .validator((d?: { page?: number; pageSize?: number; search?: string; branchId?: string }) => d)
   .handler(async ({ data }) => {
   try {
     const tenantId = await getHeadOfficeTenant();
@@ -161,24 +321,76 @@ export const getHeadOfficeDataFn = createServerFn({ method: "GET" })
     const pageSize = Math.max(1, Math.min(200, Number(data?.pageSize) || 50));
     const offset = (page - 1) * pageSize;
 
-    let prodWhere = eq(products.tenantId, tenantId);
-    if (data?.search && data.search.trim()) {
-      const q = `%${data.search.trim()}%`;
-      prodWhere = and(
-        eq(products.tenantId, tenantId),
-        or(ilike(products.name, q), ilike(products.barcode, q), ilike(products.sku, q)),
-      )!;
-    }
+    let dbProducts: any[] = [];
+    let totalProducts = 0;
 
-    const [dbProducts, totalProductsCountRes] = await Promise.all([
-      db.query.products.findMany({
-        where: prodWhere,
-        limit: pageSize,
-        offset: offset,
-        orderBy: [desc(products.createdAt)],
-      }),
-      db.execute(sql`SELECT count(*)::int as total FROM products WHERE ${prodWhere};`),
-    ]);
+    if (data?.branchId && data.branchId !== "all") {
+      const branchId = data.branchId;
+      let searchFilter = sql`TRUE`;
+      if (data?.search && data.search.trim()) {
+        const q = `%${data.search.trim()}%`;
+        searchFilter = sql`(p.name ILIKE ${q} OR p.barcode ILIKE ${q} OR p.sku ILIKE ${q})`;
+      }
+
+      const [prodsRes, countRes] = await Promise.all([
+        db.execute(sql`
+          SELECT p.*
+          FROM products p
+          INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+          WHERE p.tenant_id = ${tenantId}::uuid
+            AND ${searchFilter}
+          ORDER BY p.created_at DESC
+          LIMIT ${pageSize} OFFSET ${offset};
+        `),
+        db.execute(sql`
+          SELECT count(*)::int as total
+          FROM products p
+          INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+          WHERE p.tenant_id = ${tenantId}::uuid
+            AND ${searchFilter};
+        `),
+      ]);
+
+      const rawProds = Array.isArray(prodsRes) ? prodsRes : (prodsRes as any)?.rows || [];
+      dbProducts = rawProds.map((p: any) => ({
+        id: p.id,
+        tenantId: p.tenant_id,
+        name: p.name,
+        barcode: p.barcode,
+        sku: p.sku,
+        category: p.category,
+        unit: p.unit,
+        costPrice: p.cost_price,
+        salePrice: p.sale_price,
+        isBatchTracked: p.is_batch_tracked,
+        createdAt: p.created_at,
+        updatedAt: p.updated_at,
+      }));
+      const rawCount = Array.isArray(countRes) ? countRes : (countRes as any)?.rows || [];
+      totalProducts = Number(rawCount[0]?.total || 0);
+    } else {
+      let prodWhere = eq(products.tenantId, tenantId);
+      if (data?.search && data.search.trim()) {
+        const q = `%${data.search.trim()}%`;
+        prodWhere = and(
+          eq(products.tenantId, tenantId),
+          or(ilike(products.name, q), ilike(products.barcode, q), ilike(products.sku, q)),
+        )!;
+      }
+
+      const [allProds, totalProductsCountRes] = await Promise.all([
+        db.query.products.findMany({
+          where: prodWhere,
+          limit: pageSize,
+          offset: offset,
+          orderBy: [desc(products.createdAt)],
+        }),
+        db.execute(sql`SELECT count(*)::int as total FROM products WHERE ${prodWhere};`),
+      ]);
+      dbProducts = allProds;
+      const rawCount = Array.isArray(totalProductsCountRes) ? totalProductsCountRes : (totalProductsCountRes as any)?.rows || [];
+      totalProducts = Number(rawCount[0]?.total || 0);
+    }
 
     const productIds = dbProducts.map((p) => p.id);
 
@@ -240,8 +452,6 @@ export const getHeadOfficeDataFn = createServerFn({ method: "GET" })
       variants: variantsMap.get(p.id) || [],
       conversions: conversionsMap.get(p.id) || [],
     }));
-
-    const totalProducts = Number((totalProductsCountRes[0] as any)?.total || 0);
 
     // Batches
     const dbBatches = await db.query.batches.findMany({
@@ -1079,7 +1289,7 @@ export const deleteProductFn = createServerFn({ method: "POST" })
     try {
       const result = await db.transaction(async (tx) => {
         const [existing] = await tx
-          .select({ tenantId: products.tenantId })
+          .select({ id: products.id, tenantId: products.tenantId, name: products.name })
           .from(products)
           .where(eq(products.id, data.id));
         if (!existing || existing.tenantId !== tenantId) {
@@ -1169,8 +1379,39 @@ export const deleteProductFn = createServerFn({ method: "POST" })
           return { success: false, error: "PRODUCT_USED_IN_GRN" };
         }
 
-        // All checks passed, proceed with delete
+        // 7. Inventory Ledger
+        const ledger = await tx
+          .select()
+          .from(inventoryLedger)
+          .where(eq(inventoryLedger.productId, data.id))
+          .limit(1);
+        if (ledger.length > 0) {
+          if (process.env["NODE_ENV"] !== "production") {
+            console.log(`[DEBUG] Delete blocked: product ${data.id} has ledger entries`, ledger);
+          }
+          return { success: false, error: "PRODUCT_USED_IN_LEDGER" };
+        }
+
+        // All checks passed -> Cascade delete child configurations
+        await tx.delete(priceOverrideRequests).where(eq(priceOverrideRequests.productId, data.id));
+        await tx.delete(stockLevels).where(eq(stockLevels.productId, data.id));
+        await tx.delete(productBarcodes).where(eq(productBarcodes.productId, data.id));
+        await tx.delete(productVariants).where(eq(productVariants.productId, data.id));
+        await tx.delete(unitConversions).where(eq(unitConversions.productId, data.id));
+        await tx.delete(stockAdjustments).where(eq(stockAdjustments.productId, data.id));
+
+        // Hard-delete the product row itself
         await tx.delete(products).where(eq(products.id, data.id));
+
+        await logAuditAction({
+          action: "Delete Product",
+          entityType: "product",
+          entityId: data.id,
+          details: { productId: data.id, productName: existing.name },
+          tenantId,
+          userId: sessionRes.session.userId,
+        });
+
         return { success: true };
       });
       return result;
@@ -1178,7 +1419,7 @@ export const deleteProductFn = createServerFn({ method: "POST" })
       if (process.env["NODE_ENV"] !== "production") {
         console.error(`[ERROR] Delete failed for product ${data.id}:`, error);
       }
-      return { success: false, error: "Failed to delete product" };
+      return { success: false, error: error.message || "Failed to delete product" };
     }
   });
 
