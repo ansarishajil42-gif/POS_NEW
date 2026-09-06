@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import crypto from "crypto";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   aggregatorConnections,
@@ -350,18 +350,26 @@ aggregatorSftpRouter.post("/connections", async (req: Request, res: Response) =>
     sftpPassword,
     remoteDirectory,
     vendorId,
+    storeVendorId: storeVendorIdInput,
+    store_vendor_id,
+    filenamePrefix: filenamePrefixInput,
+    filename_prefix,
     priceFormat,
     syncFrequency,
     isPaused,
     isActive,
   } = req.body;
 
-  if (!aggregatorName) {
+  const storeVendorId = storeVendorIdInput !== undefined ? storeVendorIdInput : store_vendor_id;
+  const filenamePrefix = filenamePrefixInput !== undefined ? filenamePrefixInput : filename_prefix;
+
+  if (!aggregatorName && !id) {
     return res.status(400).json({ success: false, error: "aggregatorName is required" });
   }
 
+  const effectiveAggregator = aggregatorName || "talabat";
   try {
-    getAdapter(aggregatorName);
+    getAdapter(effectiveAggregator);
   } catch (err: any) {
     return res.status(400).json({ success: false, error: err.message });
   }
@@ -380,18 +388,24 @@ aggregatorSftpRouter.post("/connections", async (req: Request, res: Response) =>
     }
 
     const rawHost = sftpHost !== undefined ? sftpHost : existingRecord?.sftpHost;
+    const cleanDir = (remoteDirectory !== undefined ? remoteDirectory : existingRecord?.remoteDirectory || "assortment")
+      .replace(/^\/+|\/+$/g, "")
+      .toLowerCase()
+      .trim() || "assortment";
 
     if (existingRecord) {
       const updatedValues = {
         tenantId: tenantId || existingRecord.tenantId,
         branchId: branchId || existingRecord.branchId,
-        aggregatorName: (aggregatorName || "talabat").toLowerCase(),
+        aggregatorName: (aggregatorName || existingRecord.aggregatorName || "talabat").toLowerCase(),
         sftpHost: rawHost ? cleanSftpHost(rawHost) : null,
         sftpPort: sftpPort ? Number(sftpPort) : (existingRecord.sftpPort || 22),
         sftpUsername: sftpUsername !== undefined ? sftpUsername : existingRecord.sftpUsername,
         sftpPassword: passwordEncrypted,
-        remoteDirectory: remoteDirectory || existingRecord.remoteDirectory || "/Assortment",
+        remoteDirectory: cleanDir,
         vendorId: vendorId !== undefined ? vendorId : existingRecord.vendorId,
+        storeVendorId: storeVendorId !== undefined ? storeVendorId : existingRecord.storeVendorId,
+        filenamePrefix: filenamePrefix !== undefined ? filenamePrefix : existingRecord.filenamePrefix,
         priceFormat: priceFormat || existingRecord.priceFormat || "price_discounted",
         syncFrequency: syncFrequency || existingRecord.syncFrequency || "manual",
         isPaused: isPaused !== undefined ? Boolean(isPaused) : (existingRecord.isPaused ?? false),
@@ -422,8 +436,10 @@ aggregatorSftpRouter.post("/connections", async (req: Request, res: Response) =>
         sftpPort: sftpPort ? Number(sftpPort) : 22,
         sftpUsername: sftpUsername || "",
         sftpPassword: passwordEncrypted,
-        remoteDirectory: remoteDirectory || "/Assortment",
+        remoteDirectory: cleanDir,
         vendorId: vendorId || "",
+        storeVendorId: storeVendorId || "",
+        filenamePrefix: filenamePrefix || "",
         priceFormat: priceFormat || "price_discounted",
         syncFrequency: syncFrequency || "manual",
         isPaused: isPaused !== undefined ? Boolean(isPaused) : false,
@@ -453,10 +469,41 @@ aggregatorSftpRouter.post("/connections", async (req: Request, res: Response) =>
 // 2. GET /api/aggregator-sftp/connections - List connections
 aggregatorSftpRouter.get("/connections", async (req: Request, res: Response) => {
   try {
-    const rawConns = await db.select().from(aggregatorConnections);
-    const connections = rawConns.map((conn) => ({
-      ...conn,
-      sftpPassword: conn.sftpPassword ? "••••••••" : "",
+    const rows: any[] = await db.execute(sql`
+      SELECT 
+        c.id, c.tenant_id, c.branch_id, b.name as branch_name, c.aggregator_name, 
+        c.sftp_host, c.sftp_port, c.sftp_username, c.sftp_password, c.remote_directory, 
+        c.vendor_id, c.store_vendor_id, c.filename_prefix, c.price_format, 
+        c.sync_frequency, c.is_paused, c.consecutive_failures, c.last_scheduled_sync_at, 
+        c.has_pending_changes, c.is_active, c.created_at, c.updated_at
+      FROM aggregator_connections c
+      LEFT JOIN branches b ON c.branch_id = b.id
+      ORDER BY c.created_at DESC;
+    `);
+
+    const connections = rows.map((r: any) => ({
+      id: r.id,
+      tenantId: r.tenant_id,
+      branchId: r.branch_id,
+      branchName: r.branch_name || "Main Branch",
+      aggregatorName: r.aggregator_name || "talabat",
+      sftpHost: r.sftp_host || "",
+      sftpPort: r.sftp_port || 22,
+      sftpUsername: r.sftp_username || "",
+      sftpPassword: r.sftp_password ? "••••••••" : "",
+      remoteDirectory: r.remote_directory || "/Assortment",
+      vendorId: r.vendor_id || "",
+      storeVendorId: r.store_vendor_id || "",
+      filenamePrefix: r.filename_prefix || "",
+      priceFormat: r.price_format || "price_discounted",
+      syncFrequency: r.sync_frequency || "manual",
+      isPaused: Boolean(r.is_paused),
+      consecutiveFailures: r.consecutive_failures || 0,
+      lastScheduledSyncAt: r.last_scheduled_sync_at,
+      hasPendingChanges: Boolean(r.has_pending_changes),
+      isActive: Boolean(r.is_active),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
     }));
 
     res.json({
@@ -550,202 +597,391 @@ aggregatorSftpRouter.delete("/connections/:id", async (req: Request, res: Respon
   }
 });
 
-// 5. GET /api/aggregator-sftp/preview-csv/:connectionId - In-memory Preview via Adapter
-aggregatorSftpRouter.get("/preview-csv/:connectionId", async (req: Request, res: Response) => {
-  const { connectionId } = req.params;
-  let conn: any = null;
+// Helper to fetch branch-scoped product data + active promotions from DB with optional time-window filter
+export async function getBranchScopedProductItems(
+  tenantId: string,
+  branchId: string,
+  windowStart?: Date | string | null
+): Promise<ProductData[]> {
+  const filterDate = windowStart
+    ? windowStart instanceof Date
+      ? windowStart.toISOString()
+      : !isNaN(Date.parse(String(windowStart)))
+      ? new Date(windowStart).toISOString()
+      : null
+    : null;
 
-  if (isUuid(connectionId)) {
-    const list = await db.select().from(aggregatorConnections).where(eq(aggregatorConnections.id, connectionId));
-    conn = list[0];
+  const joinedRows: any[] = filterDate
+    ? await db.execute(sql`
+        SELECT 
+          p.id, 
+          p.barcode, 
+          p.sku, 
+          p.sale_price, 
+          p.category, 
+          COALESCE(sl.stock, 0) as stock, 
+          sl.price_override
+        FROM products p
+        INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+        WHERE p.tenant_id = ${tenantId}::uuid
+          AND (
+            p.created_at >= ${filterDate}::timestamp 
+            OR p.updated_at >= ${filterDate}::timestamp 
+            OR sl.updated_at >= ${filterDate}::timestamp
+          );
+      `)
+    : await db.execute(sql`
+        SELECT 
+          p.id, 
+          p.barcode, 
+          p.sku, 
+          p.sale_price, 
+          p.category, 
+          COALESCE(sl.stock, 0) as stock, 
+          sl.price_override
+        FROM products p
+        INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+        WHERE p.tenant_id = ${tenantId}::uuid;
+      `);
+
+  if (!joinedRows || joinedRows.length === 0) {
+    if (filterDate) {
+      return [];
+    }
+    throw new Error("No products found with stock levels in this branch.");
   }
 
-  const vendorId = conn?.vendorId || "vendor_id";
-  const priceFormat = conn?.priceFormat || "price_discounted";
-  const aggregatorName = conn?.aggregatorName || "talabat";
+  let dbPromotions: any[] = [];
+  try {
+    dbPromotions = await db.select().from(promotions).where(eq(promotions.tenantId, tenantId));
+  } catch (err) {}
+
+  const now = new Date();
+  const activePromos = dbPromotions.filter((p) => {
+    if (!p.status || p.status.toLowerCase() !== "active") return false;
+    const start = new Date(p.startDate);
+    const end = new Date(p.endDate);
+    return now >= start && now <= end;
+  });
+
+  return joinedRows.map((p: any) => {
+    const branchStock = Number(p.stock) || 0;
+    const priceToUse = p.price_override ? String(p.price_override) : p.sale_price || "15.00";
+    const isProductActiveInBranch = branchStock > 0;
+
+    const matchingPromo = activePromos.find((promo) => {
+      if (promo.targetProductIds) {
+        try {
+          const ids: string[] =
+            typeof promo.targetProductIds === "string" && promo.targetProductIds.startsWith("[")
+              ? JSON.parse(promo.targetProductIds)
+              : promo.targetProductIds.split(",").map((s: string) => s.trim());
+          if (ids.includes(p.id)) return true;
+        } catch (e) {
+          if (promo.targetProductIds.includes(p.id)) return true;
+        }
+      }
+      if (promo.targetCategory && p.category) {
+        if (promo.targetCategory.toLowerCase() === p.category.toLowerCase()) return true;
+      }
+      if (promo.target === "All" || (!promo.targetCategory && !promo.targetProductIds)) return true;
+      return false;
+    });
+
+    let promoObj = null;
+    if (matchingPromo) {
+      const priceNum = parseFloat(priceToUse);
+      const discountValNum = parseFloat(matchingPromo.discountValue || "0.00");
+      let calculatedDisc = priceNum;
+      const dType = (matchingPromo.discountType || "").toLowerCase();
+      if (dType === "percentage") {
+        calculatedDisc = Math.max(0, priceNum * (1 - discountValNum / 100));
+      } else if (dType === "fixed") {
+        calculatedDisc = Math.max(0, priceNum - discountValNum);
+      }
+
+      promoObj = {
+        startDate: matchingPromo.startDate ? new Date(matchingPromo.startDate) : now,
+        endDate: matchingPromo.endDate ? new Date(matchingPromo.endDate) : new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
+        discountedPrice: calculatedDisc.toFixed(2),
+        maxNoOfOrders: matchingPromo.maxQty ? String(matchingPromo.maxQty) : "500",
+      };
+    }
+
+    return {
+      id: p.id,
+      barcode: p.barcode ? p.barcode.trim() : "",
+      sku: p.sku ? p.sku.trim() : "",
+      price: priceToUse,
+      active: isProductActiveInBranch,
+      promotion: promoObj,
+    };
+  });
+}
+
+// 4.1 GET /api/aggregator-sftp/summary/:connectionId - Lightweight sync summary with optional time-window filter
+aggregatorSftpRouter.get("/summary/:connectionId", async (req: Request, res: Response) => {
+  const { connectionId } = req.params;
+  if (!isUuid(connectionId)) {
+    return res.status(400).json({ success: false, error: "Invalid Connection ID" });
+  }
 
   try {
-    const items = await fetchDbProductItems();
-    const payload = generateSingleFileCsvPayload(vendorId, priceFormat, items, aggregatorName);
+    const list: any[] = await db.execute(sql`
+      SELECT c.id, c.tenant_id, c.branch_id, b.name as branch_name, c.vendor_id, c.store_vendor_id, c.filename_prefix, c.price_format, c.aggregator_name, c.remote_directory, b.tenant_id as branch_tenant_id
+      FROM aggregator_connections c
+      LEFT JOIN branches b ON c.branch_id = b.id
+      WHERE c.id::text = ${connectionId}
+    `);
 
-    if (conn && conn.id) {
-      await db.insert(aggregatorSyncLogs).values({
-        aggregatorConnectionId: conn.id,
-        syncType: "preview",
-        status: "preview_only",
-        fileName: payload.fileName,
-        rowCount: payload.recordCount,
-        createdAt: new Date(),
-      });
+    if (!list || list.length === 0) {
+      return res.status(404).json({ success: false, error: "Connection not found" });
     }
+
+    const conn = list[0];
+    const tenantId = conn.tenant_id || conn.branch_tenant_id;
+    const branchId = conn.branch_id;
+    const storeId = (conn.store_vendor_id || conn.vendor_id || "vendor").trim();
+    const prefix = (conn.filename_prefix || "assortment").trim();
+    const fileName = `${prefix}_${storeId}.csv`;
+    const remoteDirectory = (conn.remote_directory || "assortment").replace(/^\/+|\/+$/g, "").toLowerCase().trim() || "assortment";
+    const remotePath = `${remoteDirectory}/${fileName}`;
+
+    const rawWindowStart = req.query.windowStart ? String(req.query.windowStart) : null;
+    const filterDate = rawWindowStart && !isNaN(Date.parse(rawWindowStart)) ? new Date(rawWindowStart).toISOString() : null;
+
+    // Fast COUNT query via INNER JOIN on stock_levels with optional time-window filter
+    const countResult: any[] = filterDate
+      ? await db.execute(sql`
+          SELECT COUNT(*) as total
+          FROM products p
+          INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+          WHERE p.tenant_id = ${tenantId}::uuid
+            AND (
+              p.created_at >= ${filterDate}::timestamp 
+              OR p.updated_at >= ${filterDate}::timestamp 
+              OR sl.updated_at >= ${filterDate}::timestamp
+            );
+        `)
+      : await db.execute(sql`
+          SELECT COUNT(*) as total
+          FROM products p
+          INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+          WHERE p.tenant_id = ${tenantId}::uuid;
+        `);
+
+    const recordCount = Number(countResult[0]?.total || 0);
+    const estimatedSizeBytes = recordCount > 0 ? recordCount * 28 + 120 : 0;
+
+    res.json({
+      success: true,
+      fileName,
+      remotePath,
+      branchName: conn.branch_name || "Main Branch",
+      recordCount,
+      estimatedSizeBytes,
+      isSummaryOnly: true,
+      timeWindow: rawWindowStart || null,
+    });
+  } catch (err: any) {
+    console.error("Summary error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. GET /api/aggregator-sftp/preview-csv/:connectionId - Generate CSV for Preview / Download Only with optional time-window
+aggregatorSftpRouter.get("/preview-csv/:connectionId", async (req: Request, res: Response) => {
+  const { connectionId } = req.params;
+  if (!isUuid(connectionId)) {
+    return res.status(400).json({ success: false, error: "Invalid Connection ID" });
+  }
+
+  try {
+    const list: any[] = await db.execute(sql`SELECT * FROM aggregator_connections WHERE id::text = ${connectionId};`);
+    const conn = list[0];
+    if (!conn) return res.status(404).json({ success: false, error: "Connection not found" });
+
+    const tenantId = conn.tenant_id;
+    const branchId = conn.branch_id;
+    const vendorId = (conn.vendor_id || "vendor_id").trim();
+    const storeVendorId = (conn.store_vendor_id || "").trim();
+    const filenamePrefix = (conn.filename_prefix || "").trim();
+    const priceFormat = conn.price_format || "price_discounted";
+    const aggregatorName = conn.aggregator_name || "talabat";
+    const rawWindowStart = req.query.windowStart ? String(req.query.windowStart) : null;
+
+    const items = await getBranchScopedProductItems(tenantId, branchId, rawWindowStart);
+    const adapter = getAdapter(aggregatorName);
+    const fileResult = adapter.generateFile(items, { vendorId, storeVendorId, filenamePrefix, priceFormat });
+
+    const normalizedDir = (conn.remote_directory || "assortment").replace(/^\/+|\/+$/g, "").toLowerCase().trim() || "assortment";
 
     res.json({
       success: true,
       isPreviewOnly: true,
-      fileName: payload.fileName,
-      remotePath: `${conn?.remoteDirectory || "/Assortment"}/${payload.fileName}`,
-      recordCount: payload.recordCount,
-      fileSizeBytes: Buffer.byteLength(payload.csvContent, "utf-8"),
-      csvContent: payload.csvContent,
-      warning: payload.warning,
+      fileName: fileResult.fileName,
+      remotePath: `${normalizedDir}/${fileResult.fileName}`,
+      recordCount: fileResult.recordCount,
+      fileSizeBytes: Buffer.byteLength(fileResult.fileContent, "utf-8"),
+      csvContent: fileResult.fileContent,
+      warning: fileResult.warning,
+      timeWindow: rawWindowStart || null,
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 6. POST /api/aggregator-sftp/sync/:connectionId - Manual Sync via Adapter (Rejects if is_active === false)
+// 6. POST /api/aggregator-sftp/sync/:connectionId - Live Sync with 5-minute cooldown & post-upload verification
 aggregatorSftpRouter.post("/sync/:connectionId", async (req: Request, res: Response) => {
   const { connectionId } = req.params;
   if (!isUuid(connectionId)) {
     return res.status(400).json({ success: false, error: "Invalid Connection ID" });
   }
 
-  const list = await db.select().from(aggregatorConnections).where(eq(aggregatorConnections.id, connectionId));
+  const list: any[] = await db.execute(sql`SELECT * FROM aggregator_connections WHERE id::text = ${connectionId};`);
   const conn = list[0];
 
   if (!conn) {
     return res.status(404).json({ success: false, error: "Connection configuration not found." });
   }
 
-  if (!conn.isActive) {
-    await db.insert(aggregatorSyncLogs).values({
-      aggregatorConnectionId: connectionId,
-      syncType: "manual",
-      status: "failed",
-      fileName: `assortment_${conn.vendorId || "vendor"}.csv`,
-      rowCount: 0,
-      errorMessage: "Sync disabled: Connection is inactive. Activation is required before live SFTP transmission.",
-      createdAt: new Date(),
-    });
+  const storeId = (conn.store_vendor_id || conn.vendor_id || "vendor").trim();
+  const prefix = (conn.filename_prefix || "assortment").trim();
+  const defaultFileName = `${prefix}_${storeId}.csv`;
 
-    return res.status(403).json({
+  if (!conn.is_active) {
+    await db.execute(sql`
+      INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
+      VALUES (${connectionId}::uuid, 'manual', 'failed', ${defaultFileName}, 0, 'Sync disabled: Connection is inactive. Activation is required before live SFTP transmission.', NOW());
+    `);
+    return res.status(403).json({ success: false, error: "Sync is disabled until this connection is verified and activated." });
+  }
+
+  // 1. 5-Minute Rate Limit Cooldown Check
+  const FIVE_MINUTES_MS = 5 * 60 * 1000;
+  if (conn.last_scheduled_sync_at) {
+    const elapsedMs = Date.now() - new Date(conn.last_scheduled_sync_at).getTime();
+    if (elapsedMs < FIVE_MINUTES_MS) {
+      const remainingSec = Math.ceil((FIVE_MINUTES_MS - elapsedMs) / 1000);
+      const remainingMin = (remainingSec / 60).toFixed(1);
+      return res.status(429).json({
+        success: false,
+        error: `Rate limit cooldown active: Please wait ${remainingSec}s (~${remainingMin} min) before syncing again. Talabat limits catalog updates to once every 5 minutes.`,
+      });
+    }
+  }
+
+  const rawWindowStart = (req.body?.windowStart as string) || (req.query.windowStart as string) || null;
+
+  let fileName = defaultFileName;
+  let csvContent: string;
+  let recordCount: number;
+
+  try {
+    const tenantId = conn.tenant_id;
+    const branchId = conn.branch_id;
+    const vendorId = (conn.vendor_id || "vendor_id").trim();
+    const storeVendorId = (conn.store_vendor_id || "").trim();
+    const filenamePrefix = (conn.filename_prefix || "").trim();
+    const priceFormat = conn.price_format || "price_discounted";
+    const aggregatorName = conn.aggregator_name || "talabat";
+
+    const items = await getBranchScopedProductItems(tenantId, branchId, rawWindowStart);
+    const adapter = getAdapter(aggregatorName);
+    const fileResult = adapter.generateFile(items, { vendorId, storeVendorId, filenamePrefix, priceFormat });
+
+    fileName = fileResult.fileName;
+    csvContent = fileResult.fileContent;
+    recordCount = fileResult.recordCount;
+  } catch (err: any) {
+    await db.execute(sql`
+      INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
+      VALUES (${connectionId}::uuid, 'manual', 'failed', ${defaultFileName}, 0, ${"Failed generating CSV payload: " + err.message}, NOW());
+    `);
+    return res.status(500).json({ success: false, error: "Failed generating CSV payload: " + err.message });
+  }
+
+  const hostClean = cleanSftpHost(conn.sftp_host || "");
+  const username = (conn.vendor_id || conn.sftp_username || "").trim();
+  const rawPassword = (conn.sftp_password || "").trim();
+  const password = decryptSecret(rawPassword);
+
+  if (!password) {
+    return res.status(400).json({
       success: false,
-      error: "Sync is disabled until this connection is verified and activated.",
+      error: "Password decryption returned empty value. Please re-enter the password in Connection Settings.",
     });
   }
 
   try {
-    const decryptedPassword = decryptSecret(conn.sftpPassword || "");
-    const items = await fetchDbProductItems();
-    const payload = generateSingleFileCsvPayload(conn.vendorId || "", (conn.priceFormat as any) || "price_discounted", items, conn.aggregatorName);
-    const bytes = Buffer.byteLength(payload.csvContent, "utf-8");
-    const now = new Date();
+    const SftpClient = (await import("ssh2-sftp-client")).default;
+    const sftp = new SftpClient();
 
-    const hostClean = cleanSftpHost(conn.sftpHost || "");
+    await sftp.connect({
+      host: hostClean,
+      port: conn.sftp_port || 22,
+      username: username,
+      password: password,
+      tryKeyboard: true,
+      readyTimeout: 25000,
+    });
 
-    // Perform real SFTP upload if host is non-dummy
-    if (hostClean && hostClean !== "test.local" && hostClean !== "invalid.host") {
-      try {
-        const SftpClient = (await import("ssh2-sftp-client")).default;
-        const sftp = new SftpClient();
-        await sftp.connect({
-          host: hostClean,
-          port: conn.sftpPort || 22,
-          username: (conn.sftpUsername || conn.vendorId || "").trim(),
-          password: decryptedPassword.trim(),
-          readyTimeout: 25000,
-          algorithms: {
-            serverHostKey: [
-              "ssh-rsa",
-              "rsa-sha2-256",
-              "rsa-sha2-512",
-              "ecdsa-sha2-nistp256",
-              "ecdsa-sha2-nistp384",
-              "ecdsa-sha2-nistp521",
-              "ssh-ed25519",
-            ],
-            cipher: [
-              "aes128-ctr",
-              "aes192-ctr",
-              "aes256-ctr",
-              "aes128-gcm",
-              "aes128-gcm@openssh.com",
-              "aes256-gcm",
-              "aes256-gcm@openssh.com",
-              "aes128-cbc",
-              "aes192-cbc",
-              "aes256-cbc",
-            ],
-            kex: [
-              "curve25519-sha256",
-              "curve25519-sha256@libssh.org",
-              "ecdh-sha2-nistp256",
-              "ecdh-sha2-nistp384",
-              "ecdh-sha2-nistp521",
-              "diffie-hellman-group14-sha256",
-              "diffie-hellman-group14-sha1",
-              "diffie-hellman-group1-sha1",
-            ],
-          },
-        });
-        const remoteFilePath = `${conn.remoteDirectory || "/Assortment"}/${payload.fileName}`;
-        const fileBuffer = Buffer.from(payload.csvContent, "utf-8");
-        await sftp.put(fileBuffer, remoteFilePath);
-        await sftp.end();
-      } catch (sftpErr: any) {
-        // Step 5 Failure Safeguard: Auto-deactivate on upload failure
-        await db
-          .update(aggregatorConnections)
-          .set({
-            isActive: false,
-            consecutiveFailures: (conn.consecutiveFailures || 0) + 1,
-            updatedAt: new Date(),
-          })
-          .where(eq(aggregatorConnections.id, connectionId));
+    const normalizedDir = (conn.remote_directory || "assortment").replace(/^\/+|\/+$/g, "").toLowerCase().trim() || "assortment";
+    const targetPath = `${normalizedDir}/${fileName}`;
+    const fileBuffer = Buffer.from(csvContent, "utf-8");
 
-        throw new Error(`SFTP Transmission Failure (${hostClean}): ${sftpErr.message}`);
-      }
+    await sftp.put(fileBuffer, targetPath);
+
+    // Post-upload verification
+    const dirListing = await sftp.list(normalizedDir);
+    const fileExists = dirListing.some((item: any) => item.name === fileName);
+
+    if (!fileExists) {
+      await sftp.end();
+      throw new Error(`Post-upload verification failed: File '${fileName}' was not found in directory '${normalizedDir}' after upload.`);
     }
 
-    await db
-      .update(aggregatorConnections)
-      .set({
-        consecutiveFailures: 0,
-        updatedAt: now,
-      })
-      .where(eq(aggregatorConnections.id, connectionId));
+    await sftp.end();
 
-    const userId = isUuid(req.body.triggeredByUserId || "") ? req.body.triggeredByUserId : null;
+    await db.execute(sql`
+      INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
+      VALUES (${connectionId}::uuid, 'manual', 'success', ${fileName}, ${recordCount}, NULL, NOW());
+    `);
 
-    await db.insert(aggregatorSyncLogs).values({
-      aggregatorConnectionId: connectionId,
-      syncType: "manual",
-      status: "success",
-      fileName: payload.fileName,
-      rowCount: payload.recordCount,
-      triggeredByUserId: userId,
-      createdAt: now,
-    });
+    await db.execute(sql`
+      UPDATE aggregator_connections
+      SET consecutive_failures = 0, last_scheduled_sync_at = NOW(), updated_at = NOW()
+      WHERE id::text = ${connectionId};
+    `);
 
     res.json({
       success: true,
-      message: `Successfully uploaded ${payload.fileName} (${payload.recordCount} records) to ${conn.sftpHost}:${conn.remoteDirectory}/${payload.fileName}`,
-      details: {
-        host: conn.sftpHost,
-        port: conn.sftpPort,
-        remoteDirectory: conn.remoteDirectory,
-        fileName: payload.fileName,
-        rowCount: payload.recordCount,
-        fileSizeBytes: bytes,
-        timestamp: now.toISOString(),
-        warning: payload.warning,
-      },
+      message: `Successfully uploaded and verified ${fileName} (${recordCount} records) in ${targetPath}`,
     });
-  } catch (err: any) {
-    await db.insert(aggregatorSyncLogs).values({
-      aggregatorConnectionId: connectionId,
-      syncType: "manual",
-      status: "failed",
-      fileName: `assortment_${conn.vendorId || "vendor"}.csv`,
-      rowCount: 0,
-      errorMessage: err.message,
-      createdAt: new Date(),
-    });
+  } catch (sftpErr: any) {
+    const errorMsg = sftpErr.message || "SFTP transmission error";
+    console.error("SFTP Upload Failed:", errorMsg);
+
+    await db.execute(sql`
+      INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
+      VALUES (${connectionId}::uuid, 'manual', 'failed', ${fileName}, ${recordCount || 0}, ${errorMsg}, NOW());
+    `);
+
+    const newFailCount = (conn.consecutive_failures || 0) + 1;
+    const shouldDeactivate = newFailCount >= 3;
+
+    await db.execute(sql`
+      UPDATE aggregator_connections
+      SET consecutive_failures = ${newFailCount},
+          is_active = ${shouldDeactivate ? false : conn.is_active},
+          updated_at = NOW()
+      WHERE id::text = ${connectionId};
+    `);
 
     res.status(500).json({
       success: false,
-      error: `SFTP upload failed: ${err.message}`,
+      error: `SFTP Transmission Failed: ${errorMsg}${shouldDeactivate ? " (Connection auto-deactivated after 3 failures)" : ""}`,
     });
   }
 });
@@ -760,7 +996,7 @@ aggregatorSftpRouter.post("/trigger-scheduled-runner", async (req: Request, res:
   });
 });
 
-// 8. GET /api/aggregator-sftp/logs/:connectionId
+// 8. GET /api/aggregator-sftp/logs/:connectionId - Fetch audit logs for a connection
 aggregatorSftpRouter.get("/logs/:connectionId", async (req: Request, res: Response) => {
   const { connectionId } = req.params;
   if (!isUuid(connectionId)) {
@@ -777,6 +1013,56 @@ aggregatorSftpRouter.get("/logs/:connectionId", async (req: Request, res: Respon
     res.json({
       success: true,
       logs,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 9. DELETE /api/aggregator-sftp/logs/:logId - Delete a single log record
+aggregatorSftpRouter.delete("/logs/:logId", async (req: Request, res: Response) => {
+  const { logId } = req.params;
+  if (!isUuid(logId)) {
+    return res.status(400).json({ success: false, error: "Invalid Log ID" });
+  }
+
+  try {
+    const deleted = await db
+      .delete(aggregatorSyncLogs)
+      .where(eq(aggregatorSyncLogs.id, logId))
+      .returning();
+
+    if (deleted.length === 0) {
+      return res.status(404).json({ success: false, error: "Log record not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "Log record deleted successfully.",
+      deletedId: logId,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 10. DELETE /api/aggregator-sftp/logs/connection/:connectionId - Clear all logs for a connection
+aggregatorSftpRouter.delete("/logs/connection/:connectionId", async (req: Request, res: Response) => {
+  const { connectionId } = req.params;
+  if (!isUuid(connectionId)) {
+    return res.status(400).json({ success: false, error: "Invalid Connection ID" });
+  }
+
+  try {
+    const deleted = await db
+      .delete(aggregatorSyncLogs)
+      .where(eq(aggregatorSyncLogs.aggregatorConnectionId, connectionId))
+      .returning();
+
+    res.json({
+      success: true,
+      message: `Cleared ${deleted.length} log records for this connection.`,
+      deletedCount: deleted.length,
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
