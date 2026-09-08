@@ -29,6 +29,8 @@ import {
   FileSpreadsheet,
   Upload,
   Loader2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
   Select,
@@ -226,6 +228,23 @@ function InventoryManager() {
     const sku = (s.sku || s.barcode || "").toLowerCase();
     return productName.includes(query) || sku.includes(query);
   });
+
+  const [alertsPage, setAlertsPage] = useState(1);
+  const alertsPerPage = 10;
+
+  const allAlertsList = useMemo(() => {
+    const expired = (alerts?.expired || []).map((a: any) => ({ ...a, alertType: "expired" }));
+    const nearExpiry = (alerts?.nearExpiry || []).map((a: any) => ({ ...a, alertType: "nearExpiry" }));
+    const lowStock = (alerts?.lowStock || []).map((a: any) => ({ ...a, alertType: "lowStock" }));
+    return [...expired, ...nearExpiry, ...lowStock];
+  }, [alerts]);
+
+  const totalAlertItems = allAlertsList.length;
+  const totalAlertPages = Math.ceil(totalAlertItems / alertsPerPage) || 1;
+  const paginatedAlerts = useMemo(() => {
+    const start = (alertsPage - 1) * alertsPerPage;
+    return allAlertsList.slice(start, start + alertsPerPage);
+  }, [allAlertsList, alertsPage]);
 
   const handleExportExcel = async () => {
     setIsExportingExcel(true);
@@ -801,120 +820,156 @@ function InventoryManager() {
             </div>
           </TabsContent>
 
-          <TabsContent value="alerts" className="mt-0">
+          <TabsContent value="alerts" className="mt-0 space-y-4">
             <div className="grid gap-4 lg:grid-cols-2">
-              {alerts.lowStock.length === 0 &&
-                alerts.nearExpiry.length === 0 &&
-                alerts.expired.length === 0 && (
-                  <div className="col-span-2 text-center text-muted-foreground p-8">
-                    No alerts. Everything is healthy!
-                  </div>
-                )}
-              {alerts.expired.map((alert: any) => (
-                <div
-                  key={alert.id}
-                  className="panel p-5 border-l-4 border-l-destructive flex flex-col justify-between"
-                >
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <span className="rounded bg-destructive/10 px-2 py-0.5 text-[10px] font-bold text-destructive uppercase">
-                        Expired
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        Batch: {alert.batchNumber}
-                      </span>
-                    </div>
-                    <h3 className="mt-2 font-bold text-ink">{alert.productName}</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Expired on:{" "}
-                      <span className="font-bold text-ink">
-                        {new Date(alert.expiryDate).toLocaleDateString()}
-                      </span>
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">Branch: {alert.branchName}</p>
-                  </div>
+              {totalAlertItems === 0 && (
+                <div className="col-span-2 text-center text-muted-foreground p-8">
+                  No alerts. Everything is healthy!
                 </div>
-              ))}
-              {alerts.nearExpiry.map((alert: any) => {
-                const daysLeft = Math.ceil(
-                  (new Date(alert.expiryDate).getTime() - new Date().getTime()) /
-                    (1000 * 60 * 60 * 24),
-                );
+              )}
+              {paginatedAlerts.map((alert: any) => {
+                if (alert.alertType === "expired") {
+                  return (
+                    <div
+                      key={`exp-${alert.id}`}
+                      className="panel p-5 border-l-4 border-l-destructive flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="rounded bg-destructive/10 px-2 py-0.5 text-[10px] font-bold text-destructive uppercase">
+                            Expired
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            Batch: {alert.batchNumber}
+                          </span>
+                        </div>
+                        <h3 className="mt-2 font-bold text-ink">{alert.productName}</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Expired on:{" "}
+                          <span className="font-bold text-ink">
+                            {new Date(alert.expiryDate).toLocaleDateString()}
+                          </span>
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">Branch: {alert.branchName}</p>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (alert.alertType === "nearExpiry") {
+                  const daysLeft = Math.ceil(
+                    (new Date(alert.expiryDate).getTime() - new Date().getTime()) /
+                      (1000 * 60 * 60 * 24),
+                  );
+                  return (
+                    <div
+                      key={`near-${alert.id}`}
+                      className="panel p-5 border-l-4 border-l-accent flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="rounded bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">
+                            Near Expiry
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            Batch: {alert.batchNumber}
+                          </span>
+                        </div>
+                        <h3 className="mt-2 font-bold text-ink">{alert.productName}</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Expires in: <span className="font-bold text-ink">{daysLeft} days</span>
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Branch: {alert.branchName}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
                   <div
-                    key={alert.id}
+                    key={`low-${alert.id}`}
                     className="panel p-5 border-l-4 border-l-accent flex flex-col justify-between"
                   >
                     <div>
                       <div className="flex items-center justify-between">
                         <span className="rounded bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">
-                          Near Expiry
+                          Critical Stock
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          Batch: {alert.batchNumber}
+                          SKU: {alert.sku || alert.barcode}
                         </span>
                       </div>
                       <h3 className="mt-2 font-bold text-ink">{alert.productName}</h3>
                       <p className="mt-1 text-sm text-muted-foreground">
-                        Expires in: <span className="font-bold text-ink">{daysLeft} days</span>
+                        Current Stock: <span className="font-bold text-ink">{alert.stock}</span>{" "}
+                        (Reorder at {alert.reorderLevel})
                       </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Branch: {alert.branchName}
-                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">Branch: {alert.branchName}</p>
                     </div>
+                    {allowPoDraft ? (
+                      <Button
+                        className="mt-4 w-full"
+                        variant="secondary"
+                        onClick={() => {
+                          setDraftPoForm({
+                            productId: alert.productId,
+                            branchId: alert.branchId,
+                            vendorId: vendors.length > 0 ? vendors[0].id : "",
+                            qty: Math.max(10, alert.reorderLevel - alert.stock),
+                          });
+                          setDraftPoOpen(true);
+                        }}
+                      >
+                        <ShoppingCart className="mr-1.5 h-4 w-4" /> Raise PO Draft
+                      </Button>
+                    ) : (
+                      <div className="relative group mt-4 w-full">
+                        <Button className="w-full" variant="secondary" disabled>
+                          <ShoppingCart className="mr-1.5 h-4 w-4" /> Raise PO Draft
+                        </Button>
+                        <div className="absolute right-0 bottom-full mb-1 hidden w-48 z-10 p-2 text-xs text-white bg-black rounded group-hover:block text-center">
+                          Only Purchasing Officer can create purchase orders.
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
-              {alerts.lowStock.map((alert: any) => (
-                <div
-                  key={alert.id}
-                  className="panel p-5 border-l-4 border-l-accent flex flex-col justify-between"
-                >
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <span className="rounded bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent uppercase">
-                        Critical Stock
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        SKU: {alert.sku || alert.barcode}
-                      </span>
-                    </div>
-                    <h3 className="mt-2 font-bold text-ink">{alert.productName}</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Current Stock: <span className="font-bold text-ink">{alert.stock}</span>{" "}
-                      (Reorder at {alert.reorderLevel})
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">Branch: {alert.branchName}</p>
-                  </div>
-                  {allowPoDraft ? (
-                    <Button
-                      className="mt-4 w-full"
-                      variant="secondary"
-                      onClick={() => {
-                        setDraftPoForm({
-                          productId: alert.productId,
-                          branchId: alert.branchId,
-                          vendorId: vendors.length > 0 ? vendors[0].id : "",
-                          qty: Math.max(10, alert.reorderLevel - alert.stock),
-                        });
-                        setDraftPoOpen(true);
-                      }}
-                    >
-                      <ShoppingCart className="mr-1.5 h-4 w-4" /> Raise PO Draft
-                    </Button>
-                  ) : (
-                    <div className="relative group mt-4 w-full">
-                      <Button className="w-full" variant="secondary" disabled>
-                        <ShoppingCart className="mr-1.5 h-4 w-4" /> Raise PO Draft
-                      </Button>
-                      <div className="absolute right-0 bottom-full mb-1 hidden w-48 z-10 p-2 text-xs text-white bg-black rounded group-hover:block text-center">
-                        Only Purchasing Officer can create purchase orders.
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
             </div>
+
+            {totalAlertItems > 0 && (
+              <div className="flex items-center justify-between border-t border-border pt-4 mt-2 text-xs">
+                <span className="text-muted-foreground font-medium">
+                  Showing {(alertsPage - 1) * alertsPerPage + 1} to{" "}
+                  {Math.min(alertsPage * alertsPerPage, totalAlertItems)} of {totalAlertItems} alerts
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={alertsPage === 1}
+                    onClick={() => setAlertsPage((p) => Math.max(1, p - 1))}
+                    className="h-8 rounded-lg text-xs font-semibold"
+                  >
+                    <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+                  </Button>
+                  <span className="px-2 font-bold text-ink text-xs">
+                    {alertsPage} / {totalAlertPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={alertsPage >= totalAlertPages}
+                    onClick={() => setAlertsPage((p) => Math.min(totalAlertPages, p + 1))}
+                    className="h-8 rounded-lg text-xs font-semibold"
+                  >
+                    Next <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="ledger" className="mt-0">
