@@ -26,7 +26,7 @@ export const getPublishedPostsFn = createServerFn()
     }
   });
 
-export const Route = createFileRoute("/blog")({
+export const Route = createFileRoute("/blog/")({
   head: () => ({
     meta: [
       { title: "POS Blog — cloudynationpos insights" },
@@ -177,10 +177,14 @@ function BlogListPage() {
                           </p>
 
                           {/* Action */}
-                          <div className="mt-6 pt-4 border-t border-border/30 flex items-center justify-between text-sm font-semibold text-primary">
+                          <Link
+                            to="/blog/$slug"
+                            params={{ slug: post.slug }}
+                            className="mt-6 pt-4 border-t border-border/30 flex items-center justify-between text-sm font-semibold text-primary"
+                          >
                             <span>Read article</span>
                             <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1" />
-                          </div>
+                          </Link>
                         </div>
                       </article>
                     </Reveal>

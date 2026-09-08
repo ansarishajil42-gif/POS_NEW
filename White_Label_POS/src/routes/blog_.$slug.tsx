@@ -10,24 +10,33 @@ import { Calendar, User, ArrowLeft, BookOpen, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 // Server function to fetch a single blog post by slug
-export const getSinglePublishedPostFn = createServerFn()
-  .validator((d: { slug: string }) => d)
+export const getSinglePublishedPostFn = createServerFn({ method: "GET" })
+  .validator((d: any) => {
+    if (typeof d === "string") return { slug: d };
+    if (d && typeof d === "object" && d.slug) return { slug: String(d.slug) };
+    if (d && typeof d === "object" && d.data?.slug) return { slug: String(d.data.slug) };
+    return { slug: "" };
+  })
   .handler(async ({ data }) => {
+    const slug = data?.slug || "";
     try {
+      if (!slug) {
+        return { success: false, error: "Missing article slug", post: null };
+      }
       const post = await db.query.blogPosts.findFirst({
-        where: eq(blogPosts.slug, data.slug),
+        where: eq(blogPosts.slug, slug),
       });
       if (!post || post.status !== "Published") {
-        throw new Error("Post not found");
+        return { success: false, error: "Post not found", post: null };
       }
       return { success: true, post };
     } catch (e: any) {
-      console.error(`Failed to fetch public blog post slug=${data.slug}:`, e);
+      console.error(`Failed to fetch public blog post slug=${slug}:`, e);
       return { success: false, error: e.message, post: null };
     }
   });
 
-export const Route = createFileRoute("/blog/$slug")({
+export const Route = createFileRoute("/blog_/$slug")({
   head: ({ loaderData }: any) => ({
     meta: [
       { title: loaderData?.post ? `${loaderData.post.title} — cloudynationpos` : "Article — cloudynationpos" },
@@ -38,7 +47,8 @@ export const Route = createFileRoute("/blog/$slug")({
     ],
   }),
   loader: async ({ params }) => {
-    const res = await getSinglePublishedPostFn({ slug: params.slug });
+    const slug = params?.slug || "";
+    const res = await getSinglePublishedPostFn({ data: { slug } });
     if (!res.success || !res.post) {
       throw new Error("Blog post not found");
     }
