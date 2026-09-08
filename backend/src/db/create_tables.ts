@@ -70,6 +70,53 @@ async function main() {
     );
   `);
 
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "stock_adjustments" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "tenant_id" uuid NOT NULL REFERENCES "tenants"("id") ON DELETE CASCADE,
+      "branch_id" uuid NOT NULL REFERENCES "branches"("id") ON DELETE CASCADE,
+      "product_id" uuid NOT NULL REFERENCES "products"("id") ON DELETE CASCADE,
+      "batch_id" uuid REFERENCES "batches"("id"),
+      "previous_quantity" integer NOT NULL,
+      "quantity_change" integer NOT NULL,
+      "new_quantity" integer NOT NULL,
+      "reason" text NOT NULL,
+      "adjusted_by" uuid REFERENCES "staff_users"("id"),
+      "created_at" timestamp DEFAULT now() NOT NULL
+    );
+  `);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "inventory_ledger" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "tenant_id" uuid NOT NULL REFERENCES "tenants"("id") ON DELETE CASCADE,
+      "branch_id" uuid NOT NULL REFERENCES "branches"("id") ON DELETE CASCADE,
+      "product_id" uuid NOT NULL REFERENCES "products"("id") ON DELETE CASCADE,
+      "batch_id" uuid REFERENCES "batches"("id"),
+      "transaction_type" text NOT NULL,
+      "previous_quantity" integer NOT NULL,
+      "changed_quantity" integer NOT NULL,
+      "new_quantity" integer NOT NULL,
+      "reference_id" text,
+      "reason" text,
+      "created_by" uuid REFERENCES "staff_users"("id"),
+      "created_at" timestamp DEFAULT now() NOT NULL
+    );
+  `);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "product_recipes" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "tenant_id" uuid NOT NULL REFERENCES "tenants"("id") ON DELETE CASCADE,
+      "product_id" uuid NOT NULL REFERENCES "products"("id") ON DELETE CASCADE,
+      "ingredient_product_id" uuid NOT NULL REFERENCES "products"("id") ON DELETE CASCADE,
+      "quantity" numeric(10, 3) NOT NULL,
+      "unit" text NOT NULL,
+      "created_at" timestamp DEFAULT now() NOT NULL,
+      "updated_at" timestamp DEFAULT now() NOT NULL
+    );
+  `);
+
   console.log("Tables created successfully!");
   process.exit(0);
 }
