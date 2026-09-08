@@ -1,4 +1,5 @@
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import { jsPDF } from "jspdf";
 import { useMemo, useState, useEffect } from "react";
 import { useAuth, getSessionServerFn, roleRoutes, type Role } from "@/lib/auth";
