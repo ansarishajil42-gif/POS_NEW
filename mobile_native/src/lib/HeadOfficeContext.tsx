@@ -119,7 +119,9 @@ interface HeadOfficeContextProps {
   fetchBranchStock: (id: string) => Promise<any[]>;
   fetchBranchStaff: (id: string) => Promise<any[]>;
   products: Product[];
-  fetchProducts: () => Promise<void>;
+  productsTotal: number;
+  productsPage: number;
+  fetchProducts: (page?: number, limit?: number, search?: string) => Promise<void>;
   addProduct: (product: any) => Promise<void>;
   updateProduct: (id: string, product: any) => Promise<void>;
   deleteProduct: (id: string) => Promise<void>;
@@ -304,6 +306,8 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
   };
 
   const [products, setProducts] = useState<Product[]>([]);
+  const [productsTotal, setProductsTotal] = useState<number>(0);
+  const [productsPage, setProductsPage] = useState<number>(1);
   const [batches, setBatches] = useState<any[]>([]);
   const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
 
@@ -407,10 +411,14 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
     await fetchStaff(); // Refresh the isCustomized flag on the list
   };
 
-  const fetchProducts = async () => {
+  const fetchProducts = async (page = 1, limit = 50, search = '') => {
     try {
-      const data = await apiClient.get(`/products`) as any[];
-      const formatted = data.map((p: any) => ({
+      const data = await apiClient.get(`/products?page=${page}&limit=${limit}&search=${encodeURIComponent(search)}`) as any;
+      const rawProducts = Array.isArray(data) ? data : (data.products || []);
+      const totalCount = Array.isArray(data) ? rawProducts.length : (data.total || 0);
+      const currentPage = Array.isArray(data) ? 1 : (data.page || page);
+
+      const formatted = rawProducts.map((p: any) => ({
         id: p.id,
         name: p.name,
         sku: p.barcode || '',
@@ -428,6 +436,8 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
         unitConversions: p.unitConversions || [],
       }));
       setProducts(formatted);
+      setProductsTotal(totalCount);
+      setProductsPage(currentPage);
     } catch (err) {
       console.error('Failed to fetch products:', err);
     }
@@ -778,6 +788,8 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       fetchBranchStock,
       fetchBranchStaff,
       products,
+      productsTotal,
+      productsPage,
       fetchProducts,
       addProduct,
       updateProduct,

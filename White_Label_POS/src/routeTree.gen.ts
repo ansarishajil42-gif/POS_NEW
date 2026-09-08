@@ -20,6 +20,7 @@ import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as PurchasingRouteImport } from './routes/purchasing'
 import { Route as StoreManagerRouteImport } from './routes/store-manager'
 import { Route as SuperAdminRouteImport } from './routes/super-admin'
+import { Route as SuperAdminBlogRouteImport } from './routes/super-admin-blog'
 import { Route as VendorPortalRouteImport } from './routes/vendor-portal'
 import { Route as BlogSlugRouteImport } from './routes/blog.$slug'
 
@@ -78,6 +79,11 @@ const SuperAdminRoute = SuperAdminRouteImport.update({
   path: '/super-admin',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SuperAdminBlogRoute = SuperAdminBlogRouteImport.update({
+  id: '/super-admin-blog',
+  path: '/super-admin-blog',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const VendorPortalRoute = VendorPortalRouteImport.update({
   id: '/vendor-portal',
   path: '/vendor-portal',
@@ -101,6 +107,7 @@ export interface FileRoutesByFullPath {
   '/purchasing': typeof PurchasingRoute
   '/store-manager': typeof StoreManagerRoute
   '/super-admin': typeof SuperAdminRoute
+  '/super-admin-blog': typeof SuperAdminBlogRoute
   '/vendor-portal': typeof VendorPortalRoute
   '/blog/$slug': typeof BlogSlugRoute
 }
@@ -116,6 +123,7 @@ export interface FileRoutesByTo {
   '/purchasing': typeof PurchasingRoute
   '/store-manager': typeof StoreManagerRoute
   '/super-admin': typeof SuperAdminRoute
+  '/super-admin-blog': typeof SuperAdminBlogRoute
   '/vendor-portal': typeof VendorPortalRoute
   '/blog/$slug': typeof BlogSlugRoute
 }
@@ -132,6 +140,7 @@ export interface FileRoutesById {
   '/purchasing': typeof PurchasingRoute
   '/store-manager': typeof StoreManagerRoute
   '/super-admin': typeof SuperAdminRoute
+  '/super-admin-blog': typeof SuperAdminBlogRoute
   '/vendor-portal': typeof VendorPortalRoute
   '/blog/$slug': typeof BlogSlugRoute
 }
@@ -149,6 +158,7 @@ export interface FileRouteTypes {
     | '/purchasing'
     | '/store-manager'
     | '/super-admin'
+    | '/super-admin-blog'
     | '/vendor-portal'
     | '/blog/$slug'
   fileRoutesByTo: FileRoutesByTo
@@ -164,6 +174,7 @@ export interface FileRouteTypes {
     | '/purchasing'
     | '/store-manager'
     | '/super-admin'
+    | '/super-admin-blog'
     | '/vendor-portal'
     | '/blog/$slug'
   id:
@@ -179,6 +190,7 @@ export interface FileRouteTypes {
     | '/purchasing'
     | '/store-manager'
     | '/super-admin'
+    | '/super-admin-blog'
     | '/vendor-portal'
     | '/blog/$slug'
   fileRoutesById: FileRoutesById
@@ -195,6 +207,7 @@ export interface RootRouteChildren {
   PurchasingRoute: typeof PurchasingRoute
   StoreManagerRoute: typeof StoreManagerRoute
   SuperAdminRoute: typeof SuperAdminRoute
+  SuperAdminBlogRoute: typeof SuperAdminBlogRoute
   VendorPortalRoute: typeof VendorPortalRoute
 }
 
@@ -277,6 +290,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SuperAdminRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/super-admin-blog': {
+      id: '/super-admin-blog'
+      path: '/super-admin-blog'
+      fullPath: '/super-admin-blog'
+      preLoaderRoute: typeof SuperAdminBlogRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/vendor-portal': {
       id: '/vendor-portal'
       path: '/vendor-portal'
@@ -316,6 +336,7 @@ const rootRouteChildren: RootRouteChildren = {
   PurchasingRoute: PurchasingRoute,
   StoreManagerRoute: StoreManagerRoute,
   SuperAdminRoute: SuperAdminRoute,
+  SuperAdminBlogRoute: SuperAdminBlogRoute,
   VendorPortalRoute: VendorPortalRoute,
 }
 export const routeTree = rootRouteImport

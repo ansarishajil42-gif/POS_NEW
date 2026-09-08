@@ -1,5 +1,4 @@
 import { createServerFn } from "@tanstack/react-start";
-import { createClient } from "@supabase/supabase-js";
 import { db } from "@/server/db";
 import {
   tenants,
@@ -28,7 +27,7 @@ import {
   unitConversions,
   stockAdjustments,
   inventoryLedger,
-  blogPosts,
+  productRecipes,
 } from "@/server/db/schema";
 import { eq, and, sql, desc, inArray, ne, or, ilike, lte, gte } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
@@ -2477,196 +2476,126 @@ export const calculateApplicablePromotionsFn = createServerFn({ method: "POST" }
     return { success: true, results };
   });
 
-export const getBlogPostsFn = createServerFn()
-  .handler(async () => {
-    await getHeadOfficeSession();
-    try {
-      const posts = await db.query.blogPosts.findMany({
-        orderBy: desc(blogPosts.createdAt),
-      });
-      return { success: true, posts };
-    } catch (e: any) {
-      throw new Error(e.message);
-    }
-  });
-
-export const createBlogPostFn = createServerFn({ method: "POST" })
-  .validator((d: {
-    title: string;
-    slug: string;
-    coverImageUrl?: string;
-    shortDescription: string;
-    content: string;
-    status: string;
-    authorName?: string;
-  }) => d)
+export const getProductRecipesServerFn = createServerFn({ method: "GET" })
+  .validator((d?: { productId?: string }) => d)
   .handler(async ({ data }) => {
-    const session = await getHeadOfficeSession();
-    try {
-      const existing = await db.query.blogPosts.findFirst({
-        where: eq(blogPosts.slug, data.slug),
-      });
-      if (existing) {
-        throw new Error("Slug must be unique");
-      }
+    const tenantId = await getHeadOfficeTenant();
 
-      const [newPost] = await db.insert(blogPosts).values({
-        title: data.title,
-        slug: data.slug,
-        coverImageUrl: data.coverImageUrl || null,
-        shortDescription: data.shortDescription,
-        content: data.content,
-        status: data.status || "Draft",
-        authorName: data.authorName || "Admin",
-        publishedAt: data.status === "Published" ? new Date() : null,
-      }).returning();
-
-      await logAuditAction({
-        action: "Create Blog Post",
-        entityType: "blog_post",
-        entityId: newPost.id,
-        tenantId: session.tenantId,
-        userId: session.userId,
-        afterValue: newPost,
-      });
-
-      return { success: true, post: newPost };
-    } catch (e: any) {
-      throw new Error(e.message);
+    const whereConditions: any[] = [eq(productRecipes.tenantId, tenantId)];
+    if (data?.productId) {
+      whereConditions.push(eq(productRecipes.productId, data.productId));
     }
+
+    const recipes = await db
+      .select({
+        id: productRecipes.id,
+        productId: productRecipes.productId,
+        productName: products.name,
+        ingredientProductId: productRecipes.ingredientProductId,
+        quantity: productRecipes.quantity,
+        unit: productRecipes.unit,
+        createdAt: productRecipes.createdAt,
+      })
+      .from(productRecipes)
+      .innerJoin(products, eq(productRecipes.productId, products.id))
+      .where(and(...whereConditions));
+
+    const ingredientIds = recipes.map((r) => r.ingredientProductId);
+    const ingredientsMap: Record<string, any> = {};
+    if (ingredientIds.length > 0) {
+      const ingProducts = await db
+        .select({
+          id: products.id,
+          name: products.name,
+          unit: products.unit,
+          costPrice: products.costPrice,
+        })
+        .from(products)
+        .where(inArray(products.id, ingredientIds));
+
+      ingProducts.forEach((p) => {
+        ingredientsMap[p.id] = p;
+      });
+    }
+
+    const result = recipes.map((r) => ({
+      ...r,
+      ingredientName: ingredientsMap[r.ingredientProductId]?.name || "Unknown Ingredient",
+      ingredientUnit: ingredientsMap[r.ingredientProductId]?.unit || r.unit,
+      ingredientCostPrice: Number(ingredientsMap[r.ingredientProductId]?.costPrice || 0),
+    }));
+
+    return { success: true, recipes: result };
   });
 
-export const updateBlogPostFn = createServerFn({ method: "POST" })
-  .validator((d: {
-    id: string;
-    title: string;
-    slug: string;
-    coverImageUrl?: string;
-    shortDescription: string;
-    content: string;
-    status: string;
-    authorName?: string;
-  }) => d)
+export const saveProductRecipeServerFn = createServerFn({ method: "POST" })
+  .validator(
+    (d: {
+      productId: string;
+      ingredients: Array<{ ingredientProductId: string; quantity: number; unit: string }>;
+    }) => d,
+  )
   .handler(async ({ data }) => {
-    const session = await getHeadOfficeSession();
-    try {
-      const post = await db.query.blogPosts.findFirst({
-        where: eq(blogPosts.id, data.id),
-      });
-      if (!post) {
-        throw new Error("Blog post not found");
-      }
+    const { tenantId, userId } = await getHeadOfficeSession();
 
-      if (data.slug && data.slug !== post.slug) {
-        const existing = await db.query.blogPosts.findFirst({
-          where: eq(blogPosts.slug, data.slug),
-        });
-        if (existing) {
-          throw new Error("Slug must be unique");
-        }
-      }
-
-      const updates: any = {
-        title: data.title,
-        slug: data.slug,
-        coverImageUrl: data.coverImageUrl || null,
-        shortDescription: data.shortDescription,
-        content: data.content,
-        status: data.status,
-        authorName: data.authorName || "Admin",
-        updatedAt: new Date(),
-      };
-
-      if (data.status === "Published" && post.status !== "Published") {
-        updates.publishedAt = new Date();
-      } else if (data.status === "Draft" && post.status === "Published") {
-        updates.publishedAt = null;
-      }
-
-      const [updatedPost] = await db.update(blogPosts)
-        .set(updates)
-        .where(eq(blogPosts.id, data.id))
-        .returning();
-
-      await logAuditAction({
-        action: "Update Blog Post",
-        entityType: "blog_post",
-        entityId: data.id,
-        tenantId: session.tenantId,
-        userId: session.userId,
-        afterValue: updatedPost,
-      });
-
-      return { success: true, post: updatedPost };
-    } catch (e: any) {
-      throw new Error(e.message);
+    if (!data.productId) throw new Error("Product is required");
+    if (!data.ingredients || data.ingredients.length === 0) {
+      throw new Error("At least one ingredient is required for a recipe");
     }
+
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(productRecipes)
+        .where(
+          and(
+            eq(productRecipes.productId, data.productId),
+            eq(productRecipes.tenantId, tenantId),
+          ),
+        );
+
+      const rows = data.ingredients.map((ing) => ({
+        tenantId,
+        productId: data.productId,
+        ingredientProductId: ing.ingredientProductId,
+        quantity: ing.quantity.toString(),
+        unit: ing.unit,
+      }));
+
+      await tx.insert(productRecipes).values(rows);
+    });
+
+    await logAuditAction({
+      tenantId,
+      userId,
+      action: "catalog.recipe_saved",
+      details: { productId: data.productId, ingredientCount: data.ingredients.length },
+    });
+
+    return { success: true };
   });
 
-export const deleteBlogPostFn = createServerFn({ method: "POST" })
-  .validator((d: { id: string }) => d)
+export const deleteProductRecipeServerFn = createServerFn({ method: "POST" })
+  .validator((d: { productId: string }) => d)
   .handler(async ({ data }) => {
-    const session = await getHeadOfficeSession();
-    try {
-      const deleted = await db.delete(blogPosts)
-        .where(eq(blogPosts.id, data.id))
-        .returning();
-      if (deleted.length === 0) {
-        throw new Error("Blog post not found");
-      }
+    const { tenantId, userId } = await getHeadOfficeSession();
+    if (!data.productId) throw new Error("Product is required");
 
-      await logAuditAction({
-        action: "Delete Blog Post",
-        entityType: "blog_post",
-        entityId: data.id,
-        tenantId: session.tenantId,
-        userId: session.userId,
-        beforeValue: deleted[0],
-      });
+    await db
+      .delete(productRecipes)
+      .where(
+        and(
+          eq(productRecipes.productId, data.productId),
+          eq(productRecipes.tenantId, tenantId),
+        ),
+      );
 
-      return { success: true };
-    } catch (e: any) {
-      throw new Error(e.message);
-    }
+    await logAuditAction({
+      tenantId,
+      userId,
+      action: "catalog.recipe_deleted",
+      details: { productId: data.productId },
+    });
+
+    return { success: true };
   });
 
-function getSupabaseClient() {
-  const supabaseKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFnYXV1enVka3ZieGVjcHVrc2hxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwNDMyNTAsImV4cCI6MjEwMjYxOTI1MH0.6byNsZMv_zZnUQX75dUzaEANWhfXx7XExUE-ZQ-RO2w";
-  const supabaseUrl = process.env.SUPABASE_URL || "https://agauuzudkvbxecpukshq.supabase.co";
-  return createClient(supabaseUrl, supabaseKey);
-}
-
-export const uploadBlogCoverFn = createServerFn({ method: "POST" })
-  .validator((d: { base64Data: string; fileName: string; mimeType: string }) => d)
-  .handler(async ({ data }) => {
-    await getHeadOfficeSession();
-    try {
-      const supabaseClient = getSupabaseClient();
-      const buffer = Buffer.from(data.base64Data, "base64");
-      const fileExt = data.fileName.split(".").pop();
-      const newFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
-      const filePath = `covers/${newFileName}`;
-
-      const { data: uploadData, error } = await supabaseClient.storage
-        .from("blog-covers")
-        .upload(filePath, buffer, {
-          contentType: data.mimeType,
-          upsert: true,
-        });
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      const { data: publicUrlData } = supabaseClient.storage
-        .from("blog-covers")
-        .getPublicUrl(filePath);
-
-      return { success: true, publicUrl: publicUrlData.publicUrl };
-    } catch (e: any) {
-      return { success: false, error: e.message };
-    }
-  });

@@ -675,7 +675,6 @@ export const aggregatorSyncSettings = pgTable(
 export const auditLogs = pgTable("audit_logs", {
   id: uuid("id").primaryKey().defaultRandom(),
   tenantId: uuid("tenant_id")
-    .notNull()
     .references(() => tenants.id, { onDelete: "cascade" }),
   branchId: uuid("branch_id").references(() => branches.id),
   userId: uuid("user_id").references(() => staffUsers.id),
@@ -912,3 +911,53 @@ export const blogPosts = pgTable("blog_posts", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   publishedAt: timestamp("published_at"),
 });
+
+export const tenantSubscriptions = pgTable("tenant_subscriptions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  billingCycle: text("billing_cycle").notNull().default("monthly"), // 'monthly', 'quarterly', '6_months', 'yearly', 'custom'
+  customDays: integer("custom_days"),
+  subscriptionStartDate: timestamp("subscription_start_date").notNull().defaultNow(),
+  currentPeriodEndDate: timestamp("current_period_end_date").notNull(),
+  status: text("status").notNull().default("active"), // 'active', 'overdue', 'due_soon'
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const tenantPayments = pgTable("tenant_payments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  currency: text("currency").notNull().default("AED"),
+  paymentDate: timestamp("payment_date").notNull(),
+  periodCoveredStart: timestamp("period_covered_start").notNull(),
+  periodCoveredEnd: timestamp("period_covered_end").notNull(),
+  notes: text("notes"),
+  recordedBy: text("recorded_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const productRecipes = pgTable("product_recipes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id")
+    .notNull()
+    .references(() => tenants.id, { onDelete: "cascade" }),
+  productId: uuid("product_id")
+    .notNull()
+    .references(() => products.id, { onDelete: "cascade" }),
+  ingredientProductId: uuid("ingredient_product_id")
+    .notNull()
+    .references(() => products.id, { onDelete: "cascade" }),
+  quantity: decimal("quantity", { precision: 10, scale: 3 }).notNull(),
+  unit: text("unit").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const productRecipesRelations = relations(productRecipes, ({ one }) => ({
+  tenant: one(tenants, { fields: [productRecipes.tenantId], references: [tenants.id] }),
+  product: one(products, { fields: [productRecipes.productId], references: [products.id] }),
+  ingredient: one(products, { fields: [productRecipes.ingredientProductId], references: [products.id] }),
+}));
+
+

@@ -15,6 +15,9 @@ export const getPublishedPostsFn = createServerFn()
       const posts = await db.query.blogPosts.findMany({
         where: eq(blogPosts.status, "Published"),
         orderBy: desc(blogPosts.publishedAt),
+        columns: {
+          content: false,
+        },
       });
       return { success: true, posts };
     } catch (e: any) {
@@ -37,8 +40,55 @@ export const Route = createFileRoute("/blog")({
     const res = await getPublishedPostsFn();
     return { posts: res.posts || [] };
   },
+  pendingComponent: BlogListSkeleton,
   component: BlogListPage,
 });
+
+function BlogListSkeleton() {
+  return (
+    <div className="min-h-screen bg-background flex flex-col justify-between">
+      <div>
+        <Navbar />
+        <main>
+          {/* Hero Section */}
+          <section className="bg-mesh py-16 lg:py-20 border-b border-border/40">
+            <div className="mx-auto max-w-4xl px-5 text-center lg:px-8">
+              <div className="mx-auto h-4 w-32 animate-pulse rounded-full bg-surface-2" />
+              <div className="mx-auto mt-4 h-10 w-3/4 animate-pulse rounded-xl bg-surface-2" />
+              <div className="mx-auto mt-4 h-6 w-1/2 animate-pulse rounded-lg bg-surface-2" />
+            </div>
+          </section>
+
+          {/* Skeleton Posts Grid */}
+          <section className="py-16 lg:py-24">
+            <div className="mx-auto max-w-7xl px-5 lg:px-8">
+              <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <div
+                    key={i}
+                    className="panel flex h-full flex-col overflow-hidden border-border/50"
+                  >
+                    <div className="aspect-[16/9] w-full animate-pulse bg-surface-2 border-b border-border/50" />
+                    <div className="flex flex-1 flex-col p-6 space-y-4">
+                      <div className="h-3 w-1/3 animate-pulse rounded bg-surface-2" />
+                      <div className="h-6 w-4/5 animate-pulse rounded bg-surface-2" />
+                      <div className="space-y-2 flex-1">
+                        <div className="h-3.5 w-full animate-pulse rounded bg-surface-2" />
+                        <div className="h-3.5 w-5/6 animate-pulse rounded bg-surface-2" />
+                      </div>
+                      <div className="pt-4 border-t border-border/30 h-4 w-1/4 animate-pulse rounded bg-surface-2" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+      <Footer />
+    </div>
+  );
+}
 
 function BlogListPage() {
   const { posts } = Route.useLoaderData();
@@ -85,6 +135,8 @@ function BlogListPage() {
                             <img
                               src={post.coverImageUrl}
                               alt={post.title}
+                              loading="lazy"
+                              decoding="async"
                               className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                             />
                           ) : (

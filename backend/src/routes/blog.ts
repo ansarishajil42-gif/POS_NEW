@@ -61,16 +61,16 @@ publicRouter.get("/post/:slug", async (req, res) => {
 // ADMIN ROUTES (/api/blog-admin)
 // ==========================================
 
-const requireHOAdmin = (req: any, res: any, next: any) => {
+const requireSuperAdmin = (req: any, res: any, next: any) => {
   const user = req.user;
-  if (!user || user.role !== "head_office_admin") {
-    return res.status(403).json({ error: "Forbidden: Only Head Office Admins can access blog management" });
+  if (!user || user.role !== "super_admin") {
+    return res.status(403).json({ error: "Forbidden: Only Super Admins can access blog management" });
   }
   next();
 };
 
 // Upload Cover Image
-adminRouter.post("/upload", requireAuth, requireHOAdmin, upload.single("file"), async (req: any, res) => {
+adminRouter.post("/upload", requireAuth, requireSuperAdmin, upload.single("file"), async (req: any, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
   }
@@ -107,7 +107,7 @@ adminRouter.post("/upload", requireAuth, requireHOAdmin, upload.single("file"), 
 });
 
 // Get all blog posts (Draft & Published)
-adminRouter.get("/posts", requireAuth, requireHOAdmin, async (req, res) => {
+adminRouter.get("/posts", requireAuth, requireSuperAdmin, async (req, res) => {
   try {
     const posts = await db.query.blogPosts.findMany({
       orderBy: desc(blogPosts.createdAt),
@@ -120,7 +120,7 @@ adminRouter.get("/posts", requireAuth, requireHOAdmin, async (req, res) => {
 });
 
 // Create new blog post
-adminRouter.post("/posts", requireAuth, requireHOAdmin, async (req, res) => {
+adminRouter.post("/posts", requireAuth, requireSuperAdmin, async (req, res) => {
   const { title, slug, coverImageUrl, shortDescription, content, status, authorName } = req.body;
   if (!title || !slug || !shortDescription || !content) {
     return res.status(400).json({ error: "Title, slug, short description, and content are required" });
@@ -154,7 +154,7 @@ adminRouter.post("/posts", requireAuth, requireHOAdmin, async (req, res) => {
 });
 
 // Update an existing blog post
-adminRouter.patch("/posts/:id", requireAuth, requireHOAdmin, async (req, res) => {
+adminRouter.patch("/posts/:id", requireAuth, requireSuperAdmin, async (req, res) => {
   const { id } = req.params;
   const { title, slug, coverImageUrl, shortDescription, content, status, authorName } = req.body;
 
@@ -205,7 +205,7 @@ adminRouter.patch("/posts/:id", requireAuth, requireHOAdmin, async (req, res) =>
 });
 
 // Delete a blog post
-adminRouter.delete("/posts/:id", requireAuth, requireHOAdmin, async (req, res) => {
+adminRouter.delete("/posts/:id", requireAuth, requireSuperAdmin, async (req, res) => {
   const { id } = req.params;
   try {
     const deleted = await db.delete(blogPosts)

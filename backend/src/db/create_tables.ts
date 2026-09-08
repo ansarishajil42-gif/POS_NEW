@@ -41,6 +41,35 @@ async function main() {
     );
   `);
 
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "tenant_subscriptions" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "tenant_id" uuid NOT NULL REFERENCES "tenants"("id") ON DELETE CASCADE,
+      "billing_cycle" text DEFAULT 'monthly' NOT NULL,
+      "custom_days" integer,
+      "subscription_start_date" timestamp DEFAULT now() NOT NULL,
+      "current_period_end_date" timestamp NOT NULL,
+      "status" text DEFAULT 'active' NOT NULL,
+      "created_at" timestamp DEFAULT now() NOT NULL,
+      "updated_at" timestamp DEFAULT now() NOT NULL
+    );
+  `);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "tenant_payments" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "tenant_id" uuid NOT NULL REFERENCES "tenants"("id") ON DELETE CASCADE,
+      "amount" numeric(10, 2) NOT NULL,
+      "currency" text DEFAULT 'AED' NOT NULL,
+      "payment_date" timestamp NOT NULL,
+      "period_covered_start" timestamp NOT NULL,
+      "period_covered_end" timestamp NOT NULL,
+      "notes" text,
+      "recorded_by" text,
+      "created_at" timestamp DEFAULT now() NOT NULL
+    );
+  `);
+
   console.log("Tables created successfully!");
   process.exit(0);
 }

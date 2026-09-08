@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
-import { ArrowLeft, Building2, Layers, Monitor, Truck, Store, Boxes, ShoppingCart, Briefcase, Menu, X } from "lucide-react";
+import { ArrowLeft, Building2, Layers, Monitor, Truck, Store, Boxes, ShoppingCart, Briefcase, Menu, X, BookOpen } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Logo } from "@/components/site/Logo";
 import { cn } from "@/lib/utils";
@@ -9,6 +9,7 @@ import { useAuth } from "@/lib/auth";
 
 const allNav = [
     { to: "/super-admin", label: "Super Admin", icon: Layers },
+    { to: "/super-admin-blog", label: "Blog Posts", icon: BookOpen },
     { to: "/head-office", label: "Head Office", icon: Building2 },
     { to: "/store-manager", label: "Store Dashboard", icon: Store },
     { to: "/inventory-manager", label: "Inventory", icon: Boxes },
@@ -22,11 +23,13 @@ export function DemoShell({
     title,
     subtitle,
     actions,
+    subNav,
     children,
 }: {
     title: string;
     subtitle: string;
     actions?: ReactNode;
+    subNav?: { id: string; label: string; icon: LucideIcon; active: boolean; onClick: () => void }[];
     children: ReactNode;
 }) {
     const { role, isLoaded, logout } = useAuth();
@@ -34,7 +37,7 @@ export function DemoShell({
 
     const nav = allNav.filter((n) => {
         if (!role) return false;
-        if (role === "Super Admin") return n.to === "/super-admin";
+        if (role === "Super Admin") return n.to === "/super-admin" || n.to === "/super-admin-blog";
         if (role === "Head Office Admin") return n.to === "/head-office" || n.to === "/aggregators";
         if (role === "Branch Manager") return n.to === "/store-manager";
         if (role === "Inventory Manager") return n.to === "/inventory-manager";
@@ -79,6 +82,33 @@ export function DemoShell({
                                     {n.label}
                                 </Link>
                             ))}
+
+                            {subNav && subNav.length > 0 && (
+                                <div className="mt-3 pt-3 border-t border-border/60 flex flex-col gap-1">
+                                    <p className="px-3 text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/70 mb-1">
+                                        Super Admin Sections
+                                    </p>
+                                    {subNav.map((item) => (
+                                        <button
+                                            key={item.id}
+                                            type="button"
+                                            onClick={() => {
+                                                item.onClick();
+                                                setIsMobileNavOpen(false);
+                                            }}
+                                            className={cn(
+                                                "group flex shrink-0 items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition-all w-full text-left cursor-pointer",
+                                                item.active
+                                                    ? "bg-primary/10 text-primary font-bold shadow-none"
+                                                    : "text-muted-foreground hover:bg-secondary hover:text-ink"
+                                            )}
+                                        >
+                                            <item.icon className="h-4 w-4 shrink-0" />
+                                            <span>{item.label}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
                         </nav>
 
                         {isLoaded && role && (

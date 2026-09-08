@@ -105,11 +105,9 @@ import {
   updateBranchFn,
   activateBranchFn,
   deactivateBranchFn,
-  getBlogPostsFn,
-  createBlogPostFn,
-  updateBlogPostFn,
-  deleteBlogPostFn,
-  uploadBlogCoverFn,
+  getProductRecipesServerFn,
+  saveProductRecipeServerFn,
+  deleteProductRecipeServerFn,
 } from "@/lib/head-office-server";
 import { getAuditLogsServerFn } from "@/lib/super-admin-server";
 import { stockTransferServerFn } from "@/lib/inventory-manager-server";
@@ -493,160 +491,6 @@ function HeadOffice() {
         });
     }
   }, [activeTab]);
-
-  // Blog management states
-  const [blogPostsList, setBlogPostsList] = useState<any[]>([]);
-  const [isLoadingBlog, setIsLoadingBlog] = useState(false);
-  const [isBlogModalOpen, setIsBlogModalOpen] = useState(false);
-  const [isSavingBlogPost, setIsSavingBlogPost] = useState(false);
-  const [selectedBlogPost, setSelectedBlogPost] = useState<any | null>(null);
-  const [blogForm, setBlogForm] = useState({
-    title: "",
-    slug: "",
-    coverImageUrl: "",
-    shortDescription: "",
-    content: "",
-    status: "Draft",
-    authorName: "Admin",
-  });
-  const [deleteBlogContext, setDeleteBlogContext] = useState<any>(null);
-  const [deleteBlogDialogOpen, setDeleteBlogDialogOpen] = useState(false);
-  const [isDeletingBlogPost, setIsDeletingBlogPost] = useState(false);
-  const [isUploadingImage, setIsUploadingImage] = useState(false);
-
-  const handleUploadImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("File size exceeds 5MB limit");
-      return;
-    }
-
-    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-    if (!allowedTypes.includes(file.type)) {
-      toast.error("Invalid file type. Only JPEG, PNG, WEBP, and GIF are allowed.");
-      return;
-    }
-
-    setIsUploadingImage(true);
-    try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64 = (reader.result as string).split(",")[1];
-        try {
-          const res = await uploadBlogCoverFn({
-            data: {
-              base64Data: base64,
-              fileName: file.name,
-              mimeType: file.type,
-            },
-          });
-          if (res.success && res.url) {
-            setBlogForm((prev) => ({ ...prev, coverImageUrl: res.url }));
-            toast.success("Image uploaded successfully");
-          } else {
-            toast.error("Upload failed");
-          }
-        } catch (err: any) {
-          toast.error(err.message || "Upload failed");
-        } finally {
-          setIsUploadingImage(false);
-        }
-      };
-      reader.onerror = () => {
-        toast.error("Failed to read file");
-        setIsUploadingImage(false);
-      };
-      reader.readAsDataURL(file);
-    } catch (err: any) {
-      toast.error(err.message || "Failed to process file");
-      setIsUploadingImage(false);
-    }
-  };
-
-  const fetchBlogPosts = () => {
-    setIsLoadingBlog(true);
-    getBlogPostsFn()
-      .then((res: any) => {
-        if (res.success) {
-          setBlogPostsList(res.posts || []);
-        } else {
-          toast.error("Failed to load blog posts");
-        }
-      })
-      .catch((err: any) => {
-        toast.error(err.message || "Failed to load blog posts");
-      })
-      .finally(() => {
-        setIsLoadingBlog(false);
-      });
-  };
-
-  useEffect(() => {
-    if (activeTab === "blog") {
-      fetchBlogPosts();
-    }
-  }, [activeTab]);
-
-  const handleSaveBlogPost = async () => {
-    if (!blogForm.title || !blogForm.slug || !blogForm.shortDescription || !blogForm.content) {
-      toast.error("Please fill in all required fields (Title, Slug, Short Description, and Content)");
-      return;
-    }
-
-    setIsSavingBlogPost(true);
-    try {
-      if (selectedBlogPost) {
-        // Edit mode
-        const res = await updateBlogPostFn({
-          data: {
-            id: selectedBlogPost.id,
-            ...blogForm,
-          },
-        });
-        if (res.success) {
-          toast.success("Blog post updated successfully");
-          setIsBlogModalOpen(false);
-          fetchBlogPosts();
-        }
-      } else {
-        // Create mode
-        const res = await createBlogPostFn({
-          data: blogForm,
-        });
-        if (res.success) {
-          toast.success("Blog post created successfully");
-          setIsBlogModalOpen(false);
-          fetchBlogPosts();
-        }
-      }
-    } catch (err: any) {
-      toast.error(err.message || "Failed to save blog post");
-    } finally {
-      setIsSavingBlogPost(false);
-    }
-  };
-
-  const handleDeleteBlogPost = async () => {
-    if (!deleteBlogContext) return;
-    setIsDeletingBlogPost(true);
-    try {
-      const res = await deleteBlogPostFn({
-        data: { id: deleteBlogContext.id },
-      });
-      if (res.success) {
-        toast.success("Blog post deleted successfully");
-        setDeleteBlogDialogOpen(false);
-        setDeleteBlogContext(null);
-        fetchBlogPosts();
-      }
-    } catch (err: any) {
-      toast.error(err.message || "Failed to delete blog post");
-    } finally {
-      setIsDeletingBlogPost(false);
-    }
-  };
 
   const [vendorFormOpen, setVendorFormOpen] = useState(false);
   const [isEditingVendor, setIsEditingVendor] = useState(false);
@@ -1186,6 +1030,12 @@ function HeadOffice() {
               Catalog
             </TabsTrigger>
             <TabsTrigger
+              value="recipes"
+              className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+            >
+              Product Recipes (BOM)
+            </TabsTrigger>
+            <TabsTrigger
               value="batches"
               className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
             >
@@ -1244,12 +1094,6 @@ function HeadOffice() {
               className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
             >
               Reports & VAT
-            </TabsTrigger>
-            <TabsTrigger
-              value="blog"
-              className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
-            >
-              Blog
             </TabsTrigger>
             <TabsTrigger
               value="audit_logs"
@@ -4698,322 +4542,6 @@ function HeadOffice() {
             </div>
           )}
 
-          <TabsContent value="blog" className="mt-0 space-y-5">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h3 className="text-lg font-bold text-ink">Blog Management</h3>
-                <p className="text-xs text-muted-foreground">
-                  Create, edit, and publish posts to the public visitor blog.
-                </p>
-              </div>
-              <Button
-                className="rounded-xl"
-                onClick={() => {
-                  setSelectedBlogPost(null);
-                  setBlogForm({
-                    title: "",
-                    slug: "",
-                    coverImageUrl: "",
-                    shortDescription: "",
-                    content: "",
-                    status: "Draft",
-                    authorName: "Admin",
-                  });
-                  setIsBlogModalOpen(true);
-                }}
-              >
-                <Plus className="h-4 w-4 mr-2" /> Create Blog Post
-              </Button>
-            </div>
-
-            <div className="panel p-6 space-y-4">
-              {isLoadingBlog ? (
-                <div className="py-20 text-center text-muted-foreground">Loading blog posts...</div>
-              ) : blogPostsList.length === 0 ? (
-                <div className="py-20 text-center text-muted-foreground">No blog posts found. Click "Create Blog Post" to add one.</div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table className="min-w-[800px]">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Cover</TableHead>
-                        <TableHead>Title</TableHead>
-                        <TableHead>Slug</TableHead>
-                        <TableHead>Author</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Created At</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {blogPostsList.map((post) => (
-                        <TableRow key={post.id}>
-                          <TableCell>
-                            {post.coverImageUrl ? (
-                              <img
-                                src={post.coverImageUrl}
-                                alt={post.title}
-                                className="h-10 w-16 object-cover rounded border border-border"
-                              />
-                            ) : (
-                              <div className="h-10 w-16 bg-surface-2 border border-border rounded flex items-center justify-center text-xs text-muted-foreground">
-                                No Image
-                              </div>
-                            )}
-                          </TableCell>
-                          <TableCell className="font-semibold text-ink max-w-xs truncate">
-                            {post.title}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-muted-foreground">
-                            {post.slug}
-                          </TableCell>
-                          <TableCell className="text-sm">{post.authorName}</TableCell>
-                          <TableCell>
-                            <Badge
-                              variant={post.status === "Published" ? "default" : "outline"}
-                              className={post.status === "Published" ? "bg-green-100 text-green-800 border-green-200" : "bg-gray-100 text-gray-800"}
-                            >
-                              {post.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {new Date(post.createdAt).toLocaleDateString()}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex justify-end gap-2">
-                              <Button
-                                size="icon"
-                                variant="outline"
-                                className="h-8 w-8 rounded-lg"
-                                onClick={() => {
-                                  setSelectedBlogPost(post);
-                                  setBlogForm({
-                                    title: post.title,
-                                    slug: post.slug,
-                                    coverImageUrl: post.coverImageUrl || "",
-                                    shortDescription: post.shortDescription,
-                                    content: post.content,
-                                    status: post.status,
-                                    authorName: post.authorName,
-                                  });
-                                  setIsBlogModalOpen(true);
-                                }}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                size="icon"
-                                variant="outline"
-                                className="h-8 w-8 rounded-lg text-destructive hover:bg-destructive/10"
-                                onClick={() => {
-                                  setDeleteBlogContext(post);
-                                  setDeleteBlogDialogOpen(true);
-                                }}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </div>
-
-            {/* Create/Edit Blog Post Dialog */}
-            <Dialog open={isBlogModalOpen} onOpenChange={setIsBlogModalOpen}>
-              <DialogContent className="sm:max-w-[625px] max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>{selectedBlogPost ? "Edit Blog Post" : "Create Blog Post"}</DialogTitle>
-                  <DialogDescription>
-                    Fill in the details below to save the blog post. Required fields are marked.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Title <span className="text-destructive">*</span></Label>
-                      <Input
-                        placeholder="e.g. 5 POS Features to Grow Sales"
-                        value={blogForm.title}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setBlogForm((prev) => ({
-                            ...prev,
-                            title: val,
-                            slug: selectedBlogPost
-                              ? prev.slug
-                              : val
-                                  .toLowerCase()
-                                  .replace(/[^a-z0-9]+/g, "-")
-                                  .replace(/(^-|-$)+/g, ""),
-                          }));
-                        }}
-                        className="rounded-xl border-border/50 bg-surface-2"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Slug <span className="text-destructive">*</span></Label>
-                      <Input
-                        placeholder="e.g. 5-pos-features-to-grow-sales"
-                        value={blogForm.slug}
-                        onChange={(e) =>
-                          setBlogForm({
-                            ...blogForm,
-                            slug: e.target.value
-                              .toLowerCase()
-                              .replace(/[^a-z0-9-]+/g, ""),
-                          })
-                        }
-                        className="rounded-xl border-border/50 bg-surface-2"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Author Name</Label>
-                      <Input
-                        placeholder="Admin"
-                        value={blogForm.authorName}
-                        onChange={(e) => setBlogForm({ ...blogForm, authorName: e.target.value })}
-                        className="rounded-xl border-border/50 bg-surface-2"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Publish Status</Label>
-                      <Select
-                        value={blogForm.status}
-                        onValueChange={(val) => setBlogForm({ ...blogForm, status: val })}
-                      >
-                        <SelectTrigger className="rounded-xl border-border/50 bg-surface-2">
-                          <SelectValue placeholder="Draft" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Draft">Draft</SelectItem>
-                          <SelectItem value="Published">Published</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Cover Image URL</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="https://example.com/cover.jpg"
-                        value={blogForm.coverImageUrl}
-                        onChange={(e) => setBlogForm({ ...blogForm, coverImageUrl: e.target.value })}
-                        className="rounded-xl border-border/50 bg-surface-2 flex-1"
-                      />
-                      <div className="relative shrink-0">
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp,image/gif"
-                          onChange={handleUploadImage}
-                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                          disabled={isUploadingImage}
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="rounded-xl pointer-events-none"
-                          disabled={isUploadingImage}
-                        >
-                          {isUploadingImage ? "Uploading..." : "Upload Image"}
-                        </Button>
-                      </div>
-                    </div>
-                    {blogForm.coverImageUrl && (
-                      <div className="mt-2 border border-border rounded-xl p-2 bg-surface-2 flex justify-center">
-                        <img
-                          src={blogForm.coverImageUrl}
-                          alt="Cover Preview"
-                          className="h-28 object-contain rounded"
-                          onError={(e) => {
-                            (e.target as HTMLElement).style.display = "none";
-                          }}
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Short Description <span className="text-destructive">*</span></Label>
-                    <textarea
-                      placeholder="A short teaser summary of the post..."
-                      value={blogForm.shortDescription}
-                      onChange={(e) => setBlogForm({ ...blogForm, shortDescription: e.target.value })}
-                      className="w-full min-h-[60px] rounded-xl border border-border/50 bg-surface-2 p-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Full Content (Markdown / HTML / Text) <span className="text-destructive">*</span></Label>
-                    <textarea
-                      placeholder="Write your main article content here..."
-                      value={blogForm.content}
-                      onChange={(e) => setBlogForm({ ...blogForm, content: e.target.value })}
-                      className="w-full min-h-[180px] rounded-xl border border-border/50 bg-surface-2 p-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-mono"
-                    />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button
-                    variant="outline"
-                    className="rounded-xl"
-                    onClick={() => setIsBlogModalOpen(false)}
-                    disabled={isSavingBlogPost}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    className="rounded-xl"
-                    onClick={handleSaveBlogPost}
-                    disabled={isSavingBlogPost}
-                  >
-                    {isSavingBlogPost ? "Saving..." : "Save Post"}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-
-            {/* Delete Confirmation Dialog */}
-            <Dialog open={deleteBlogDialogOpen} onOpenChange={setDeleteBlogDialogOpen}>
-              <DialogContent className="sm:max-w-md">
-                <DialogHeader>
-                  <DialogTitle>Delete Blog Post</DialogTitle>
-                  <DialogDescription>
-                    Are you sure you want to delete this post?
-                  </DialogDescription>
-                </DialogHeader>
-                <DialogFooter className="mt-4 gap-2 sm:gap-0">
-                  <Button
-                    variant="outline"
-                    className="rounded-xl"
-                    onClick={() => {
-                      setDeleteBlogDialogOpen(false);
-                      setDeleteBlogContext(null);
-                    }}
-                    disabled={isDeletingBlogPost}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    className="rounded-xl"
-                    onClick={handleDeleteBlogPost}
-                    disabled={isDeletingBlogPost}
-                  >
-                    {isDeletingBlogPost ? "Deleting..." : "Delete"}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </TabsContent>
-
           <TabsContent value="audit_logs" className="mt-0 space-y-5">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
@@ -5096,6 +4624,10 @@ function HeadOffice() {
                 </div>
               )}
             </div>
+          </TabsContent>
+
+          <TabsContent value="recipes" className="mt-0 space-y-5">
+            <RecipesTabContent products={data?.products || []} />
           </TabsContent>
         </main>
 
@@ -5221,3 +4753,364 @@ function HeadOffice() {
     </DemoShell>
   );
 }
+
+function RecipesTabContent({ products }: { products: any[] }) {
+  const fetchRecipes = useServerFn(getProductRecipesServerFn);
+  const saveRecipe = useServerFn(saveProductRecipeServerFn);
+  const deleteRecipe = useServerFn(deleteProductRecipeServerFn);
+
+  const [recipes, setRecipes] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [selectedProductId, setSelectedProductId] = useState("");
+  const [ingredientRows, setIngredientRows] = useState<
+    Array<{ ingredientProductId: string; quantity: number | ""; unit: string }>
+  >([{ ingredientProductId: "", quantity: 1, unit: "kg" }]);
+
+  const loadRecipes = async () => {
+    setLoading(true);
+    try {
+      const res = await fetchRecipes();
+      if (res.success) {
+        setRecipes(res.recipes);
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to load recipes");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadRecipes();
+  }, []);
+
+  const groupedRecipes = useMemo(() => {
+    const map: Record<
+      string,
+      { productId: string; productName: string; ingredients: any[]; totalCost: number }
+    > = {};
+    recipes.forEach((r) => {
+      if (!map[r.productId]) {
+        map[r.productId] = {
+          productId: r.productId,
+          productName: r.productName,
+          ingredients: [],
+          totalCost: 0,
+        };
+      }
+      const cost = Number(r.quantity) * Number(r.ingredientCostPrice || 0);
+      map[r.productId].ingredients.push(r);
+      map[r.productId].totalCost += cost;
+    });
+    return Object.values(map);
+  }, [recipes]);
+
+  const handleOpenEdit = (groupedItem: any) => {
+    setSelectedProductId(groupedItem.productId);
+    setIngredientRows(
+      groupedItem.ingredients.map((ing: any) => ({
+        ingredientProductId: ing.ingredientProductId,
+        quantity: Number(ing.quantity),
+        unit: ing.unit,
+      })),
+    );
+    setModalOpen(true);
+  };
+
+  const handleAddRow = () => {
+    setIngredientRows((prev) => [...prev, { ingredientProductId: "", quantity: 1, unit: "kg" }]);
+  };
+
+  const handleRemoveRow = (index: number) => {
+    setIngredientRows((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleRowChange = (index: number, field: string, value: any) => {
+    setIngredientRows((prev) => {
+      const copy = [...prev];
+      (copy[index] as any)[field] = value;
+      return copy;
+    });
+  };
+
+  const handleSave = async () => {
+    if (!selectedProductId) return toast.error("Please select a sellable product");
+    const validRows = ingredientRows.filter(
+      (r) => r.ingredientProductId && r.quantity && Number(r.quantity) > 0,
+    );
+    if (validRows.length === 0) {
+      return toast.error("Please add at least one valid ingredient with quantity > 0");
+    }
+
+    setSaving(true);
+    try {
+      const res = await saveRecipe({
+        data: {
+          productId: selectedProductId,
+          ingredients: validRows.map((r) => ({
+            ingredientProductId: r.ingredientProductId,
+            quantity: Number(r.quantity),
+            unit: r.unit,
+          })),
+        },
+      });
+
+      if (res.success) {
+        toast.success("Recipe saved successfully!");
+        setModalOpen(false);
+        setSelectedProductId("");
+        setIngredientRows([{ ingredientProductId: "", quantity: 1, unit: "kg" }]);
+        loadRecipes();
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save recipe");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (productId: string, productName: string) => {
+    if (!confirm(`Are you sure you want to delete the recipe for "${productName}"?`)) return;
+    try {
+      const res = await deleteRecipe({ data: { productId } });
+      if (res.success) {
+        toast.success("Recipe deleted");
+        loadRecipes();
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete recipe");
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight text-ink">
+            Product Recipes (Bill of Materials)
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Define raw ingredient requirements for Hot Food items. Ingredients are automatically
+            deducted at POS checkout.
+          </p>
+        </div>
+        <Button
+          onClick={() => {
+            setSelectedProductId("");
+            setIngredientRows([{ ingredientProductId: "", quantity: 1, unit: "kg" }]);
+            setModalOpen(true);
+          }}
+          className="rounded-xl font-semibold"
+        >
+          <Plus className="mr-1.5 h-4 w-4" /> Create Recipe
+        </Button>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <StatCard
+          label="Hot Food Items with Recipes"
+          value={groupedRecipes.length.toString()}
+          icon={Package}
+        />
+        <StatCard label="Total Ingredients Mapped" value={recipes.length.toString()} icon={Tag} />
+      </div>
+
+      <div className="panel overflow-hidden">
+        {loading ? (
+          <div className="p-12 text-center text-muted-foreground">Loading product recipes...</div>
+        ) : groupedRecipes.length === 0 ? (
+          <div className="p-12 text-center text-muted-foreground space-y-2">
+            <Package className="h-8 w-8 text-muted-foreground/50 mx-auto" />
+            <p className="font-semibold text-ink">No product recipes configured yet</p>
+            <p className="text-xs">
+              Click "Create Recipe" above to link hot food menu items with raw ingredient stock.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-border bg-surface-2/50 text-xs font-semibold text-muted-foreground">
+                  <th className="p-3">Sellable Hot Food Product</th>
+                  <th className="p-3">Raw Ingredients Breakdown</th>
+                  <th className="p-3 text-right">Est. Ingredient Cost</th>
+                  <th className="p-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {groupedRecipes.map((item) => (
+                  <tr key={item.productId} className="hover:bg-surface-2/30 transition-colors">
+                    <td className="p-3 font-bold text-ink align-top">{item.productName}</td>
+                    <td className="p-3 align-top">
+                      <div className="flex flex-wrap gap-1.5">
+                        {item.ingredients.map((ing: any) => (
+                          <span
+                            key={ing.id}
+                            className="inline-flex items-center rounded-lg bg-surface-2 px-2.5 py-1 text-xs font-medium text-ink border border-border/50"
+                          >
+                            <span className="font-semibold text-primary mr-1">
+                              {ing.ingredientName}:
+                            </span>
+                            {ing.quantity} {ing.unit}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="p-3 text-right font-semibold text-ink align-top">
+                      AED {item.totalCost.toFixed(2)}
+                    </td>
+                    <td className="p-3 text-right align-top whitespace-nowrap">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleOpenEdit(item)}
+                        className="h-8 w-8 p-0"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDelete(item.productId, item.productName)}
+                        className="h-8 w-8 p-0 text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="max-w-lg rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="font-bold text-ink">
+              {selectedProductId ? "Edit Product Recipe" : "Create Product Recipe"}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Map a hot food item to its raw ingredient components and quantities.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-ink">Sellable Hot Food Product</label>
+              <Select
+                value={selectedProductId}
+                onValueChange={setSelectedProductId}
+                disabled={saving}
+              >
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="Select Product..." />
+                </SelectTrigger>
+                <SelectContent className="max-h-60 overflow-y-auto">
+                  {products.map((p: any) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name} ({p.category})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-ink">Recipe Ingredients</label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAddRow}
+                  className="h-7 text-xs rounded-lg"
+                >
+                  <Plus className="mr-1 h-3 w-3" /> Add Ingredient
+                </Button>
+              </div>
+
+              {ingredientRows.map((row, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <Select
+                    value={row.ingredientProductId}
+                    onValueChange={(val) => handleRowChange(idx, "ingredientProductId", val)}
+                  >
+                    <SelectTrigger className="flex-1 h-9 text-xs">
+                      <SelectValue placeholder="Raw Ingredient..." />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-60 overflow-y-auto">
+                      {products
+                        .filter((p: any) => p.id !== selectedProductId)
+                        .map((p: any) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.name} ({p.unit})
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Input
+                    type="number"
+                    step="any"
+                    min="0.001"
+                    placeholder="Qty"
+                    className="w-20 h-9 text-xs"
+                    value={row.quantity}
+                    onChange={(e) =>
+                      handleRowChange(idx, "quantity", e.target.value ? Number(e.target.value) : "")
+                    }
+                  />
+
+                  <Select
+                    value={row.unit}
+                    onValueChange={(val) => handleRowChange(idx, "unit", val)}
+                  >
+                    <SelectTrigger className="w-20 h-9 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="kg">kg</SelectItem>
+                      <SelectItem value="g">g</SelectItem>
+                      <SelectItem value="pcs">pcs</SelectItem>
+                      <SelectItem value="l">l</SelectItem>
+                      <SelectItem value="ml">ml</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  {ingredientRows.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRemoveRow(idx)}
+                      className="h-8 w-8 p-0 text-destructive"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setModalOpen(false)}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSave} disabled={saving} className="font-semibold">
+              {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null} Save Recipe
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+

@@ -16,7 +16,16 @@ import {
     MoreHorizontal,
     Store,
     Pencil,
+    CreditCard,
+    Calendar,
+    AlertTriangle,
+    History,
+    Receipt,
+    FileText,
+    FileSpreadsheet,
+    Download,
 } from "lucide-react";
+import { jsPDF } from "jspdf";
 import {
     Area,
     AreaChart,
@@ -32,6 +41,7 @@ import {
     YAxis,
 } from "recharts";
 import { DemoShell, StatCard } from "@/components/demo/DemoShell";
+import { ReportsTab } from "@/components/reports/ReportsTab";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -70,7 +80,12 @@ import {
     createExistingTenantAdminServerFn,
     updateTenantAdminServerFn,
     deleteTenantAdminServerFn,
-    archiveTenantServerFn
+    archiveTenantServerFn,
+    getBillingOverviewServerFn,
+    recordTenantPaymentServerFn,
+    getTenantPaymentHistoryServerFn,
+    updateTenantPaymentServerFn,
+    updateTenantDueDateServerFn
 } from "@/lib/super-admin-server";
 
 export const Route = createFileRoute("/super-admin")({
@@ -81,19 +96,21 @@ export const Route = createFileRoute("/super-admin")({
         if (role !== "Super Admin") throw redirect({ to: roleRoutes[role] });
     },
     loader: async () => {
-        const [tenantsRes, branchesRes, taxRes, analyticsRes, platformRes] = await Promise.all([
+        const [tenantsRes, branchesRes, taxRes, analyticsRes, platformRes, billingRes] = await Promise.all([
             getTenantsServerFn(),
             getBranchesServerFn(),
             getGlobalTaxSettingsServerFn(),
             getAnalyticsServerFn(),
-            getPlatformSettingsServerFn()
+            getPlatformSettingsServerFn(),
+            getBillingOverviewServerFn()
         ]);
         return {
             initialTenants: tenantsRes.success ? tenantsRes.tenants : [],
             initialBranches: branchesRes.success ? branchesRes.branches : [],
             taxSettings: taxRes.success ? taxRes : { vatRate: "0", inclusive: false },
             analytics: analyticsRes.success ? analyticsRes : { totalGmv: 0, systemLogs: [], platformSeries: [] },
-            platformSettings: platformRes.success && platformRes.data ? platformRes.data : { currency: "AED", timezone: "Asia/Dubai", dateFormat: "DD/MM/YYYY" }
+            platformSettings: platformRes.success && platformRes.data ? platformRes.data : { currency: "AED", timezone: "Asia/Dubai", dateFormat: "DD/MM/YYYY" },
+            billingData: billingRes.success ? billingRes : { overview: { totalTenants: 0, totalRevenueCollected: 0, overdueCount: 0, dueSoonCount: 0, totalOverdueAmount: 0 }, tenants: [] }
         };
     },
     head: () => ({
@@ -121,6 +138,8 @@ function SuperAdmin() {
     const router = useRouter();
     const loaderData = Route.useLoaderData();
     
+    const [activeNavSection, setActiveNavSection] = useState<string>("tenants");
+    const [selectedReportTenantId, setSelectedReportTenantId] = useState("all");
     const [tenants, setTenants] = useState<any[]>(loaderData.initialTenants);
     const [open, setOpen] = useState(false);
     const [form, setForm] = useState({ 
@@ -166,6 +185,346 @@ function SuperAdmin() {
     const [tenantToArchive, setTenantToArchive] = useState<any | null>(null);
     const [archiveConfirmation, setArchiveConfirmation] = useState("");
     const [isArchiving, setIsArchiving] = useState(false);
+
+    // Billing & Revenue Dialog States & Handlers
+    const [recordPaymentTenant, setRecordPaymentTenant] = useState<any | null>(null);
+    const [recordForm, setRecordForm] = useState({
+        amount: "",
+        paymentDate: getNowISOString(),
+        billingCycle: "monthly",
+        customDays: "30",
+        notes: ""
+    });
+    const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+
+    const [historyTenant, setHistoryTenant] = useState<any | null>(null);
+    const [paymentHistory, setPaymentHistory] = useState<any[]>([]);
+    const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+    const handleOpenRecordPayment = (tenant: any) => {
+        setRecordPaymentTenant(tenant);
+        setRecordForm({
+            amount: "",
+            paymentDate: getNowISOString(),
+            billingCycle: tenant.billingCycle || "monthly",
+            customDays: tenant.customDays ? String(tenant.customDays) : "30",
+            notes: ""
+        });
+    };
+
+    const handleRecordPaymentSubmit = async () => {
+        if (!recordPaymentTenant) return;
+        const amt = parseFloat(recordForm.amount);
+        if (isNaN(amt) || amt <= 0) {
+            toast.error("Please enter a valid payment amount");
+            return;
+        }
+        if (!recordForm.paymentDate) {
+            toast.error("Please select a payment date");
+            return;
+        }
+
+        setIsSubmittingPayment(true);
+        try {
+            const res = await recordTenantPaymentServerFn({
+                data: {
+                    tenantId: recordPaymentTenant.tenantId,
+                    amount: amt,
+                    paymentDate: recordForm.paymentDate,
+                    billingCycle: recordForm.billingCycle,
+                    customDays: Number(recordForm.customDays || 30),
+                    notes: recordForm.notes || ""
+                }
+            });
+
+            if (res.success) {
+                toast.success("Payment recorded successfully!");
+                setRecordPaymentTenant(null);
+                router.invalidate();
+            } else {
+                toast.error(res.error || "Failed to record payment");
+            }
+        } catch (err: any) {
+            toast.error(err.message || "An unexpected error occurred");
+        } finally {
+            setIsSubmittingPayment(false);
+        }
+    };
+
+    const handleOpenHistory = async (tenant: any) => {
+        setHistoryTenant(tenant);
+        setIsLoadingHistory(true);
+        try {
+            const res = await getTenantPaymentHistoryServerFn({ data: { tenantId: tenant.tenantId } });
+            if (res.success) {
+                setPaymentHistory(res.payments || []);
+            } else {
+                toast.error(res.error || "Failed to load payment history");
+            }
+        } catch (err: any) {
+            toast.error(err.message || "Error fetching history");
+        } finally {
+            setIsLoadingHistory(false);
+        }
+    };
+
+    // Edit Payment State & Handlers
+    const [editingPaymentRecord, setEditingPaymentRecord] = useState<any | null>(null);
+    const [editForm, setEditForm] = useState({
+        paymentId: "",
+        tenantId: "",
+        amount: "",
+        paymentDate: "",
+        billingCycle: "monthly",
+        customDays: "30",
+        notes: ""
+    });
+    const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
+
+    const handleOpenEditPayment = (paymentRow: any) => {
+        setEditingPaymentRecord(paymentRow);
+        setEditForm({
+            paymentId: paymentRow.id,
+            tenantId: paymentRow.tenantId,
+            amount: String(paymentRow.amount || ""),
+            paymentDate: toLocalISOString(paymentRow.paymentDate),
+            billingCycle: historyTenant?.billingCycle || "monthly",
+            customDays: historyTenant?.customDays ? String(historyTenant.customDays) : "30",
+            notes: paymentRow.notes || ""
+        });
+    };
+
+    const handleEditPaymentSubmit = async () => {
+        if (!editingPaymentRecord) return;
+        const amt = parseFloat(editForm.amount);
+        if (isNaN(amt) || amt <= 0) {
+            toast.error("Please enter a valid payment amount");
+            return;
+        }
+        if (!editForm.paymentDate) {
+            toast.error("Please select a payment date & time");
+            return;
+        }
+
+        setIsSubmittingEdit(true);
+        try {
+            const res = await updateTenantPaymentServerFn({
+                data: {
+                    paymentId: editForm.paymentId,
+                    tenantId: editForm.tenantId,
+                    amount: amt,
+                    paymentDate: editForm.paymentDate,
+                    billingCycle: editForm.billingCycle,
+                    customDays: Number(editForm.customDays || 30),
+                    notes: editForm.notes || ""
+                }
+            });
+
+            if (res.success) {
+                toast.success("Payment record updated successfully!");
+                setEditingPaymentRecord(null);
+                if (historyTenant) {
+                    const histRes = await getTenantPaymentHistoryServerFn({ data: { tenantId: historyTenant.tenantId } });
+                    if (histRes.success) {
+                        setPaymentHistory(histRes.payments || []);
+                    }
+                }
+                router.invalidate();
+            } else {
+                toast.error(res.error || "Failed to update payment");
+            }
+        } catch (err: any) {
+            toast.error(err.message || "An unexpected error occurred");
+        } finally {
+            setIsSubmittingEdit(false);
+        }
+    };
+
+    // Direct Edit Due Date State & Handlers
+    const [editDueDateTenant, setEditDueDateTenant] = useState<any | null>(null);
+    const [newDueDate, setNewDueDate] = useState("");
+    const [isSubmittingDueDate, setIsSubmittingDueDate] = useState(false);
+
+    const handleOpenEditDueDate = (tenant: any) => {
+        setEditDueDateTenant(tenant);
+        let dStr = "";
+        if (tenant.currentPeriodEndDate) {
+            dStr = new Date(tenant.currentPeriodEndDate).toISOString().split("T")[0] || "";
+        } else {
+            dStr = new Date().toISOString().split("T")[0] || "";
+        }
+        setNewDueDate(dStr);
+    };
+
+    const handleEditDueDateSubmit = async () => {
+        if (!editDueDateTenant || !newDueDate) {
+            toast.error("Please select a valid due date");
+            return;
+        }
+
+        setIsSubmittingDueDate(true);
+        try {
+            const res = await updateTenantDueDateServerFn({
+                data: {
+                    tenantId: editDueDateTenant.tenantId,
+                    newDueDate
+                }
+            });
+
+            if (res.success) {
+                toast.success("Current period end (next due) date updated!");
+                setEditDueDateTenant(null);
+                router.invalidate();
+            } else {
+                toast.error(res.error || "Failed to update due date");
+            }
+        } catch (err: any) {
+            toast.error(err.message || "An unexpected error occurred");
+        } finally {
+            setIsSubmittingDueDate(false);
+        }
+    };
+
+    const superAdminSubNav = [
+        { id: "tenants", label: "Tenants", icon: Building2, active: activeNavSection === "tenants", onClick: () => setActiveNavSection("tenants") },
+        { id: "billing", label: "Billing & Revenue", icon: CreditCard, active: activeNavSection === "billing", onClick: () => setActiveNavSection("billing") },
+        { id: "reports", label: "Reports", icon: FileText, active: activeNavSection === "reports", onClick: () => setActiveNavSection("reports") },
+        { id: "analytics", label: "Platform Analytics", icon: Activity, active: activeNavSection === "analytics", onClick: () => setActiveNavSection("analytics") },
+        { id: "settings", label: "Tax & Currency", icon: Coins, active: activeNavSection === "settings", onClick: () => setActiveNavSection("settings") },
+    ];
+
+    const handleExportBusinessReportCsv = () => {
+        try {
+            const overview = loaderData.billingData.overview;
+            const tenantsList = loaderData.billingData.tenants || [];
+
+            let csv = "SUPER ADMIN SUBSCRIPTION REVENUE & BUSINESS REPORT\n";
+            csv += `Generated At,${new Date().toLocaleString()}\n`;
+            csv += `Total Onboarded Clients,${overview.totalTenants}\n`;
+            csv += `Total Revenue Collected (AED),${Number(overview.totalRevenueCollected || 0).toFixed(2)}\n`;
+            csv += `Overdue Clients Count,${overview.overdueCount}\n`;
+            csv += `Due Soon Clients Count,${overview.dueSoonCount || 0}\n\n`;
+
+            csv += "Tenant Name,Subdomain,Plan,Billing Cycle,Current Status,Payment Punctuality,Current Period End (Next Due),Total Amount Paid (AED),Last Payment Date,Last Payment Amount (AED)\n";
+
+            tenantsList.forEach((t: any) => {
+                const name = `"${(t.tenantName || "").replace(/"/g, '""')}"`;
+                const sub = `"${(t.subdomain || "").replace(/"/g, '""')}"`;
+                const plan = `"${t.plan || ""}"`;
+                const cycle = `"${t.billingCycle || "N/A"}"`;
+                const status = `"${t.status || "no_record"}"`;
+                const punctuality = `"${(t.punctuality || "Never Paid / No Billing Record").replace(/"/g, '""')}"`;
+                const nextDue = t.currentPeriodEndDate ? new Date(t.currentPeriodEndDate).toISOString().split("T")[0] : "N/A";
+                const totalPaid = Number(t.totalPaid || 0).toFixed(2);
+                const lastDate = t.lastPaymentDate ? new Date(t.lastPaymentDate).toLocaleString() : "No payment yet";
+                const lastAmt = t.lastPaymentAmount ? Number(t.lastPaymentAmount).toFixed(2) : "0.00";
+
+                csv += `${name},${sub},${plan},${cycle},${status},${punctuality},${nextDue},${totalPaid},"${lastDate}",${lastAmt}\n`;
+            });
+
+            const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.setAttribute("download", `super_admin_subscription_business_report_${new Date().toISOString().split("T")[0]}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            toast.success("Business subscription CSV report downloaded!");
+        } catch (err: any) {
+            toast.error("Failed to export business CSV report");
+        }
+    };
+
+    const handleExportBusinessReportPdf = () => {
+        try {
+            const overview = loaderData.billingData.overview;
+            const tenantsList = loaderData.billingData.tenants || [];
+            const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
+
+            doc.setFillColor(30, 41, 59);
+            doc.rect(0, 0, 210, 24, "F");
+
+            doc.setTextColor(255, 255, 255);
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(13);
+            doc.text("SUPER ADMIN SUBSCRIPTION REVENUE REPORT", 14, 15);
+
+            doc.setFontSize(8);
+            doc.setFont("helvetica", "normal");
+            doc.text(`Generated: ${new Date().toLocaleString()}`, 140, 15);
+
+            let currentY = 32;
+
+            doc.setFillColor(241, 245, 249);
+            doc.rect(14, currentY, 182, 22, "F");
+            
+            doc.setTextColor(15, 23, 42);
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(9);
+            doc.text("PLATFORM SUBSCRIPTION SUMMARY", 18, currentY + 6);
+
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(8);
+            doc.text(`Total Onboarded Clients: ${overview.totalTenants}`, 18, currentY + 13);
+            doc.text(`Total Revenue Collected: AED ${Number(overview.totalRevenueCollected || 0).toFixed(2)}`, 18, currentY + 18);
+            doc.text(`Overdue Accounts: ${overview.overdueCount}`, 110, currentY + 13);
+            doc.text(`Accounts Due Soon: ${overview.dueSoonCount || 0}`, 110, currentY + 18);
+
+            currentY += 28;
+
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(10);
+            doc.text("CLIENT SUBSCRIPTIONS & PAYMENT LEDGER", 14, currentY);
+            currentY += 6;
+
+            doc.setFillColor(226, 232, 240);
+            doc.rect(14, currentY - 4, 182, 7, "F");
+            doc.setFontSize(7.5);
+
+            doc.text("TENANT / SUBDOMAIN", 15, currentY);
+            doc.text("PLAN / CYCLE", 62, currentY);
+            doc.text("NEXT DUE", 98, currentY);
+            doc.text("STATUS", 125, currentY);
+            doc.text("PUNCTUALITY", 148, currentY);
+            doc.text("TOTAL PAID", 180, currentY);
+
+            currentY += 8;
+            doc.setFont("helvetica", "normal");
+
+            tenantsList.forEach((t: any, idx: number) => {
+                if (currentY > 270) {
+                    doc.addPage();
+                    currentY = 20;
+                }
+                if (idx % 2 === 1) {
+                    doc.setFillColor(248, 250, 252);
+                    doc.rect(14, currentY - 4, 182, 6, "F");
+                }
+
+                const tName = String(t.tenantName || "").substring(0, 18);
+                const planCycle = `${t.plan || "Starter"} (${t.billingCycle || "N/A"})`;
+                const dueStr = String(t.currentPeriodEndDate ? (new Date(t.currentPeriodEndDate).toISOString().split("T")[0] || "N/A") : "N/A");
+                const statusStr = String(t.status || "no_record").toUpperCase();
+                const punctStr = String(t.punctuality || "Never Paid").substring(0, 16);
+                const totalPaidStr = `AED ${Number(t.totalPaid || 0).toFixed(2)}`;
+
+                doc.text(tName, 15, currentY);
+                doc.text(planCycle, 62, currentY);
+                doc.text(dueStr, 98, currentY);
+                doc.text(statusStr, 125, currentY);
+                doc.text(punctStr, 148, currentY);
+                doc.text(totalPaidStr, 180, currentY);
+
+                currentY += 6;
+            });
+
+            doc.save(`super_admin_subscription_business_report_${new Date().toISOString().split("T")[0]}.pdf`);
+            toast.success("Business subscription PDF report downloaded!");
+        } catch (err: any) {
+            console.error("PDF export error:", err);
+            toast.error("Failed to export business PDF report");
+        }
+    };
 
     const totals = useMemo(
         () => ({
@@ -304,7 +663,8 @@ function SuperAdmin() {
     return (
         <DemoShell
             title="SaaS Super-Admin Portal"
-            subtitle="Provision and govern every supermarket tenant on the platform â€” limits, tax templates and live network telemetry."
+            subtitle="Provision and govern every supermarket tenant on the platform — limits, tax templates and live network telemetry."
+            subNav={superAdminSubNav}
             actions={
                 <div className="flex items-center gap-3">
                     <Button className="rounded-xl font-semibold bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm hover:-translate-y-0.5 transition-all" onClick={() => setGlobalAddBranchOpen(true)}>
@@ -452,14 +812,8 @@ function SuperAdmin() {
                 <StatCard label="Monthly orders" value={`${totals.orders}`} delta={undefined} icon={Activity} tone="accent" />
             </div>
 
-            <Tabs defaultValue="tenants" className="mt-8">
-                <TabsList className="rounded-xl">
-                    <TabsTrigger value="tenants">Tenants</TabsTrigger>
-                    <TabsTrigger value="analytics">Platform analytics</TabsTrigger>
-                    <TabsTrigger value="settings">Tax & currency</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="tenants" className="mt-8">
+            <Tabs value={activeNavSection} onValueChange={setActiveNavSection} className="mt-8">
+                <TabsContent value="tenants" className="mt-4">
                     <div className="overflow-x-auto w-full">
                     <Table className="w-full">
                         <TableHeader className="bg-surface-2/80">
@@ -608,6 +962,187 @@ function SuperAdmin() {
                 </div>
             </TabsContent>
 
+                <TabsContent value="billing" className="mt-8">
+                    {/* Billing Overview KPI Cards */}
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+                        <StatCard
+                            label="Onboarded clients"
+                            value={String(loaderData.billingData.overview.totalTenants)}
+                            icon={Building2}
+                        />
+                        <StatCard
+                            label="Total revenue collected"
+                            value={`AED ${Number(loaderData.billingData.overview.totalRevenueCollected || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                            icon={Coins}
+                            tone="success"
+                        />
+                        <StatCard
+                            label="Overdue clients"
+                            value={String(loaderData.billingData.overview.overdueCount)}
+                            icon={AlertTriangle}
+                        />
+                        <StatCard
+                            label="Due soon (within 7 days)"
+                            value={String(loaderData.billingData.overview.dueSoonCount || 0)}
+                            icon={Calendar}
+                            tone="accent"
+                        />
+                    </div>
+
+                    {/* Per-Tenant Billing Table */}
+                    <div className="panel p-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+                            <div>
+                                <h2 className="text-base font-bold text-ink">Client Subscriptions & Billing Status</h2>
+                                <p className="text-xs text-muted-foreground">Track offline payments, next due dates, and client account standings.</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Button variant="outline" size="sm" onClick={handleExportBusinessReportCsv} className="rounded-full text-xs font-semibold">
+                                    <FileSpreadsheet className="h-4 w-4 mr-1.5 text-emerald-600" /> Export Business Report (CSV)
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={handleExportBusinessReportPdf} className="rounded-full text-xs font-semibold">
+                                    <Download className="h-4 w-4 mr-1.5 text-rose-600" /> Export Business Report (PDF)
+                                </Button>
+                            </div>
+                        </div>
+
+                        <div className="overflow-x-auto w-full">
+                            <Table className="w-full">
+                                <TableHeader className="bg-surface-2/80">
+                                    <TableRow className="hover:bg-transparent">
+                                        <TableHead className="min-w-[180px] py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Tenant</TableHead>
+                                        <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Plan</TableHead>
+                                        <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Billing Cycle</TableHead>
+                                        <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Current Period End (Next Due)</TableHead>
+                                        <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Status</TableHead>
+                                        <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Last Payment</TableHead>
+                                        <TableHead className="py-4 text-right text-xs font-bold uppercase tracking-wider text-muted-foreground">Actions</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {loaderData.billingData.tenants.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                                                No tenant billing records found.
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : (
+                                        loaderData.billingData.tenants.map((t: any) => {
+                                            const isOverdue = t.status === "overdue";
+                                            const isDueSoon = t.status === "due_soon";
+                                            const isActive = t.status === "active";
+
+                                            return (
+                                                <TableRow
+                                                    key={t.tenantId}
+                                                    className={
+                                                        isOverdue
+                                                            ? "bg-destructive/10 border-l-4 border-l-destructive hover:bg-destructive/15 transition-all"
+                                                            : "group transition-all duration-300 hover:bg-primary/[0.03]"
+                                                    }
+                                                >
+                                                    <TableCell className="p-4">
+                                                        <div className="text-sm font-extrabold text-ink">{t.tenantName}</div>
+                                                        <div className="text-xs text-muted-foreground">{t.subdomain}.cloudynationpos.com</div>
+                                                    </TableCell>
+                                                    <TableCell className="p-4">
+                                                        <Badge variant="secondary" className="rounded-xl px-2.5 py-0.5 text-[11px] uppercase tracking-wider font-extrabold">
+                                                            {t.plan}
+                                                        </Badge>
+                                                    </TableCell>
+                                                    <TableCell className="p-4 text-sm font-semibold capitalize">
+                                                        {t.billingCycle === "custom"
+                                                            ? `Custom (${t.customDays || 30} days)`
+                                                            : t.billingCycle === "6_months"
+                                                            ? "6 Months"
+                                                            : t.billingCycle || "Not set"}
+                                                    </TableCell>
+                                                    <TableCell className="p-4 text-sm font-semibold">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span>{formatDateString(t.currentPeriodEndDate)}</span>
+                                                            <TooltipProvider delayDuration={200}>
+                                                                <UITooltip>
+                                                                    <TooltipTrigger asChild>
+                                                                        <Button
+                                                                            size="icon"
+                                                                            variant="ghost"
+                                                                            className="h-6 w-6 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                                                                            onClick={() => handleOpenEditDueDate(t)}
+                                                                        >
+                                                                            <Pencil className="h-3 w-3" />
+                                                                        </Button>
+                                                                    </TooltipTrigger>
+                                                                    <TooltipContent>Edit Next Due Date</TooltipContent>
+                                                                </UITooltip>
+                                                            </TooltipProvider>
+                                                        </div>
+                                                    </TableCell>
+                                                    <TableCell className="p-4">
+                                                        {isOverdue && (
+                                                            <span className="inline-flex items-center gap-1.5 rounded-xl border border-destructive/30 bg-destructive/15 px-3 py-1 text-[11px] uppercase tracking-wider font-extrabold text-destructive">
+                                                                <span className="h-1.5 w-1.5 rounded-full bg-destructive animate-pulse"></span>
+                                                                Overdue
+                                                            </span>
+                                                        )}
+                                                        {isDueSoon && (
+                                                            <span className="inline-flex items-center gap-1.5 rounded-xl border border-warning/30 bg-warning/15 px-3 py-1 text-[11px] uppercase tracking-wider font-extrabold text-warning-foreground">
+                                                                <span className="h-1.5 w-1.5 rounded-full bg-warning"></span>
+                                                                Due Soon
+                                                            </span>
+                                                        )}
+                                                        {isActive && (
+                                                            <span className="inline-flex items-center gap-1.5 rounded-xl border border-success/30 bg-success/15 px-3 py-1 text-[11px] uppercase tracking-wider font-extrabold text-success">
+                                                                <span className="h-1.5 w-1.5 rounded-full bg-success"></span>
+                                                                Active
+                                                            </span>
+                                                        )}
+                                                        {t.status === "no_record" && (
+                                                            <span className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface-2 px-3 py-1 text-[11px] uppercase tracking-wider font-extrabold text-muted-foreground">
+                                                                No billing record yet
+                                                            </span>
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell className="p-4">
+                                                        {t.lastPaymentAmount !== null ? (
+                                                            <div>
+                                                                <div className="text-sm font-bold text-ink">
+                                                                    AED {Number(t.lastPaymentAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                                                </div>
+                                                                <div className="text-xs text-muted-foreground">{formatDateTimeString(t.lastPaymentDate)}</div>
+                                                            </div>
+                                                        ) : (
+                                                            <span className="text-xs text-muted-foreground font-medium">No payments</span>
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell className="p-4 text-right">
+                                                        <div className="flex items-center justify-end gap-2">
+                                                            <Button
+                                                                size="sm"
+                                                                className="rounded-xl h-8 text-xs font-semibold"
+                                                                onClick={() => handleOpenRecordPayment(t)}
+                                                            >
+                                                                <CreditCard className="mr-1.5 h-3.5 w-3.5" /> Record Payment
+                                                            </Button>
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                className="rounded-xl h-8 text-xs font-semibold"
+                                                                onClick={() => handleOpenHistory(t)}
+                                                            >
+                                                                <History className="mr-1.5 h-3.5 w-3.5" /> History
+                                                            </Button>
+                                                        </div>
+                                                    </TableCell>
+                                                </TableRow>
+                                            );
+                                        })
+                                    )}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </div>
+                </TabsContent>
+
                 <TabsContent value="analytics" className="mt-5">
                     <div className="grid gap-5 lg:grid-cols-2">
                         <div className="panel p-6 lg:col-span-2">
@@ -649,6 +1184,37 @@ function SuperAdmin() {
                             </ul>
                         </div>
                     </div>
+                </TabsContent>
+
+                <TabsContent value="reports" className="mt-8 space-y-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-surface-2 border border-border">
+                        <div className="space-y-1">
+                            <h3 className="text-base font-bold text-ink flex items-center gap-2">
+                                <FileText className="h-5 w-5 text-primary" /> Tenant & Platform Reports
+                            </h3>
+                            <p className="text-xs text-muted-foreground">
+                                Select a tenant to view their Head Office reports directly, or view combined platform-wide analytics across all clients.
+                            </p>
+                        </div>
+                        <div className="w-full sm:w-72 space-y-1.5">
+                            <Label htmlFor="tenant-report-select" className="text-xs font-semibold text-muted-foreground">Select Target Tenant</Label>
+                            <Select value={selectedReportTenantId} onValueChange={setSelectedReportTenantId}>
+                                <SelectTrigger id="tenant-report-select" className="bg-surface rounded-xl">
+                                    <SelectValue placeholder="Select Tenant" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all" className="font-bold text-primary">All Tenants (Platform-Wide)</SelectItem>
+                                    {(loaderData.billingData?.tenants || []).map((t: any) => (
+                                        <SelectItem key={t.tenantId} value={t.tenantId}>
+                                            {t.tenantName} ({t.subdomain})
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+
+                    <ReportsTab selectedTenantId={selectedReportTenantId} isSuperAdmin={true} />
                 </TabsContent>
 
                 <TabsContent value="settings" className="mt-5">
@@ -1194,6 +1760,320 @@ function SuperAdmin() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            {/* Record Payment Dialog */}
+            <Dialog open={!!recordPaymentTenant} onOpenChange={(val) => !val && setRecordPaymentTenant(null)}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Record Manual Payment</DialogTitle>
+                        <DialogDescription>
+                            Manually record payment received for <span className="font-bold text-ink">{recordPaymentTenant?.tenantName}</span>.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="grid gap-4 py-2">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="pay-amount">Payment Amount (AED)</Label>
+                            <Input
+                                id="pay-amount"
+                                type="number"
+                                step="0.01"
+                                placeholder="1690.00"
+                                value={recordForm.amount}
+                                onChange={(e) => setRecordForm({ ...recordForm, amount: e.target.value })}
+                            />
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <Label htmlFor="pay-date">Payment Date & Time</Label>
+                            <Input
+                                id="pay-date"
+                                type="datetime-local"
+                                value={recordForm.paymentDate}
+                                onChange={(e) => setRecordForm({ ...recordForm, paymentDate: e.target.value })}
+                            />
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <Label>Billing Cycle</Label>
+                            <Select
+                                value={recordForm.billingCycle}
+                                onValueChange={(val) => setRecordForm({ ...recordForm, billingCycle: val })}
+                            >
+                                <SelectTrigger className="w-full">
+                                    <SelectValue placeholder="Select Cycle" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="monthly">Monthly (1 Month)</SelectItem>
+                                    <SelectItem value="quarterly">Quarterly (3 Months)</SelectItem>
+                                    <SelectItem value="6_months">6 Months</SelectItem>
+                                    <SelectItem value="yearly">Yearly (1 Year)</SelectItem>
+                                    <SelectItem value="custom">Custom (Specify Days)</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {recordForm.billingCycle === "custom" && (
+                            <div className="space-y-1.5">
+                                <Label htmlFor="custom-days">Custom Duration (Days)</Label>
+                                <Input
+                                    id="custom-days"
+                                    type="number"
+                                    min="1"
+                                    value={recordForm.customDays}
+                                    onChange={(e) => setRecordForm({ ...recordForm, customDays: e.target.value })}
+                                />
+                            </div>
+                        )}
+
+                        <div className="space-y-1.5">
+                            <Label htmlFor="pay-notes">Notes / Reference (Optional)</Label>
+                            <Input
+                                id="pay-notes"
+                                placeholder="e.g. Bank transfer ref #12345"
+                                value={recordForm.notes}
+                                onChange={(e) => setRecordForm({ ...recordForm, notes: e.target.value })}
+                            />
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" className="rounded-xl" onClick={() => setRecordPaymentTenant(null)}>
+                            Cancel
+                        </Button>
+                        <Button
+                            className="rounded-xl font-semibold"
+                            disabled={isSubmittingPayment}
+                            onClick={handleRecordPaymentSubmit}
+                        >
+                            {isSubmittingPayment ? "Recording..." : "Save Payment"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Payment History Dialog */}
+            <Dialog open={!!historyTenant} onOpenChange={(val) => !val && setHistoryTenant(null)}>
+                <DialogContent className="sm:max-w-3xl md:max-w-4xl w-[95vw] p-6">
+                    <DialogHeader>
+                        <DialogTitle>Payment History — {historyTenant?.tenantName}</DialogTitle>
+                        <DialogDescription>
+                            All past recorded payments for this tenant account.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="py-2 max-h-[60vh] overflow-y-auto">
+                        {isLoadingHistory ? (
+                            <div className="py-8 text-center text-sm text-muted-foreground">Loading payment history...</div>
+                        ) : paymentHistory.length === 0 ? (
+                            <div className="py-8 text-center text-sm text-muted-foreground">No payment history found for this tenant.</div>
+                        ) : (
+                            <Table className="w-full">
+                                <TableHeader className="bg-surface-2/80">
+                                    <TableRow>
+                                        <TableHead className="py-3 px-3 text-xs font-bold uppercase">Payment Date</TableHead>
+                                        <TableHead className="py-3 px-3 text-xs font-bold uppercase">Amount</TableHead>
+                                        <TableHead className="py-3 px-3 text-xs font-bold uppercase">Period Covered</TableHead>
+                                        <TableHead className="py-3 px-3 text-xs font-bold uppercase">Notes</TableHead>
+                                        <TableHead className="py-3 px-3 text-xs font-bold uppercase">Recorded By</TableHead>
+                                        <TableHead className="py-3 px-3 text-xs font-bold uppercase text-right">Actions</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {paymentHistory.map((p: any) => (
+                                        <TableRow key={p.id}>
+                                            <TableCell className="py-3 px-3 text-sm font-semibold whitespace-nowrap">{formatDateTimeString(p.paymentDate)}</TableCell>
+                                            <TableCell className="py-3 px-3 text-sm font-extrabold text-ink whitespace-nowrap">
+                                                {p.currency || "AED"} {Number(p.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                            </TableCell>
+                                            <TableCell className="py-3 px-3 text-xs text-muted-foreground font-medium whitespace-nowrap">
+                                                {formatDateString(p.periodCoveredStart)} → {formatDateString(p.periodCoveredEnd)}
+                                            </TableCell>
+                                            <TableCell className="py-3 px-3 text-xs text-ink max-w-[140px] truncate">{p.notes || "-"}</TableCell>
+                                            <TableCell className="py-3 px-3 text-xs text-muted-foreground max-w-[160px] truncate">{p.recordedBy || "Super Admin"}</TableCell>
+                                            <TableCell className="py-3 px-3 text-right whitespace-nowrap">
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    className="h-8 rounded-xl text-xs font-semibold hover:bg-primary/10 hover:text-primary"
+                                                    onClick={() => handleOpenEditPayment(p)}
+                                                >
+                                                    <Pencil className="mr-1 h-3.5 w-3.5" /> Edit
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        )}
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" className="rounded-xl" onClick={() => setHistoryTenant(null)}>
+                            Close
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Edit Payment Dialog */}
+            <Dialog open={!!editingPaymentRecord} onOpenChange={(val) => !val && setEditingPaymentRecord(null)}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Edit Payment Record</DialogTitle>
+                        <DialogDescription>
+                            Update payment details and date/time for <span className="font-bold text-ink">{historyTenant?.tenantName}</span>.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="grid gap-4 py-2">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="edit-amount">Payment Amount (AED)</Label>
+                            <Input
+                                id="edit-amount"
+                                type="number"
+                                step="0.01"
+                                placeholder="1690.00"
+                                value={editForm.amount}
+                                onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
+                            />
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <Label htmlFor="edit-date">Payment Date & Time</Label>
+                            <Input
+                                id="edit-date"
+                                type="datetime-local"
+                                value={editForm.paymentDate}
+                                onChange={(e) => setEditForm({ ...editForm, paymentDate: e.target.value })}
+                            />
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <Label>Billing Cycle</Label>
+                            <Select
+                                value={editForm.billingCycle}
+                                onValueChange={(val) => setEditForm({ ...editForm, billingCycle: val })}
+                            >
+                                <SelectTrigger className="w-full">
+                                    <SelectValue placeholder="Select Cycle" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="monthly">Monthly (1 Month)</SelectItem>
+                                    <SelectItem value="quarterly">Quarterly (3 Months)</SelectItem>
+                                    <SelectItem value="6_months">6 Months</SelectItem>
+                                    <SelectItem value="yearly">Yearly (1 Year)</SelectItem>
+                                    <SelectItem value="custom">Custom (Specify Days)</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {editForm.billingCycle === "custom" && (
+                            <div className="space-y-1.5">
+                                <Label htmlFor="edit-custom-days">Custom Duration (Days)</Label>
+                                <Input
+                                    id="edit-custom-days"
+                                    type="number"
+                                    min="1"
+                                    value={editForm.customDays}
+                                    onChange={(e) => setEditForm({ ...editForm, customDays: e.target.value })}
+                                />
+                            </div>
+                        )}
+
+                        <div className="space-y-1.5">
+                            <Label htmlFor="edit-notes">Notes / Reference (Optional)</Label>
+                            <Input
+                                id="edit-notes"
+                                placeholder="e.g. Bank transfer ref #12345"
+                                value={editForm.notes}
+                                onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                            />
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" className="rounded-xl" onClick={() => setEditingPaymentRecord(null)}>
+                            Cancel
+                        </Button>
+                        <Button
+                            className="rounded-xl font-semibold"
+                            disabled={isSubmittingEdit}
+                            onClick={handleEditPaymentSubmit}
+                        >
+                            {isSubmittingEdit ? "Updating..." : "Save Changes"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Edit Due Date Dialog */}
+            <Dialog open={!!editDueDateTenant} onOpenChange={(val) => !val && setEditDueDateTenant(null)}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Edit Current Period End (Next Due)</DialogTitle>
+                        <DialogDescription>
+                            Directly adjust the due date for <span className="font-bold text-ink">{editDueDateTenant?.tenantName}</span>. This will dynamically update their subscription status without recording a payment.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="grid gap-4 py-2">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="due-date-input">New Current Period End Date</Label>
+                            <Input
+                                id="due-date-input"
+                                type="date"
+                                value={newDueDate}
+                                onChange={(e) => setNewDueDate(e.target.value)}
+                            />
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" className="rounded-xl" onClick={() => setEditDueDateTenant(null)}>
+                            Cancel
+                        </Button>
+                        <Button
+                            className="rounded-xl font-semibold"
+                            disabled={isSubmittingDueDate}
+                            onClick={handleEditDueDateSubmit}
+                        >
+                            {isSubmittingDueDate ? "Saving..." : "Save Due Date"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </DemoShell>
     );
 }
+
+function formatDateString(dStr: string | Date | null) {
+    if (!dStr) return "-";
+    const date = new Date(dStr);
+    if (isNaN(date.getTime())) return "-";
+    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function formatDateTimeString(dStr: string | Date | null) {
+    if (!dStr) return "-";
+    const date = new Date(dStr);
+    if (isNaN(date.getTime())) return "-";
+    const datePart = date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const timePart = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    return `${datePart}, ${timePart}`;
+}
+
+function getNowISOString() {
+    const now = new Date();
+    const tzOffset = now.getTimezoneOffset() * 60000;
+    return new Date(now.getTime() - tzOffset).toISOString().slice(0, 16);
+}
+
+function toLocalISOString(dStr: string | Date) {
+    if (!dStr) return getNowISOString();
+    const d = new Date(dStr);
+    if (isNaN(d.getTime())) return getNowISOString();
+    const tzOffset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+}
+

@@ -55,6 +55,8 @@ import {
   deleteStockTransferServerFn,
   exportOutOfStockExcelServerFn,
   bulkUpdateStockFromExcelServerFn,
+  logWastageServerFn,
+  getWastageReportServerFn,
 } from "@/lib/inventory-manager-server";
 
 export const Route = createFileRoute("/inventory-manager")({
@@ -99,6 +101,7 @@ function InventoryManager() {
   const router = useRouter();
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [wastageModalOpen, setWastageModalOpen] = useState(false);
   const [isTransferring, setIsTransferring] = useState(false);
   const [transferForm, setTransferForm] = useState({
     productId: "",
@@ -451,7 +454,8 @@ function InventoryManager() {
             >
               Low-Stock Alerts
             </TabsTrigger>
-          <TabsTrigger value="ledger" className="w-full justify-start rounded-lg px-4 py-3 text-sm font-semibold transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg"><History className="mr-2 h-5 w-5" />Ledger</TabsTrigger>
+            <TabsTrigger value="ledger" className="w-full justify-start rounded-lg px-4 py-3 text-sm font-semibold transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg"><History className="mr-2 h-5 w-5" />Ledger</TabsTrigger>
+            <TabsTrigger value="wastage" className="w-full justify-start rounded-lg px-4 py-3 text-sm font-semibold transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg"><AlertTriangle className="mr-2 h-5 w-5 text-amber-500" />Wastage Tracking</TabsTrigger>
             <TabsTrigger value="reports" className="w-full justify-start rounded-lg px-4 py-3 text-sm font-semibold transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg"><FileText className="mr-2 h-5 w-5" />Reports</TabsTrigger></TabsList>
         </aside>
 
@@ -997,6 +1001,14 @@ function InventoryManager() {
               </div>
             </div>
           </TabsContent>
+          <TabsContent value="wastage" className="mt-0 space-y-5">
+            <WastageTabContent
+              branches={branches}
+              stockLevels={stockLevels}
+              batches={batches}
+              onOpenLogModal={() => setWastageModalOpen(true)}
+            />
+          </TabsContent>
         </main>
       </Tabs>
 
@@ -1296,6 +1308,15 @@ function InventoryManager() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <LogWastageModal
+        open={wastageModalOpen}
+        onClose={() => setWastageModalOpen(false)}
+        branches={branches}
+        stockLevels={stockLevels}
+        batches={batches}
+        onSuccess={() => router.invalidate()}
+      />
     </DemoShell>
   );
 }
@@ -1378,6 +1399,408 @@ function LedgerTabContent() {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function WastageTabContent({
+  branches,
+  stockLevels,
+  batches,
+  onOpenLogModal,
+}: {
+  branches: any[];
+  stockLevels: any[];
+  batches: any[];
+  onOpenLogModal: () => void;
+}) {
+  const fetchWastageReport = useServerFn(getWastageReportServerFn);
+  const [data, setData] = useState<{
+    summary: { totalRecords: number; totalQtyWasted: number; totalValueWasted: number };
+    items: any[];
+  }>({ summary: { totalRecords: 0, totalQtyWasted: 0, totalValueWasted: 0 }, items: [] });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedBranch, setSelectedBranch] = useState("all");
+  const [search, setSearch] = useState("");
+
+  const loadReport = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetchWastageReport({ data: { branchId: selectedBranch } });
+      if (res.success) {
+        setData({ summary: res.summary, items: res.items });
+      } else {
+        setError("Failed to fetch wastage report");
+      }
+    } catch (e: any) {
+      setError(e.message || "Failed to fetch wastage report");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadReport();
+  }, [selectedBranch]);
+
+  const filteredItems = data.items.filter((item) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      item.productName.toLowerCase().includes(q) ||
+      item.category.toLowerCase().includes(q) ||
+      item.reason.toLowerCase().includes(q)
+    );
+  });
+
+  const exportCsv = () => {
+    if (filteredItems.length === 0) {
+      toast.error("No wastage data to export");
+      return;
+    }
+    const headers = ["Date", "Product", "Category", "Quantity Wasted", "Unit", "Cost Price", "Total Wastage Cost", "Branch", "Reason"];
+    const rows = filteredItems.map((i) => [
+      `"${new Date(i.createdAt).toLocaleString()}"`,
+      `"${i.productName.replace(/"/g, '""')}"`,
+      `"${i.category.replace(/"/g, '""')}"`,
+      `"${i.qtyWasted}"`,
+      `"${i.unit}"`,
+      `"${i.costPrice.toFixed(2)}"`,
+      `"${i.totalCost.toFixed(2)}"`,
+      `"${i.branchName.replace(/"/g, '""')}"`,
+      `"${i.reason.replace(/"/g, '""')}"`,
+    ]);
+    const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `wastage_report_${new Date().toISOString().split("T")[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success("Wastage report exported to CSV");
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard label="Wastage Incidents" value={data.summary.totalRecords.toLocaleString()} icon={FileText} />
+        <StatCard label="Total Units Wasted" value={data.summary.totalQtyWasted.toLocaleString()} icon={Boxes} tone={data.summary.totalQtyWasted > 0 ? "accent" : "success"} />
+        <StatCard label="Total Wastage Value" value={`AED ${data.summary.totalValueWasted.toFixed(2)}`} icon={DollarSign} tone={data.summary.totalValueWasted > 0 ? "accent" : "success"} />
+      </div>
+
+      <div className="panel overflow-hidden">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between border-b border-border p-4 gap-3">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1 max-w-xl">
+            <div className="relative flex-1">
+              <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search wastage entries by product or reason..."
+                className="pl-9 h-9 text-sm w-full"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            {branches.length > 1 && (
+              <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                <SelectTrigger className="w-[180px] h-9 text-xs font-medium">
+                  <SelectValue placeholder="All Branches" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Branches</SelectItem>
+                  {branches.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={exportCsv} className="rounded-xl font-semibold">
+              <Download className="mr-1.5 h-4 w-4" /> Export CSV
+            </Button>
+            <Button onClick={onOpenLogModal} size="sm" className="rounded-xl font-semibold bg-destructive hover:bg-destructive/90 text-white">
+              <Plus className="mr-1.5 h-4 w-4" /> Log Wastage
+            </Button>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="p-12 text-center text-muted-foreground">Loading wastage records...</div>
+        ) : error ? (
+          <div className="p-8 text-center text-destructive">
+            <p>{error}</p>
+            <Button onClick={loadReport} variant="outline" size="sm" className="mt-3">
+              Retry
+            </Button>
+          </div>
+        ) : filteredItems.length === 0 ? (
+          <div className="p-12 text-center text-muted-foreground space-y-2">
+            <AlertTriangle className="h-8 w-8 text-muted-foreground/50 mx-auto" />
+            <p className="font-semibold text-ink">No wastage entries found</p>
+            <p className="text-xs">Click "Log Wastage" above to record fresh food spoilage or damaged items.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-border bg-surface-2/50 text-xs font-semibold text-muted-foreground">
+                  <th className="p-3">Date</th>
+                  <th className="p-3">Product</th>
+                  <th className="p-3">Category</th>
+                  <th className="p-3">Branch</th>
+                  <th className="p-3 text-right">Qty Wasted</th>
+                  <th className="p-3 text-right">Cost / Unit</th>
+                  <th className="p-3 text-right">Total Cost</th>
+                  <th className="p-3">Reason</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {filteredItems.map((row) => (
+                  <tr key={row.id} className="hover:bg-surface-2/30 transition-colors">
+                    <td className="p-3 text-xs text-muted-foreground whitespace-nowrap">
+                      {new Date(row.createdAt).toLocaleString()}
+                    </td>
+                    <td className="p-3 font-semibold text-ink">{row.productName}</td>
+                    <td className="p-3 text-xs text-muted-foreground">{row.category}</td>
+                    <td className="p-3 text-xs text-muted-foreground">{row.branchName}</td>
+                    <td className="p-3 text-right font-bold text-destructive">
+                      -{row.qtyWasted} {row.unit}
+                    </td>
+                    <td className="p-3 text-right text-xs">AED {row.costPrice.toFixed(2)}</td>
+                    <td className="p-3 text-right font-bold text-ink">
+                      AED {row.totalCost.toFixed(2)}
+                    </td>
+                    <td className="p-3 text-xs">
+                      <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                        {row.reason}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LogWastageModal({
+  open,
+  onClose,
+  branches,
+  stockLevels,
+  batches,
+  onSuccess,
+}: {
+  open: boolean;
+  onClose: () => void;
+  branches: any[];
+  stockLevels: any[];
+  batches: any[];
+  onSuccess: () => void;
+}) {
+  const logWastageFn = useServerFn(logWastageServerFn);
+  const [selectedBranchId, setSelectedBranchId] = useState<string>(branches[0]?.id || "");
+  const [selectedProductId, setSelectedProductId] = useState<string>("");
+  const [selectedBatchId, setSelectedBatchId] = useState<string>("");
+  const [qtyWasted, setQtyWasted] = useState<number | "">(1);
+  const [reasonType, setReasonType] = useState<"Spoiled" | "Expired" | "Damaged" | "Other">("Spoiled");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (branches.length > 0 && !selectedBranchId) {
+      setSelectedBranchId(branches[0].id);
+    }
+  }, [branches]);
+
+  const availableProducts = stockLevels.filter(
+    (s: any) => !selectedBranchId || s.branchId === selectedBranchId
+  );
+
+  const availableBatches = batches.filter(
+    (b: any) => b.productId === selectedProductId && b.branchId === selectedBranchId
+  );
+
+  const handleSubmit = async () => {
+    if (!selectedBranchId) {
+      toast.error("Please select a branch");
+      return;
+    }
+    if (!selectedProductId) {
+      toast.error("Please select a product");
+      return;
+    }
+    if (!qtyWasted || Number(qtyWasted) <= 0) {
+      toast.error("Quantity must be greater than 0");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const payload: any = {
+        branchId: selectedBranchId,
+        productId: selectedProductId,
+        quantityWasted: Number(qtyWasted),
+        reasonType,
+      };
+      if (selectedBatchId) payload.batchId = selectedBatchId;
+      if (notes.trim()) payload.notes = notes.trim();
+
+      const res = await logWastageFn({
+        data: payload,
+      });
+
+      if (res.success) {
+        toast.success("Wastage logged successfully! Stock adjusted.");
+        onSuccess();
+        onClose();
+        setSelectedProductId("");
+        setSelectedBatchId("");
+        setQtyWasted(1);
+        setNotes("");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to log wastage");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center text-lg font-bold text-ink">
+            <AlertTriangle className="mr-2 h-5 w-5 text-amber-500" />
+            Log Stock Wastage (Fresh Food)
+          </DialogTitle>
+          <DialogDescription className="text-xs text-muted-foreground">
+            Deduct spoiled or damaged item stock manually and create an auditable wastage entry.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          {branches.length > 1 && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-ink">Branch</label>
+              <Select value={selectedBranchId} onValueChange={(val) => {
+                setSelectedBranchId(val);
+                setSelectedProductId("");
+                setSelectedBatchId("");
+              }}>
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="Select Branch" />
+                </SelectTrigger>
+                <SelectContent>
+                  {branches.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-ink">Product</label>
+            <Select value={selectedProductId} onValueChange={(val) => {
+              setSelectedProductId(val);
+              setSelectedBatchId("");
+            }}>
+              <SelectTrigger className="h-9 text-xs">
+                <SelectValue placeholder="Select Product..." />
+              </SelectTrigger>
+              <SelectContent className="max-h-60 overflow-y-auto">
+                {availableProducts.map((p) => (
+                  <SelectItem key={p.productId} value={p.productId}>
+                    {p.productName} (Current Stock: {p.stock} {p.unit})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {availableBatches.length > 0 && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-ink">Batch (Optional)</label>
+              <Select value={selectedBatchId} onValueChange={setSelectedBatchId}>
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="Select Batch..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">No Specific Batch</SelectItem>
+                  {availableBatches.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      Batch: {b.batchNumber} (Stock: {b.stock}, Exp: {b.expiryDate ? new Date(b.expiryDate).toLocaleDateString() : 'N/A'})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-ink">Quantity Wasted</label>
+              <Input
+                type="number"
+                min="1"
+                step="any"
+                className="h-9 text-xs"
+                value={qtyWasted}
+                onChange={(e) => setQtyWasted(e.target.value ? Number(e.target.value) : "")}
+                placeholder="e.g. 2.5"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-ink">Reason</label>
+              <Select value={reasonType} onValueChange={(val: any) => setReasonType(val)}>
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Spoiled">Spoiled / Rotten</SelectItem>
+                  <SelectItem value="Expired">Expired</SelectItem>
+                  <SelectItem value="Damaged">Damaged / Broken</SelectItem>
+                  <SelectItem value="Other">Other Reason</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-ink">Notes (Optional)</label>
+            <Input
+              className="h-9 text-xs"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="e.g. Mold found on tomato crate"
+            />
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="bg-destructive text-white hover:bg-destructive/90 font-semibold"
+          >
+            {submitting ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <AlertTriangle className="mr-1.5 h-4 w-4" />}
+            Confirm & Deduct Stock
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

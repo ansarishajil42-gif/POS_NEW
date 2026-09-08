@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
+import { createClient } from "@supabase/supabase-js";
 import { db } from "@/server/db";
-import { tenants, branches, tenantSettings, orders, platformSettings, staffUsers, auditLogs, inventoryLedger } from "@/server/db/schema";
+import { tenants, branches, tenantSettings, orders, platformSettings, staffUsers, auditLogs, inventoryLedger, blogPosts, tenantSubscriptions, tenantPayments } from "@/server/db/schema";
 import { eq, and, sql, desc, gte, lte, count } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
 import bcrypt from "bcryptjs";
@@ -109,6 +110,19 @@ export const createTenantServerFn = createServerFn({ method: "POST" })
                     passwordHash: passwordHash,
                     role: "head_office_admin",
                     isActive: true
+                });
+
+                // Create initial tenant subscription record
+                const subStartDate = new Date();
+                const subEndDate = new Date(subStartDate);
+                subEndDate.setMonth(subEndDate.getMonth() + 1);
+
+                await tx.insert(tenantSubscriptions).values({
+                    tenantId: newTenant.id,
+                    billingCycle: "monthly",
+                    subscriptionStartDate: subStartDate,
+                    currentPeriodEndDate: subEndDate,
+                    status: "active"
                 });
 
                 await logAuditAction({
@@ -745,3 +759,564 @@ export const archiveTenantServerFn = createServerFn({ method: "POST" })
 
         return result;
     });
+
+export const getBlogPostsFn = createServerFn()
+  .handler(async () => {
+    await ensureSuperAdmin();
+    try {
+      const posts = await db.query.blogPosts.findMany({
+        orderBy: desc(blogPosts.createdAt),
+      });
+      return { success: true, posts };
+    } catch (e: any) {
+      throw new Error(e.message);
+    }
+  });
+
+export const createBlogPostFn = createServerFn({ method: "POST" })
+  .validator((d: {
+    title: string;
+    slug: string;
+    coverImageUrl?: string;
+    shortDescription: string;
+    content: string;
+    status: string;
+    authorName?: string;
+  }) => d)
+  .handler(async ({ data }) => {
+    const session = await ensureSuperAdmin();
+    try {
+      const existing = await db.query.blogPosts.findFirst({
+        where: eq(blogPosts.slug, data.slug),
+      });
+      if (existing) {
+        throw new Error("Slug must be unique");
+      }
+
+      const [newPost] = await db.insert(blogPosts).values({
+        title: data.title,
+        slug: data.slug,
+        coverImageUrl: data.coverImageUrl || null,
+        shortDescription: data.shortDescription,
+        content: data.content,
+        status: data.status || "Draft",
+        authorName: data.authorName || "Admin",
+        publishedAt: data.status === "Published" ? new Date() : null,
+      }).returning();
+
+      await logAuditAction({
+        action: "Create Blog Post",
+        entityType: "blog_post",
+        entityId: newPost.id,
+        tenantId: session.tenantId,
+        userId: session.userId,
+        afterValue: newPost,
+      });
+
+      return { success: true, post: newPost };
+    } catch (e: any) {
+      throw new Error(e.message);
+    }
+  });
+
+export const updateBlogPostFn = createServerFn({ method: "POST" })
+  .validator((d: {
+    id: string;
+    title: string;
+    slug: string;
+    coverImageUrl?: string;
+    shortDescription: string;
+    content: string;
+    status: string;
+    authorName?: string;
+  }) => d)
+  .handler(async ({ data }) => {
+    const session = await ensureSuperAdmin();
+    try {
+      const post = await db.query.blogPosts.findFirst({
+        where: eq(blogPosts.id, data.id),
+      });
+      if (!post) {
+        throw new Error("Blog post not found");
+      }
+
+      if (data.slug && data.slug !== post.slug) {
+        const existing = await db.query.blogPosts.findFirst({
+          where: eq(blogPosts.slug, data.slug),
+        });
+        if (existing) {
+          throw new Error("Slug must be unique");
+        }
+      }
+
+      const updates: any = {
+        title: data.title,
+        slug: data.slug,
+        coverImageUrl: data.coverImageUrl || null,
+        shortDescription: data.shortDescription,
+        content: data.content,
+        status: data.status,
+        authorName: data.authorName || "Admin",
+        updatedAt: new Date(),
+      };
+
+      if (data.status === "Published" && post.status !== "Published") {
+        updates.publishedAt = new Date();
+      } else if (data.status === "Draft" && post.status === "Published") {
+        updates.publishedAt = null;
+      }
+
+      const [updatedPost] = await db.update(blogPosts)
+        .set(updates)
+        .where(eq(blogPosts.id, data.id))
+        .returning();
+
+      await logAuditAction({
+        action: "Update Blog Post",
+        entityType: "blog_post",
+        entityId: data.id,
+        tenantId: session.tenantId,
+        userId: session.userId,
+        afterValue: updatedPost,
+      });
+
+      return { success: true, post: updatedPost };
+    } catch (e: any) {
+      throw new Error(e.message);
+    }
+  });
+
+export const deleteBlogPostFn = createServerFn({ method: "POST" })
+  .validator((d: { id: string }) => d)
+  .handler(async ({ data }) => {
+    const session = await ensureSuperAdmin();
+    try {
+      const deleted = await db.delete(blogPosts)
+        .where(eq(blogPosts.id, data.id))
+        .returning();
+      if (deleted.length === 0) {
+        throw new Error("Blog post not found");
+      }
+
+      await logAuditAction({
+        action: "Delete Blog Post",
+        entityType: "blog_post",
+        entityId: data.id,
+        tenantId: session.tenantId,
+        userId: session.userId,
+        beforeValue: deleted[0],
+      });
+
+      return { success: true };
+    } catch (e: any) {
+      throw new Error(e.message);
+    }
+  });
+
+function getSupabaseClient() {
+  const supabaseKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFnYXV1enVka3ZieGVjcHVrc2hxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwNDMyNTAsImV4cCI6MjEwMjYxOTI1MH0.6byNsZMv_zZnUQX75dUzaEANWhfXx7XExUE-ZQ-RO2w";
+  const supabaseUrl = process.env.SUPABASE_URL || "https://agauuzudkvbxecpukshq.supabase.co";
+  return createClient(supabaseUrl, supabaseKey);
+}
+
+export const uploadBlogCoverFn = createServerFn({ method: "POST" })
+  .validator((d: { base64Data: string; fileName: string; mimeType: string }) => d)
+  .handler(async ({ data }) => {
+    await ensureSuperAdmin();
+    try {
+      const supabaseClient = getSupabaseClient();
+      const buffer = Buffer.from(data.base64Data, "base64");
+      const fileExt = data.fileName.split(".").pop();
+      const newFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
+      const filePath = `covers/${newFileName}`;
+
+      const { data: uploadData, error } = await supabaseClient.storage
+        .from("blog-covers")
+        .upload(filePath, buffer, {
+          contentType: data.mimeType,
+          upsert: true,
+        });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      const { data: publicUrlData } = supabaseClient.storage
+        .from("blog-covers")
+        .getPublicUrl(filePath);
+
+      return { success: true, publicUrl: publicUrlData.publicUrl };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+export function calculateNextDueDate(startDate: Date, billingCycle: string, customDays?: number): Date {
+    const nextDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+    if (billingCycle === "quarterly") {
+        nextDate.setMonth(nextDate.getMonth() + 3);
+    } else if (billingCycle === "6_months") {
+        nextDate.setMonth(nextDate.getMonth() + 6);
+    } else if (billingCycle === "yearly") {
+        nextDate.setFullYear(nextDate.getFullYear() + 1);
+    } else if (billingCycle === "custom") {
+        const days = customDays && customDays > 0 ? customDays : 30;
+        nextDate.setDate(nextDate.getDate() + days);
+    } else {
+        // default 'monthly'
+        nextDate.setMonth(nextDate.getMonth() + 1);
+    }
+    return nextDate;
+}
+
+export function computeSubscriptionStatus(currentPeriodEndDate: Date | string | null): "active" | "due_soon" | "overdue" | "no_record" {
+    if (!currentPeriodEndDate) return "no_record";
+    const now = new Date();
+    const endDate = new Date(currentPeriodEndDate);
+    if (isNaN(endDate.getTime())) return "no_record";
+
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const dueStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+
+    if (todayStr > dueStr) {
+        return "overdue";
+    }
+
+    const todayTime = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const dueTime = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate()).getTime();
+
+    const diffDays = Math.ceil((dueTime - todayTime) / (1000 * 60 * 60 * 24));
+    if (diffDays <= 7) {
+        return "due_soon";
+    }
+
+    return "active";
+}
+
+export const getBillingOverviewServerFn = createServerFn({ method: "GET" })
+    .handler(async () => {
+        await ensureSuperAdmin();
+
+        try {
+            const tenantRows = await db.select().from(tenants).where(sql`${tenants.status} != 'Archived'`).orderBy(sql`${tenants.createdAt} DESC`);
+            const subRows = await db.select().from(tenantSubscriptions);
+            const paymentRows = await db.select().from(tenantPayments).orderBy(sql`${tenantPayments.paymentDate} DESC`);
+
+            let totalRevenue = 0;
+            paymentRows.forEach(p => {
+                totalRevenue += Number(p.amount || 0);
+            });
+
+            const tenantBillingList = await Promise.all(tenantRows.map(async t => {
+                const sub = subRows.find(s => s.tenantId === t.id);
+                const tPayments = paymentRows.filter(p => p.tenantId === t.id);
+                
+                const computedStatus = sub ? computeSubscriptionStatus(sub.currentPeriodEndDate) : "no_record";
+                
+                if (sub && sub.status !== computedStatus) {
+                    await db.update(tenantSubscriptions)
+                        .set({ status: computedStatus, updatedAt: new Date() })
+                        .where(eq(tenantSubscriptions.id, sub.id));
+                }
+
+                const lastPayment = tPayments.length > 0 ? tPayments[0] : null;
+                const totalPaid = tPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
+                let punctuality = "Never Paid / No Billing Record";
+                if (computedStatus === "overdue" && sub?.currentPeriodEndDate) {
+                    const nowTime = new Date().setHours(0, 0, 0, 0);
+                    const dueTime = new Date(sub.currentPeriodEndDate).setHours(0, 0, 0, 0);
+                    const overdueDays = Math.max(1, Math.floor((nowTime - dueTime) / (1000 * 60 * 60 * 24)));
+                    punctuality = `Payment Overdue (${overdueDays} day${overdueDays > 1 ? 's' : ''})`;
+                } else if (lastPayment) {
+                    const pTime = new Date(lastPayment.paymentDate).setHours(0, 0, 0, 0);
+                    const sTime = new Date(lastPayment.periodCoveredStart).setHours(0, 0, 0, 0);
+                    const diffDays = Math.floor((pTime - sTime) / (1000 * 60 * 60 * 24));
+                    if (diffDays > 0) {
+                        punctuality = `Paid Late (by ${diffDays} day${diffDays > 1 ? 's' : ''})`;
+                    } else {
+                        punctuality = "Paid On Time";
+                    }
+                }
+
+                return {
+                    tenantId: t.id,
+                    tenantName: t.name,
+                    subdomain: t.subdomain,
+                    plan: t.plan,
+                    status: computedStatus,
+                    punctuality,
+                    billingCycle: sub ? sub.billingCycle : null,
+                    customDays: sub ? sub.customDays : null,
+                    subscriptionStartDate: sub ? sub.subscriptionStartDate : null,
+                    currentPeriodEndDate: sub ? sub.currentPeriodEndDate : null,
+                    lastPaymentAmount: lastPayment ? Number(lastPayment.amount) : null,
+                    lastPaymentDate: lastPayment ? lastPayment.paymentDate : null,
+                    totalPaid,
+                    paymentCount: tPayments.length
+                };
+            }));
+
+            const overdueTenants = tenantBillingList.filter(t => t.status === "overdue");
+            const dueSoonTenants = tenantBillingList.filter(t => t.status === "due_soon");
+
+            return {
+                success: true,
+                overview: {
+                    totalTenants: tenantRows.length,
+                    totalRevenueCollected: totalRevenue,
+                    overdueCount: overdueTenants.length,
+                    dueSoonCount: dueSoonTenants.length,
+                    totalOverdueAmount: overdueTenants.length
+                },
+                tenants: tenantBillingList
+            };
+        } catch (error: any) {
+            console.error("Fetch billing overview error:", error);
+            return { success: false, error: error.message };
+        }
+    });
+
+export const recordTenantPaymentServerFn = createServerFn({ method: "POST" })
+    .validator((d: {
+        tenantId: string;
+        amount: number;
+        paymentDate: string;
+        billingCycle: string;
+        customDays?: number;
+        notes?: string;
+    }) => d)
+    .handler(async ({ data }) => {
+        const session = await ensureSuperAdmin();
+
+        try {
+            const pDate = new Date(data.paymentDate); // preserves full timestamp with time
+
+            // Date-only math for subscription period coverage & due date calculation
+            const startDateForDueMath = new Date(pDate.getFullYear(), pDate.getMonth(), pDate.getDate());
+            const periodCoveredStart = startDateForDueMath;
+            const periodCoveredEnd = calculateNextDueDate(startDateForDueMath, data.billingCycle, data.customDays);
+
+            const recordedBy = session.email || session.name || "Super Admin";
+
+            await db.transaction(async (tx) => {
+                await tx.insert(tenantPayments).values({
+                    tenantId: data.tenantId,
+                    amount: data.amount.toFixed(2),
+                    currency: "AED",
+                    paymentDate: pDate,
+                    periodCoveredStart,
+                    periodCoveredEnd,
+                    notes: data.notes || null,
+                    recordedBy,
+                });
+
+                const existingSub = await tx.select().from(tenantSubscriptions).where(eq(tenantSubscriptions.tenantId, data.tenantId)).limit(1);
+
+                const newStatus = computeSubscriptionStatus(periodCoveredEnd);
+
+                if (existingSub.length > 0) {
+                    await tx.update(tenantSubscriptions)
+                        .set({
+                            billingCycle: data.billingCycle,
+                            customDays: data.customDays || null,
+                            currentPeriodEndDate: periodCoveredEnd,
+                            status: newStatus,
+                            updatedAt: new Date()
+                        })
+                        .where(eq(tenantSubscriptions.id, existingSub[0].id));
+                } else {
+                    await tx.insert(tenantSubscriptions).values({
+                        tenantId: data.tenantId,
+                        billingCycle: data.billingCycle,
+                        customDays: data.customDays || null,
+                        subscriptionStartDate: pDate,
+                        currentPeriodEndDate: periodCoveredEnd,
+                        status: newStatus
+                    });
+                }
+
+                await logAuditAction({
+                    action: "Record Tenant Payment",
+                    entityType: "tenant_payment",
+                    entityId: data.tenantId,
+                    tenantId: data.tenantId,
+                    afterValue: {
+                        amount: data.amount,
+                        billingCycle: data.billingCycle,
+                        paymentDate: data.paymentDate,
+                        periodCoveredEnd: periodCoveredEnd.toISOString(),
+                        recordedBy
+                    }
+                }, tx);
+            });
+
+            return { success: true, message: "Payment recorded successfully" };
+        } catch (error: any) {
+            console.error("Record tenant payment error:", error);
+            return { success: false, error: error.message };
+        }
+    });
+
+export const getTenantPaymentHistoryServerFn = createServerFn({ method: "POST" })
+    .validator((d: { tenantId: string }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+
+        try {
+            const rows = await db.select()
+                .from(tenantPayments)
+                .where(eq(tenantPayments.tenantId, data.tenantId))
+                .orderBy(sql`${tenantPayments.paymentDate} DESC`, sql`${tenantPayments.createdAt} DESC`);
+
+            return { success: true, payments: rows };
+        } catch (error: any) {
+            console.error("Fetch payment history error:", error);
+            return { success: false, error: error.message };
+        }
+    });
+
+export const updateTenantPaymentServerFn = createServerFn({ method: "POST" })
+    .validator((d: {
+        paymentId: string;
+        tenantId: string;
+        amount: number;
+        paymentDate: string;
+        billingCycle: string;
+        customDays?: number;
+        notes?: string;
+    }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+
+        try {
+            const pDate = new Date(data.paymentDate);
+
+            // Date-only math for subscription period coverage & due date calculation
+            const startDateForDueMath = new Date(pDate.getFullYear(), pDate.getMonth(), pDate.getDate());
+            const periodCoveredStart = startDateForDueMath;
+            const periodCoveredEnd = calculateNextDueDate(startDateForDueMath, data.billingCycle, data.customDays);
+
+            await db.transaction(async (tx) => {
+                // 1. Update target tenant_payments row
+                await tx.update(tenantPayments)
+                    .set({
+                        amount: data.amount.toFixed(2),
+                        paymentDate: pDate,
+                        periodCoveredStart,
+                        periodCoveredEnd,
+                        notes: data.notes || null,
+                    })
+                    .where(eq(tenantPayments.id, data.paymentId));
+
+                // 2. Query all payments for tenant to find the latest payment date
+                const allPayments = await tx.select()
+                    .from(tenantPayments)
+                    .where(eq(tenantPayments.tenantId, data.tenantId))
+                    .orderBy(sql`${tenantPayments.paymentDate} DESC`, sql`${tenantPayments.createdAt} DESC`);
+
+                if (allPayments.length > 0) {
+                    const latestPayment = allPayments[0];
+                    const newStatus = computeSubscriptionStatus(latestPayment.periodCoveredEnd);
+
+                    const existingSub = await tx.select().from(tenantSubscriptions).where(eq(tenantSubscriptions.tenantId, data.tenantId)).limit(1);
+
+                    if (existingSub.length > 0) {
+                        await tx.update(tenantSubscriptions)
+                            .set({
+                                billingCycle: data.billingCycle,
+                                customDays: data.customDays || null,
+                                currentPeriodEndDate: latestPayment.periodCoveredEnd,
+                                status: newStatus,
+                                updatedAt: new Date()
+                            })
+                            .where(eq(tenantSubscriptions.id, existingSub[0].id));
+                    } else {
+                        await tx.insert(tenantSubscriptions).values({
+                            tenantId: data.tenantId,
+                            billingCycle: data.billingCycle,
+                            customDays: data.customDays || null,
+                            subscriptionStartDate: latestPayment.periodCoveredStart,
+                            currentPeriodEndDate: latestPayment.periodCoveredEnd,
+                            status: newStatus
+                        });
+                    }
+                }
+
+                await logAuditAction({
+                    action: "Update Tenant Payment",
+                    entityType: "tenant_payment",
+                    entityId: data.paymentId,
+                    tenantId: data.tenantId,
+                    afterValue: {
+                        amount: data.amount,
+                        billingCycle: data.billingCycle,
+                        paymentDate: data.paymentDate,
+                        periodCoveredEnd: periodCoveredEnd.toISOString()
+                    }
+                }, tx);
+            });
+
+            return { success: true, message: "Payment updated successfully" };
+        } catch (error: any) {
+            console.error("Update tenant payment error:", error);
+            return { success: false, error: error.message };
+        }
+    });
+
+export const updateTenantDueDateServerFn = createServerFn({ method: "POST" })
+    .validator((d: { tenantId: string; newDueDate: string }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+
+        try {
+            const dueDate = new Date(data.newDueDate);
+            dueDate.setHours(0, 0, 0, 0);
+
+            const newStatus = computeSubscriptionStatus(dueDate);
+
+            await db.transaction(async (tx) => {
+                const existingSub = await tx.select().from(tenantSubscriptions).where(eq(tenantSubscriptions.tenantId, data.tenantId)).limit(1);
+
+                if (existingSub.length > 0) {
+                    await tx.update(tenantSubscriptions)
+                        .set({
+                            currentPeriodEndDate: dueDate,
+                            status: newStatus,
+                            updatedAt: new Date()
+                        })
+                        .where(eq(tenantSubscriptions.id, existingSub[0].id));
+                } else {
+                    await tx.insert(tenantSubscriptions).values({
+                        tenantId: data.tenantId,
+                        billingCycle: "monthly",
+                        subscriptionStartDate: new Date(),
+                        currentPeriodEndDate: dueDate,
+                        status: newStatus
+                    });
+                }
+
+                await logAuditAction({
+                    action: "Update Tenant Due Date",
+                    entityType: "tenant_subscription",
+                    entityId: data.tenantId,
+                    tenantId: data.tenantId,
+                    afterValue: {
+                        newDueDate: data.newDueDate,
+                        status: newStatus
+                    }
+                }, tx);
+            });
+
+            return { success: true, message: "Due date updated successfully" };
+        } catch (error: any) {
+            console.error("Update tenant due date error:", error);
+            return { success: false, error: error.message };
+        }
+    });
+
+
+

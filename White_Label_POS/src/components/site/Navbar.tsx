@@ -8,6 +8,7 @@ const links = [
     { label: "Features", href: "/#features" },
     { label: "Modules", href: "/#modules" },
     { label: "Pricing", href: "/pricing" },
+    { label: "Blog", href: "/blog" },
     { label: "Integrations", href: "/#integrations" },
     { label: "Contact", href: "/#contact" },
 ];
@@ -36,7 +37,7 @@ export function Navbar() {
 
                 <div className="hidden items-center gap-2 lg:flex">
                     <Button asChild variant="ghost" className="text-sm font-semibold">
-                        <Link to="/login">View live demo</Link>
+                        <Link to="/login">Sign in</Link>
                     </Button>
                     <Button asChild className="rounded-xl text-sm font-semibold shadow-[var(--shadow-soft)]">
                         <a href="/#contact">Book a demo</a>
@@ -70,7 +71,7 @@ export function Navbar() {
                             onClick={() => setOpen(false)}
                             className="rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:bg-secondary hover:text-ink"
                         >
-                            View live demo
+                            Sign in
                         </Link>
                         <Button asChild className="mt-2 rounded-xl">
                             <a href="/#contact" onClick={() => setOpen(false)}>

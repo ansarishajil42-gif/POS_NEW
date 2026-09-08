@@ -20,6 +20,8 @@ import {
   productBarcodes,
   productVariants,
   unitConversions,
+  productRecipes,
+  inventoryLedger,
 } from "../server/db/schema";
 
 // Middleware
@@ -815,6 +817,77 @@ export const checkoutServerFn = createServerFn({ method: "POST" })
           
         if (stockUpdateResult.length === 0) {
           throw new Error(`Insufficient non-batch stock for ${product.name}`);
+        }
+
+        // Recipe-Based Stock Deduction for Raw Ingredients (Hot Food)
+        const recipes = await tx
+          .select({
+            ingredientProductId: productRecipes.ingredientProductId,
+            quantity: productRecipes.quantity,
+            unit: productRecipes.unit,
+            ingredientName: products.name,
+          })
+          .from(productRecipes)
+          .innerJoin(products, eq(productRecipes.ingredientProductId, products.id))
+          .where(
+            and(
+              eq(productRecipes.productId, item.productId),
+              eq(productRecipes.tenantId, tenantId),
+            ),
+          );
+
+        if (recipes.length > 0) {
+          for (const recipe of recipes) {
+            const requiredIngredientQty = baseQtyToDeduct * Number(recipe.quantity);
+
+            // Get current ingredient stock for branch
+            const [ingStock] = await tx
+              .select({ id: stockLevels.id, stock: stockLevels.stock })
+              .from(stockLevels)
+              .where(
+                and(
+                  eq(stockLevels.productId, recipe.ingredientProductId),
+                  eq(stockLevels.branchId, branchId),
+                ),
+              )
+              .for("update");
+
+            const currentStock = ingStock ? Number(ingStock.stock) : 0;
+            if (currentStock < requiredIngredientQty) {
+              throw new Error(
+                `Insufficient stock for raw ingredient "${recipe.ingredientName}" required for ${product.name} (Required: ${requiredIngredientQty} ${recipe.unit}, Available: ${currentStock} ${recipe.unit}). Cannot complete checkout.`,
+              );
+            }
+
+            const newIngStock = currentStock - requiredIngredientQty;
+            if (ingStock) {
+              await tx
+                .update(stockLevels)
+                .set({ stock: newIngStock })
+                .where(eq(stockLevels.id, ingStock.id));
+            } else {
+              await tx.insert(stockLevels).values({
+                productId: recipe.ingredientProductId,
+                branchId,
+                stock: newIngStock,
+                reorderLevel: 10,
+              });
+            }
+
+            // Log recipe deduction to inventoryLedger
+            await tx.insert(inventoryLedger).values({
+              tenantId,
+              branchId,
+              productId: recipe.ingredientProductId,
+              transactionType: "Recipe Deduction",
+              previousQuantity: currentStock,
+              changedQuantity: -requiredIngredientQty,
+              newQuantity: newIngStock,
+              referenceId: orderId,
+              createdBy: cashierId,
+              reason: `Recipe ingredient deduction for ${product.name} (Order ${invNumber})`,
+            });
+          }
         }
       }
 

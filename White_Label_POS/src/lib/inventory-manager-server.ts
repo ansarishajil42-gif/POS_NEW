@@ -962,3 +962,229 @@ export const bulkUpdateStockFromExcelServerFn = createServerFn({ method: "POST" 
     }
   });
 
+export const logWastageServerFn = createServerFn({ method: "POST" })
+  .validator(
+    (d: {
+      branchId: string;
+      productId: string;
+      batchId?: string;
+      quantityWasted: number;
+      reasonType: "Spoiled" | "Expired" | "Damaged" | "Other";
+      notes?: string;
+    }) => d,
+  )
+  .handler(async ({ data }) => {
+    const res = await getSessionServerFn();
+    if (!res.success || !res.session) throw new Error("Unauthorized");
+    const { tenantId, branchScope } = await getInventoryManagerContext();
+    const userId = res.session.userId;
+
+    if (!data.productId) throw new Error("Product is required");
+    if (!data.branchId) throw new Error("Branch is required");
+    if (!data.quantityWasted || data.quantityWasted <= 0)
+      throw new Error("Quantity wasted must be greater than 0");
+    if (!data.reasonType) throw new Error("Wastage reason is required");
+
+    if (branchScope && !branchScope.includes(data.branchId)) {
+      throw new Error("Forbidden: Unauthorized branch scope");
+    }
+
+    const formattedReason = `Wastage: ${data.reasonType}${data.notes ? " - " + data.notes.trim() : ""}`;
+    const qtyChange = -Math.abs(data.quantityWasted);
+
+    await db.transaction(async (tx) => {
+      let previousQty = 0;
+      if (data.batchId) {
+        const [batch] = await tx
+          .select()
+          .from(batches)
+          .where(
+            and(
+              eq(batches.id, data.batchId),
+              eq(batches.tenantId, tenantId),
+              eq(batches.branchId, data.branchId),
+            ),
+          );
+        if (!batch) throw new Error("Batch not found");
+        previousQty = batch.stock;
+        const newQty = previousQty + qtyChange;
+        if (newQty < 0)
+          throw new Error(
+            `Cannot waste ${data.quantityWasted} units; batch stock is only ${previousQty}`,
+          );
+
+        await tx
+          .update(batches)
+          .set({ stock: newQty })
+          .where(eq(batches.id, data.batchId));
+        await tx
+          .update(stockLevels)
+          .set({ stock: sql`${stockLevels.stock} + ${qtyChange}` })
+          .where(
+            and(
+              eq(stockLevels.productId, data.productId),
+              eq(stockLevels.branchId, data.branchId),
+            ),
+          );
+      } else {
+        const [level] = await tx
+          .select()
+          .from(stockLevels)
+          .where(
+            and(
+              eq(stockLevels.productId, data.productId),
+              eq(stockLevels.branchId, data.branchId),
+            ),
+          );
+        if (!level)
+          throw new Error("Stock level not found for this product in selected branch");
+        previousQty = level.stock;
+        const newQty = previousQty + qtyChange;
+        if (newQty < 0)
+          throw new Error(
+            `Cannot waste ${data.quantityWasted} units; current stock is only ${previousQty}`,
+          );
+
+        await tx.update(stockLevels).set({ stock: newQty }).where(eq(stockLevels.id, level.id));
+      }
+
+      // Record in stockAdjustments
+      const [adj] = await tx
+        .insert(schema.stockAdjustments)
+        .values({
+          tenantId,
+          branchId: data.branchId,
+          productId: data.productId,
+          batchId: data.batchId || null,
+          previousQuantity: previousQty,
+          quantityChange: qtyChange,
+          newQuantity: previousQty + qtyChange,
+          reason: formattedReason,
+          adjustedBy: userId || null,
+        })
+        .returning({ id: schema.stockAdjustments.id });
+
+      // Record in inventoryLedger
+      await tx.insert(schema.inventoryLedger).values({
+        tenantId,
+        branchId: data.branchId,
+        productId: data.productId,
+        batchId: data.batchId || null,
+        transactionType: "Wastage",
+        previousQuantity: previousQty,
+        changedQuantity: qtyChange,
+        newQuantity: previousQty + qtyChange,
+        referenceId: adj?.id || null,
+        createdBy: userId || null,
+      });
+
+      // Audit Log
+      try {
+        await tx.insert(schema.auditLogs).values({
+          tenantId,
+          userId: userId || null,
+          action: "inventory.wastage_logged",
+          details: JSON.stringify({
+            productId: data.productId,
+            branchId: data.branchId,
+            batchId: data.batchId || null,
+            quantityWasted: data.quantityWasted,
+            reason: formattedReason,
+          }),
+        });
+      } catch (e) {
+        console.warn("Could not record audit log for wastage:", e);
+      }
+    });
+
+    return { success: true };
+  });
+
+export const getWastageReportServerFn = createServerFn({ method: "GET" })
+  .validator((d?: { startDate?: string; endDate?: string; branchId?: string }) => d)
+  .handler(async ({ data }) => {
+    const { tenantId, branchScope } = await getInventoryManagerContext();
+
+    const branchFilter = data?.branchId && data.branchId !== "all" ? data.branchId : null;
+    const whereConditions: any[] = [
+      eq(schema.stockAdjustments.tenantId, tenantId),
+      sql`${schema.stockAdjustments.reason} LIKE 'Wastage%'`,
+    ];
+
+    if (branchScope) {
+      whereConditions.push(inArray(schema.stockAdjustments.branchId, branchScope));
+    }
+    if (branchFilter) {
+      whereConditions.push(eq(schema.stockAdjustments.branchId, branchFilter));
+    }
+    if (data?.startDate) {
+      whereConditions.push(
+        sql`${schema.stockAdjustments.createdAt} >= ${new Date(data.startDate)}`,
+      );
+    }
+    if (data?.endDate) {
+      const end = new Date(data.endDate);
+      end.setHours(23, 59, 59, 999);
+      whereConditions.push(sql`${schema.stockAdjustments.createdAt} <= ${end}`);
+    }
+
+    const wastageEntries = await db
+      .select({
+        id: schema.stockAdjustments.id,
+        productId: schema.stockAdjustments.productId,
+        productName: products.name,
+        category: products.category,
+        unit: products.unit,
+        costPrice: products.costPrice,
+        branchId: schema.stockAdjustments.branchId,
+        branchName: branches.name,
+        previousQuantity: schema.stockAdjustments.previousQuantity,
+        quantityChange: schema.stockAdjustments.quantityChange,
+        newQuantity: schema.stockAdjustments.newQuantity,
+        reason: schema.stockAdjustments.reason,
+        createdAt: schema.stockAdjustments.createdAt,
+      })
+      .from(schema.stockAdjustments)
+      .innerJoin(products, eq(schema.stockAdjustments.productId, products.id))
+      .innerJoin(branches, eq(schema.stockAdjustments.branchId, branches.id))
+      .where(and(...whereConditions))
+      .orderBy(desc(schema.stockAdjustments.createdAt));
+
+    let totalQtyWasted = 0;
+    let totalValueWasted = 0;
+
+    const items = wastageEntries.map((entry) => {
+      const qtyWasted = Math.abs(entry.quantityChange);
+      const costPrice = Number(entry.costPrice) || 0;
+      const totalCost = qtyWasted * costPrice;
+
+      totalQtyWasted += qtyWasted;
+      totalValueWasted += totalCost;
+
+      return {
+        id: entry.id,
+        productId: entry.productId,
+        productName: entry.productName,
+        category: entry.category,
+        unit: entry.unit,
+        costPrice,
+        qtyWasted,
+        totalCost,
+        branchName: entry.branchName,
+        reason: entry.reason,
+        createdAt: entry.createdAt,
+      };
+    });
+
+    return {
+      success: true,
+      summary: {
+        totalRecords: items.length,
+        totalQtyWasted,
+        totalValueWasted,
+      },
+      items,
+    };
+  });
+
+

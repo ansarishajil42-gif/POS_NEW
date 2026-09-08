@@ -16,12 +16,31 @@ import { eq, and, sql, gte, lt, desc } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
 import { logAuditAction } from "@/lib/audit-logger";
 
-async function getHeadOfficeTenant() {
+interface TenantContextResult {
+  tenantId: string | null;
+  isAll: boolean;
+}
+
+async function resolveReportTenantContext(overrideTenantId?: string): Promise<TenantContextResult> {
   const res = await getSessionServerFn();
-  if (!res.success || !res.session || res.session.role !== "Head Office Admin") {
+  if (!res.success || !res.session) {
     throw new Error("Unauthorized");
   }
-  return res.session.tenantId;
+
+  // Super Admin can select a specific tenantId or "all"
+  if (res.session.role === "Super Admin") {
+    if (!overrideTenantId || overrideTenantId === "all") {
+      return { tenantId: null, isAll: true };
+    }
+    return { tenantId: overrideTenantId, isAll: false };
+  }
+
+  // Head Office Admin uses their session tenantId
+  if (res.session.role === "Head Office Admin") {
+    return { tenantId: res.session.tenantId, isAll: false };
+  }
+
+  throw new Error("Unauthorized");
 }
 
 // Helper to construct date boundaries
@@ -37,29 +56,43 @@ const parseDateRange = (startDate: string, endDate: string) => {
     throw new Error("Start date must be strictly before end date");
   }
   
-  // Return boundaries (half-open range: [startDate, endDate) )
   return { sDate, eDate };
 };
 
-const buildOrdersWhere = (tenantId: string, sDate: Date, eDate: Date, branchId?: string) => {
+const buildOrdersWhere = (tenantCtx: TenantContextResult, sDate: Date, eDate: Date, branchId?: string) => {
   const conditions = [
-    eq(orders.tenantId, tenantId),
     eq(orders.status, "completed"),
     gte(orders.createdAt, sDate),
-    lt(orders.createdAt, eDate) // Exclusive end date
+    lt(orders.createdAt, eDate)
   ];
-  if (branchId) {
+  if (!tenantCtx.isAll && tenantCtx.tenantId) {
+    conditions.push(eq(orders.tenantId, tenantCtx.tenantId));
+  }
+  if (branchId && branchId !== "all") {
     conditions.push(eq(orders.branchId, branchId));
   }
   return and(...conditions);
 };
 
-export const getSalesSummaryReportFn = createServerFn({ method: "POST" })
-  .validator((d: { startDate: string; endDate: string; branchId?: string }) => d)
+export const getReportBranchesServerFn = createServerFn({ method: "POST" })
+  .validator((d: { tenantId?: string } | undefined) => d || {})
   .handler(async ({ data }) => {
-    const tenantId = await getHeadOfficeTenant();
+    const tenantCtx = await resolveReportTenantContext(data.tenantId);
+    let rows;
+    if (tenantCtx.isAll) {
+      rows = await db.select().from(branches).where(eq(branches.status, "Active")).orderBy(desc(branches.createdAt));
+    } else {
+      rows = await db.select().from(branches).where(and(eq(branches.tenantId, tenantCtx.tenantId!), eq(branches.status, "Active"))).orderBy(desc(branches.createdAt));
+    }
+    return { success: true, branches: rows };
+  });
+
+export const getSalesSummaryReportFn = createServerFn({ method: "POST" })
+  .validator((d: { startDate: string; endDate: string; branchId?: string; tenantId?: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantCtx = await resolveReportTenantContext(data.tenantId);
     const { sDate, eDate } = parseDateRange(data.startDate, data.endDate);
-    const whereClause = buildOrdersWhere(tenantId, sDate, eDate, data.branchId);
+    const whereClause = buildOrdersWhere(tenantCtx, sDate, eDate, data.branchId);
 
     const result = await db.select({
       orderCount: sql<number>`count(${orders.id})`,
@@ -80,6 +113,7 @@ export const getSalesSummaryReportFn = createServerFn({ method: "POST" })
     return {
       success: true,
       data: {
+        scope: tenantCtx.isAll ? "Platform-Wide (All Tenants)" : "Single Tenant",
         orderCount,
         netSales: netSales.toFixed(2),
         vatAmount: vatAmount.toFixed(2),
@@ -90,9 +124,9 @@ export const getSalesSummaryReportFn = createServerFn({ method: "POST" })
   });
 
 export const getBranchSalesReportFn = createServerFn({ method: "POST" })
-  .validator((d: { startDate: string; endDate: string }) => d)
+  .validator((d: { startDate: string; endDate: string; tenantId?: string }) => d)
   .handler(async ({ data }) => {
-    const tenantId = await getHeadOfficeTenant();
+    const tenantCtx = await resolveReportTenantContext(data.tenantId);
     const { sDate, eDate } = parseDateRange(data.startDate, data.endDate);
 
     const results = await db.select({
@@ -105,7 +139,7 @@ export const getBranchSalesReportFn = createServerFn({ method: "POST" })
     })
     .from(orders)
     .innerJoin(branches, eq(orders.branchId, branches.id))
-    .where(buildOrdersWhere(tenantId, sDate, eDate))
+    .where(buildOrdersWhere(tenantCtx, sDate, eDate))
     .groupBy(orders.branchId, branches.name)
     .orderBy(desc(sql`sum(${orders.total})`));
 
@@ -114,11 +148,11 @@ export const getBranchSalesReportFn = createServerFn({ method: "POST" })
   });
 
 export const getProductSalesReportFn = createServerFn({ method: "POST" })
-  .validator((d: { startDate: string; endDate: string; branchId?: string }) => d)
+  .validator((d: { startDate: string; endDate: string; branchId?: string; tenantId?: string }) => d)
   .handler(async ({ data }) => {
-    const tenantId = await getHeadOfficeTenant();
+    const tenantCtx = await resolveReportTenantContext(data.tenantId);
     const { sDate, eDate } = parseDateRange(data.startDate, data.endDate);
-    const whereClause = buildOrdersWhere(tenantId, sDate, eDate, data.branchId);
+    const whereClause = buildOrdersWhere(tenantCtx, sDate, eDate, data.branchId);
 
     const results = await db.select({
       productId: orderItems.productId,
@@ -139,11 +173,11 @@ export const getProductSalesReportFn = createServerFn({ method: "POST" })
   });
 
 export const getCategorySalesReportFn = createServerFn({ method: "POST" })
-  .validator((d: { startDate: string; endDate: string; branchId?: string }) => d)
+  .validator((d: { startDate: string; endDate: string; branchId?: string; tenantId?: string }) => d)
   .handler(async ({ data }) => {
-    const tenantId = await getHeadOfficeTenant();
+    const tenantCtx = await resolveReportTenantContext(data.tenantId);
     const { sDate, eDate } = parseDateRange(data.startDate, data.endDate);
-    const whereClause = buildOrdersWhere(tenantId, sDate, eDate, data.branchId);
+    const whereClause = buildOrdersWhere(tenantCtx, sDate, eDate, data.branchId);
 
     const results = await db.select({
       category: products.category,
@@ -163,11 +197,11 @@ export const getCategorySalesReportFn = createServerFn({ method: "POST" })
   });
 
 export const getCashierSalesReportFn = createServerFn({ method: "POST" })
-  .validator((d: { startDate: string; endDate: string; branchId?: string }) => d)
+  .validator((d: { startDate: string; endDate: string; branchId?: string; tenantId?: string }) => d)
   .handler(async ({ data }) => {
-    const tenantId = await getHeadOfficeTenant();
+    const tenantCtx = await resolveReportTenantContext(data.tenantId);
     const { sDate, eDate } = parseDateRange(data.startDate, data.endDate);
-    const whereClause = buildOrdersWhere(tenantId, sDate, eDate, data.branchId);
+    const whereClause = buildOrdersWhere(tenantCtx, sDate, eDate, data.branchId);
 
     const results = await db.select({
       cashierId: orders.cashierId,
@@ -188,14 +222,19 @@ export const getCashierSalesReportFn = createServerFn({ method: "POST" })
   });
 
 export const getInventoryValuationReportFn = createServerFn({ method: "POST" })
-  .validator((d: { branchId?: string }) => d)
+  .validator((d: { branchId?: string; tenantId?: string }) => d)
   .handler(async ({ data }) => {
-    const tenantId = await getHeadOfficeTenant();
+    const tenantCtx = await resolveReportTenantContext(data.tenantId);
     
-    const conditions = [eq(products.tenantId, tenantId)];
-    if (data.branchId) {
+    const conditions = [];
+    if (!tenantCtx.isAll && tenantCtx.tenantId) {
+      conditions.push(eq(products.tenantId, tenantCtx.tenantId));
+    }
+    if (data.branchId && data.branchId !== "all") {
       conditions.push(eq(stockLevels.branchId, data.branchId));
     }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
     const results = await db.select({
       branchName: branches.name,
@@ -207,7 +246,7 @@ export const getInventoryValuationReportFn = createServerFn({ method: "POST" })
     .from(stockLevels)
     .innerJoin(products, eq(stockLevels.productId, products.id))
     .innerJoin(branches, eq(stockLevels.branchId, branches.id))
-    .where(and(...conditions))
+    .where(whereClause)
     .orderBy(branches.name, products.name);
 
     await logAuditAction({ action: "Generated Inventory Valuation Report", entityType: "Report", entityId: "InventoryValuation", summary: `Generated Inventory Valuation Report` });
@@ -215,15 +254,17 @@ export const getInventoryValuationReportFn = createServerFn({ method: "POST" })
   });
 
 export const getLowStockReportFn = createServerFn({ method: "POST" })
-  .validator((d: { branchId?: string }) => d)
+  .validator((d: { branchId?: string; tenantId?: string }) => d)
   .handler(async ({ data }) => {
-    const tenantId = await getHeadOfficeTenant();
+    const tenantCtx = await resolveReportTenantContext(data.tenantId);
     
     const conditions = [
-      eq(products.tenantId, tenantId),
       sql`${stockLevels.stock} < ${stockLevels.reorderLevel}`
     ];
-    if (data.branchId) {
+    if (!tenantCtx.isAll && tenantCtx.tenantId) {
+      conditions.push(eq(products.tenantId, tenantCtx.tenantId));
+    }
+    if (data.branchId && data.branchId !== "all") {
       conditions.push(eq(stockLevels.branchId, data.branchId));
     }
 
@@ -245,20 +286,21 @@ export const getLowStockReportFn = createServerFn({ method: "POST" })
   });
 
 export const getExpiryReportFn = createServerFn({ method: "POST" })
-  .validator((d: { branchId?: string; daysThreshold: number }) => d)
+  .validator((d: { branchId?: string; daysThreshold: number; tenantId?: string }) => d)
   .handler(async ({ data }) => {
-    const tenantId = await getHeadOfficeTenant();
+    const tenantCtx = await resolveReportTenantContext(data.tenantId);
     
-    // Check batches expiring before (now + daysThreshold)
     const thresholdDate = new Date();
     thresholdDate.setDate(thresholdDate.getDate() + data.daysThreshold);
 
     const conditions = [
-      eq(batches.tenantId, tenantId),
       lt(batches.expiryDate, thresholdDate),
-      gte(batches.stock, 1) // Only check batches that have stock
+      gte(batches.stock, 1)
     ];
-    if (data.branchId) {
+    if (!tenantCtx.isAll && tenantCtx.tenantId) {
+      conditions.push(eq(batches.tenantId, tenantCtx.tenantId));
+    }
+    if (data.branchId && data.branchId !== "all") {
       conditions.push(eq(batches.branchId, data.branchId));
     }
 
@@ -281,17 +323,19 @@ export const getExpiryReportFn = createServerFn({ method: "POST" })
   });
 
 export const getPurchaseReportFn = createServerFn({ method: "POST" })
-  .validator((d: { startDate: string; endDate: string; branchId?: string }) => d)
+  .validator((d: { startDate: string; endDate: string; branchId?: string; tenantId?: string }) => d)
   .handler(async ({ data }) => {
-    const tenantId = await getHeadOfficeTenant();
+    const tenantCtx = await resolveReportTenantContext(data.tenantId);
     const { sDate, eDate } = parseDateRange(data.startDate, data.endDate);
     
     const conditions = [
-      eq(purchaseOrders.tenantId, tenantId),
       gte(purchaseOrders.createdAt, sDate),
       lt(purchaseOrders.createdAt, eDate)
     ];
-    if (data.branchId) {
+    if (!tenantCtx.isAll && tenantCtx.tenantId) {
+      conditions.push(eq(purchaseOrders.tenantId, tenantCtx.tenantId));
+    }
+    if (data.branchId && data.branchId !== "all") {
       conditions.push(eq(purchaseOrders.branchId, data.branchId));
     }
 
@@ -314,16 +358,18 @@ export const getPurchaseReportFn = createServerFn({ method: "POST" })
   });
 
 export const getVendorReportFn = createServerFn({ method: "POST" })
-  .validator((d: { startDate: string; endDate: string }) => d)
+  .validator((d: { startDate: string; endDate: string; tenantId?: string }) => d)
   .handler(async ({ data }) => {
-    const tenantId = await getHeadOfficeTenant();
+    const tenantCtx = await resolveReportTenantContext(data.tenantId);
     const { sDate, eDate } = parseDateRange(data.startDate, data.endDate);
     
     const conditions = [
-      eq(purchaseOrders.tenantId, tenantId),
       gte(purchaseOrders.createdAt, sDate),
       lt(purchaseOrders.createdAt, eDate)
     ];
+    if (!tenantCtx.isAll && tenantCtx.tenantId) {
+      conditions.push(eq(purchaseOrders.tenantId, tenantCtx.tenantId));
+    }
 
     const results = await db.select({
       vendorName: vendors.name,
@@ -341,15 +387,17 @@ export const getVendorReportFn = createServerFn({ method: "POST" })
   });
 
 export const getVatSummaryReportFn = createServerFn({ method: "POST" })
-  .validator((d: { startDate: string; endDate: string }) => d)
+  .validator((d: { startDate: string; endDate: string; tenantId?: string }) => d)
   .handler(async ({ data }) => {
-    const tenantId = await getHeadOfficeTenant();
+    const tenantCtx = await resolveReportTenantContext(data.tenantId);
     const { sDate, eDate } = parseDateRange(data.startDate, data.endDate);
-    const whereClause = buildOrdersWhere(tenantId, sDate, eDate);
+    const whereClause = buildOrdersWhere(tenantCtx, sDate, eDate);
 
-    // Get Tenant TRN
-    const settings = await db.select({ trn: tenantSettings.taxRegistrationNumber }).from(tenantSettings).where(eq(tenantSettings.tenantId, tenantId)).limit(1);
-    const trn = settings[0]?.trn || "Not Configured";
+    let trn = "Platform Aggregate";
+    if (!tenantCtx.isAll && tenantCtx.tenantId) {
+      const settings = await db.select({ trn: tenantSettings.taxRegistrationNumber }).from(tenantSettings).where(eq(tenantSettings.tenantId, tenantCtx.tenantId)).limit(1);
+      trn = settings[0]?.trn || "Not Configured";
+    }
 
     const result = await db.select({
       taxableOrdersCount: sql<number>`count(${orders.id})`,
@@ -369,13 +417,14 @@ export const getVatSummaryReportFn = createServerFn({ method: "POST" })
       success: true,
       data: {
         trn,
+        scope: tenantCtx.isAll ? "Platform-Wide (All Tenants)" : "Single Tenant",
         periodStart: sDate.toISOString(),
         periodEnd: eDate.toISOString(),
         taxableOrdersCount,
         salesExVat,
         vatAmount,
         salesIncVat,
-        standardRatedSales: salesExVat, // Assuming standard rated based on schema limitation
+        standardRatedSales: salesExVat,
         notes: "Historical stored VAT values used. Mixed tax categories are not fully separated in the schema. This represents aggregate VAT as captured at checkout.",
       }
     };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Alert, Modal, Keyboard, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Alert, Modal, Keyboard, Platform, ActivityIndicator } from 'react-native';
 import { AppHeader, ScreenBody, ScreenHeader } from '../Shell';
 import { Card, StatCard } from '../ui/Card';
 import { Badge, statusVariant } from '../ui/Badge';
@@ -289,13 +289,15 @@ export function OutletDetail({ id, onBack }: { id: string; onBack: () => void })
 
 export function HeadOfficeCatalog({ onOpenProduct }: { onOpenProduct: (id: string) => void }) {
   const { branch } = useAuth();
-  const { products, addProduct, updateProduct, deleteProduct, batches } = useHeadOffice();
+  const { products, productsTotal, productsPage, fetchProducts, addProduct, updateProduct, deleteProduct, batches } = useHeadOffice();
 
   const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null);
   const showToast = (message: string, type: ToastType = 'success') => setToast({ message, type });
 
   const [tab, setTab] = useState<'catalog' | 'batches'>('catalog');
   const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any>(null);
@@ -313,9 +315,28 @@ export function HeadOfficeCatalog({ onOpenProduct }: { onOpenProduct: (id: strin
     unitConversions: [] as any[]
   });
 
-  const filtered = products.filter((p) =>
-    p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase())
-  );
+  const loadCatalog = async (p = page, search = q) => {
+    setLoading(true);
+    try {
+      await fetchProducts(p, 50, search);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to load products', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadCatalog(1, '');
+  }, []);
+
+  const totalPages = Math.ceil(productsTotal / 50) || 1;
+
+  const handleSearchChange = (text: string) => {
+    setQ(text);
+    setPage(1);
+    loadCatalog(1, text);
+  };
 
   const openAdd = () => {
     setEditingProduct(null);
@@ -397,32 +418,74 @@ export function HeadOfficeCatalog({ onOpenProduct }: { onOpenProduct: (id: strin
           <>
             <View style={styles.searchBar}>
               <Search size={16} color="#94a3b8" />
-              <TextInput value={q} onChangeText={setQ} placeholder="Search by name or SKU…" placeholderTextColor="#94a3b8" style={styles.searchInput} />
+              <TextInput value={q} onChangeText={handleSearchChange} placeholder="Search by name or SKU…" placeholderTextColor="#94a3b8" style={styles.searchInput} />
             </View>
-            <View style={styles.listContainer}>
-              {filtered.map((p) => (
-                <Card key={p.id}>
-                  <View style={styles.cardHeaderRow}>
-                    <TouchableOpacity style={styles.flex1} onPress={() => onOpenProduct(p.id)}>
-                      <Text style={styles.productName} numberOfLines={1}>{p.name}</Text>
-                      <Text style={styles.productMeta}>{p.sku} · {p.barcode} · {p.category}</Text>
-                    </TouchableOpacity>
-                    <View style={styles.productPriceCol}>
-                      <Text style={styles.productPrice}>{formatCurrency(p.price)}</Text>
-                      <Badge variant={p.stock < 10 ? 'warn' : 'success'}>{p.stock} {p.unit}</Badge>
-                    </View>
-                  </View>
-                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 12, borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingTop: 8 }}>
-                    <TouchableOpacity onPress={() => openEdit(p)}>
-                      <Edit2 size={16} color="#94a3b8" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleDelete(p.id, p.name)}>
-                      <Trash2 size={16} color="#ef4444" />
-                    </TouchableOpacity>
-                  </View>
-                </Card>
-              ))}
-            </View>
+
+            {loading ? (
+              <View style={{ padding: 32, alignItems: 'center' }}>
+                <ActivityIndicator size="large" color="#39ff14" />
+                <Text style={[styles.noDataText, { marginTop: 12 }]}>Loading products...</Text>
+              </View>
+            ) : products.length === 0 ? (
+              <View style={{ padding: 32, alignItems: 'center' }}>
+                <Text style={styles.noDataText}>No products found</Text>
+              </View>
+            ) : (
+              <>
+                <View style={styles.listContainer}>
+                  {products.map((p) => (
+                    <Card key={p.id}>
+                      <View style={styles.cardHeaderRow}>
+                        <TouchableOpacity style={styles.flex1} onPress={() => onOpenProduct(p.id)}>
+                          <Text style={styles.productName} numberOfLines={1}>{p.name}</Text>
+                          <Text style={styles.productMeta}>{p.sku} · {p.barcode} · {p.category}</Text>
+                        </TouchableOpacity>
+                        <View style={styles.productPriceCol}>
+                          <Text style={styles.productPrice}>{formatCurrency(p.price)}</Text>
+                          <Badge variant={p.stock < 10 ? 'warn' : 'success'}>{p.stock} {p.unit}</Badge>
+                        </View>
+                      </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 12, borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingTop: 8 }}>
+                        <TouchableOpacity onPress={() => openEdit(p)}>
+                          <Edit2 size={16} color="#94a3b8" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => handleDelete(p.id, p.name)}>
+                          <Trash2 size={16} color="#ef4444" />
+                        </TouchableOpacity>
+                      </View>
+                    </Card>
+                  ))}
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, marginBottom: 24, paddingHorizontal: 4 }}>
+                  <Button
+                    variant="secondary"
+                    disabled={page <= 1 || loading}
+                    onClick={() => {
+                      const newPage = Math.max(1, page - 1);
+                      setPage(newPage);
+                      loadCatalog(newPage, q);
+                    }}
+                  >
+                    Previous
+                  </Button>
+                  <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '500' }}>
+                    Page {productsPage} of {totalPages} ({productsTotal} items)
+                  </Text>
+                  <Button
+                    variant="secondary"
+                    disabled={page >= totalPages || loading}
+                    onClick={() => {
+                      const newPage = page + 1;
+                      setPage(newPage);
+                      loadCatalog(newPage, q);
+                    }}
+                  >
+                    Next
+                  </Button>
+                </View>
+              </>
+            )}
           </>
         ) : (
           <View style={styles.listContainer}>

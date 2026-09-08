@@ -1,49 +1,86 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { products, batches, productBarcodes, productVariants, unitConversions } from "../db/schema.js";
-import { eq, and } from "drizzle-orm";
+import { eq, and, ilike, or, inArray, count } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
 
-// Get products (filtered by tenantId automatically from (req as any).user)
+// Get products (paginated, filtered by tenantId)
 router.get("/", async (req, res) => {
   const tenantId = (req as any).user?.tenantId;
-  const { category } = req.query;
+  const page = Math.max(1, parseInt(req.query.page as string || "1", 10));
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string || "50", 10)));
+  const search = (req.query.search as string || "").trim();
+  const category = (req.query.category as string || "").trim();
   
   if (!tenantId) return res.status(401).json({ error: "Unauthorized: Missing tenantId" });
 
   try {
     let conditions = [eq(products.tenantId, tenantId)];
     if (category) {
-      conditions.push(eq(products.category, category as string));
+      conditions.push(eq(products.category, category));
+    }
+    if (search) {
+      conditions.push(
+        or(
+          ilike(products.name, `%${search}%`),
+          ilike(products.barcode, `%${search}%`)
+        )!
+      );
     }
 
-    // Get basic products
-    const productsList = await db.select().from(products).where(and(...conditions));
-    
-    // For a real production app, we would fetch these more optimally or use db.query.products.findMany({with: {...}})
-    // But since the current schema.ts might not have relations defined for Drizzle query builder,
-    // we'll fetch relations manually.
-    
-    const productIds = productsList.map(p => p.id);
-    if (productIds.length === 0) return res.json([]);
+    const whereClause = and(...conditions);
+    const offset = (page - 1) * limit;
 
-    const [barcodesList, variantsList, conversionsList] = await Promise.all([
-      db.select().from(productBarcodes),
-      db.select().from(productVariants),
-      db.select().from(unitConversions)
+    // Fetch total count and current page products in parallel
+    const [totalCountResult, productsList] = await Promise.all([
+      db.select({ value: count() }).from(products).where(whereClause),
+      db.select().from(products).where(whereClause).limit(limit).offset(offset)
     ]);
+
+    const total = Number(totalCountResult[0]?.value || 0);
+
+    const productIds = productsList.map(p => p.id);
+    if (productIds.length === 0) {
+      return res.json({ products: [], total, page, limit });
+    }
+
+    // Fetch relations ONLY for current page's product IDs
+    const [barcodesList, variantsList, conversionsList] = await Promise.all([
+      db.select().from(productBarcodes).where(inArray(productBarcodes.productId, productIds)),
+      db.select().from(productVariants).where(inArray(productVariants.productId, productIds)),
+      db.select().from(unitConversions).where(inArray(unitConversions.productId, productIds))
+    ]);
+
+    // Build O(1) lookup Maps for O(N+M) complexity
+    const barcodesMap = new Map<string, string[]>();
+    for (const b of barcodesList) {
+      if (!barcodesMap.has(b.productId)) barcodesMap.set(b.productId, []);
+      barcodesMap.get(b.productId)!.push(b.barcode);
+    }
+
+    const variantsMap = new Map<string, any[]>();
+    for (const v of variantsList) {
+      if (!variantsMap.has(v.productId)) variantsMap.set(v.productId, []);
+      variantsMap.get(v.productId)!.push(v);
+    }
+
+    const conversionsMap = new Map<string, any[]>();
+    for (const c of conversionsList) {
+      if (!conversionsMap.has(c.productId)) conversionsMap.set(c.productId, []);
+      conversionsMap.get(c.productId)!.push(c);
+    }
 
     const result = productsList.map(p => ({
       ...p,
-      barcodes: barcodesList.filter(b => b.productId === p.id).map(b => b.barcode),
-      variants: variantsList.filter(v => v.productId === p.id),
-      unitConversions: conversionsList.filter(c => c.productId === p.id),
+      barcodes: barcodesMap.get(p.id) || [],
+      variants: variantsMap.get(p.id) || [],
+      unitConversions: conversionsMap.get(p.id) || [],
     }));
 
-    res.json(result);
+    res.json({ products: result, total, page, limit });
   } catch (error) {
     console.error("Fetch products error:", error);
     res.status(500).json({ error: "Internal server error" });
