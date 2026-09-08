@@ -30,6 +30,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
+  ChevronsUpDown,
+  Check,
 } from "lucide-react";
 import {
   Bar,
@@ -72,6 +74,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 import { CRMTab } from "@/components/crm/CRMTab";
 import { PromotionsTab } from "@/components/promotions/PromotionsTab";
 import { ReportsTab } from "@/components/reports/ReportsTab";
@@ -4755,6 +4767,102 @@ function HeadOffice() {
   );
 }
 
+function SearchableProductSelect({
+  products,
+  value,
+  onSelect,
+  placeholder = "Search product...",
+  disabled = false,
+  excludeId,
+  displaySubtext = "category",
+}: {
+  products: any[];
+  value: string;
+  onSelect: (productId: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  excludeId?: string;
+  displaySubtext?: "category" | "unit";
+}) {
+  const [open, setOpen] = useState(false);
+
+  const availableProducts = useMemo(() => {
+    if (!excludeId) return products;
+    return products.filter((p) => p.id !== excludeId);
+  }, [products, excludeId]);
+
+  const selectedProduct = products.find((p) => p.id === value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          disabled={disabled}
+          className="w-full h-9 justify-between text-xs font-normal px-3 border-input bg-transparent min-w-0"
+        >
+          <span className="truncate flex-1 text-left">
+            {selectedProduct ? (
+              <>
+                <span className="font-medium text-ink">{selectedProduct.name}</span>
+                <span className="text-muted-foreground ml-1.5 text-[11px]">
+                  ({displaySubtext === "unit" ? (selectedProduct.unit || "pcs") : (selectedProduct.category || "General")})
+                </span>
+              </>
+            ) : (
+              <span className="text-muted-foreground">{placeholder}</span>
+            )}
+          </span>
+          <ChevronsUpDown className="ml-1 h-3.5 w-3.5 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-[320px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Type product name, barcode, or SKU..." className="h-9 text-xs" />
+          <CommandList className="max-h-60 overflow-y-auto">
+            <CommandEmpty className="py-4 text-center text-xs text-muted-foreground">
+              No products found.
+            </CommandEmpty>
+            <CommandGroup>
+              {availableProducts.map((p) => {
+                const searchString = `${p.name || ""} ${p.category || ""} ${p.barcode || ""} ${p.sku || ""} ${p.unit || ""}`;
+                return (
+                  <CommandItem
+                    key={p.id}
+                    value={searchString}
+                    onSelect={() => {
+                      onSelect(p.id);
+                      setOpen(false);
+                    }}
+                    className="text-xs cursor-pointer flex items-center justify-between py-2 px-3"
+                  >
+                    <div className="flex flex-col min-w-0 flex-1 mr-2">
+                      <span className="truncate font-medium text-ink">{p.name}</span>
+                      <span className="text-[10px] text-muted-foreground truncate">
+                        {displaySubtext === "unit" ? `Unit: ${p.unit || "pcs"}` : (p.category || "General")}
+                        {p.barcode ? ` • Barcode: ${p.barcode}` : ""}
+                        {p.sku ? ` • SKU: ${p.sku}` : ""}
+                      </span>
+                    </div>
+                    <Check
+                      className={cn(
+                        "h-3.5 w-3.5 shrink-0 text-emerald-600",
+                        value === p.id ? "opacity-100" : "opacity-0"
+                      )}
+                    />
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function RecipesTabContent({ products }: { products: any[] }) {
   const fetchRecipes = useServerFn(getProductRecipesServerFn);
   const saveRecipe = useServerFn(saveProductRecipeServerFn);
@@ -4801,21 +4909,26 @@ function RecipesTabContent({ products }: { products: any[] }) {
           totalCost: 0,
         };
       }
-      const cost = Number(r.quantity) * Number(r.ingredientCostPrice || 0);
       map[r.productId].ingredients.push(r);
-      map[r.productId].totalCost += cost;
+      map[r.productId].totalCost += Number(r.totalCost) || 0;
     });
     return Object.values(map);
   }, [recipes]);
 
-  const handleOpenEdit = (groupedItem: any) => {
-    setSelectedProductId(groupedItem.productId);
+  const handleOpenAdd = () => {
+    setSelectedProductId("");
+    setIngredientRows([{ ingredientProductId: "", quantity: 1, unit: "kg" }]);
+    setModalOpen(true);
+  };
+
+  const handleOpenEdit = (recipeGroup: any) => {
+    setSelectedProductId(recipeGroup.productId);
     setIngredientRows(
-      groupedItem.ingredients.map((ing: any) => ({
-        ingredientProductId: ing.ingredientProductId,
-        quantity: Number(ing.quantity),
-        unit: ing.unit,
-      })),
+      recipeGroup.ingredients.map((i: any) => ({
+        ingredientProductId: i.ingredientProductId,
+        quantity: Number(i.quantity) || 1,
+        unit: i.unit || "kg",
+      }))
     );
     setModalOpen(true);
   };
@@ -4825,24 +4938,32 @@ function RecipesTabContent({ products }: { products: any[] }) {
   };
 
   const handleRemoveRow = (index: number) => {
-    setIngredientRows((prev) => prev.filter((_, idx) => idx !== index));
+    setIngredientRows((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleRowChange = (index: number, field: string, value: any) => {
     setIngredientRows((prev) => {
-      const copy = [...prev];
-      (copy[index] as any)[field] = value;
-      return copy;
+      const updated = [...prev];
+      if (updated[index]) {
+        (updated[index] as any)[field] = value;
+      }
+      return updated;
     });
   };
 
   const handleSave = async () => {
-    if (!selectedProductId) return toast.error("Please select a sellable product");
+    if (!selectedProductId) {
+      toast.error("Please select a sellable hot food product.");
+      return;
+    }
+
     const validRows = ingredientRows.filter(
-      (r) => r.ingredientProductId && r.quantity && Number(r.quantity) > 0,
+      (r) => r.ingredientProductId && Number(r.quantity) > 0
     );
+
     if (validRows.length === 0) {
-      return toast.error("Please add at least one valid ingredient with quantity > 0");
+      toast.error("Please add at least one valid recipe ingredient.");
+      return;
     }
 
     setSaving(true);
@@ -4853,17 +4974,17 @@ function RecipesTabContent({ products }: { products: any[] }) {
           ingredients: validRows.map((r) => ({
             ingredientProductId: r.ingredientProductId,
             quantity: Number(r.quantity),
-            unit: r.unit,
+            unit: r.unit || "kg",
           })),
         },
       });
 
       if (res.success) {
-        toast.success("Recipe saved successfully!");
+        toast.success(res.message || "Recipe saved successfully");
         setModalOpen(false);
-        setSelectedProductId("");
-        setIngredientRows([{ ingredientProductId: "", quantity: 1, unit: "kg" }]);
         loadRecipes();
+      } else {
+        toast.error(res.message || "Failed to save recipe");
       }
     } catch (err: any) {
       toast.error(err.message || "Failed to save recipe");
@@ -4872,13 +4993,15 @@ function RecipesTabContent({ products }: { products: any[] }) {
     }
   };
 
-  const handleDelete = async (productId: string, productName: string) => {
-    if (!confirm(`Are you sure you want to delete the recipe for "${productName}"?`)) return;
+  const handleDeleteRecipe = async (productId: string) => {
+    if (!confirm("Are you sure you want to delete this recipe?")) return;
     try {
       const res = await deleteRecipe({ data: { productId } });
       if (res.success) {
-        toast.success("Recipe deleted");
+        toast.success("Recipe deleted successfully");
         loadRecipes();
+      } else {
+        toast.error(res.message || "Failed to delete recipe");
       }
     } catch (err: any) {
       toast.error(err.message || "Failed to delete recipe");
@@ -4886,87 +5009,81 @@ function RecipesTabContent({ products }: { products: any[] }) {
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-ink">
-            Product Recipes (Bill of Materials)
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Define raw ingredient requirements for Hot Food items. Ingredients are automatically
-            deducted at POS checkout.
+          <h2 className="text-xl font-bold text-ink">Product Recipes (BOM)</h2>
+          <p className="text-xs text-muted-foreground">
+            Map sellable hot food menu items to raw ingredient components for automated inventory deduction.
           </p>
         </div>
-        <Button
-          onClick={() => {
-            setSelectedProductId("");
-            setIngredientRows([{ ingredientProductId: "", quantity: 1, unit: "kg" }]);
-            setModalOpen(true);
-          }}
-          className="rounded-xl font-semibold"
-        >
-          <Plus className="mr-1.5 h-4 w-4" /> Create Recipe
+        <Button onClick={handleOpenAdd} className="font-medium gap-2">
+          <Plus className="h-4 w-4" /> Create Product Recipe
         </Button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <StatCard
-          label="Hot Food Items with Recipes"
-          value={groupedRecipes.length.toString()}
-          icon={Package}
-        />
-        <StatCard label="Total Ingredients Mapped" value={recipes.length.toString()} icon={Tag} />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="p-4 rounded-xl border bg-card flex items-center gap-4">
+          <div className="p-3 rounded-lg bg-emerald-500/10 text-emerald-600">
+            <Package className="h-6 w-6" />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Hot Food Items with Recipes
+            </p>
+            <p className="text-2xl font-bold text-ink">{groupedRecipes.length}</p>
+          </div>
+        </div>
+        <div className="p-4 rounded-xl border bg-card flex items-center gap-4">
+          <div className="p-3 rounded-lg bg-blue-500/10 text-blue-600">
+            <Receipt className="h-6 w-6" />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Total Ingredients Mapped
+            </p>
+            <p className="text-2xl font-bold text-ink">{recipes.length}</p>
+          </div>
+        </div>
       </div>
 
-      <div className="panel overflow-hidden">
+      <div className="border rounded-xl bg-card overflow-hidden">
         {loading ? (
-          <div className="p-12 text-center text-muted-foreground">Loading product recipes...</div>
+          <div className="p-8 text-center text-sm text-muted-foreground">Loading recipes...</div>
         ) : groupedRecipes.length === 0 ? (
-          <div className="p-12 text-center text-muted-foreground space-y-2">
-            <Package className="h-8 w-8 text-muted-foreground/50 mx-auto" />
-            <p className="font-semibold text-ink">No product recipes configured yet</p>
-            <p className="text-xs">
-              Click "Create Recipe" above to link hot food menu items with raw ingredient stock.
-            </p>
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            No recipes configured yet. Click "Create Product Recipe" to map hot food menu items to ingredients.
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-border bg-surface-2/50 text-xs font-semibold text-muted-foreground">
-                  <th className="p-3">Sellable Hot Food Product</th>
-                  <th className="p-3">Raw Ingredients Breakdown</th>
-                  <th className="p-3 text-right">Est. Ingredient Cost</th>
-                  <th className="p-3 text-right">Actions</th>
+            <table className="w-full text-xs text-left">
+              <thead className="bg-muted/50 text-muted-foreground font-medium border-b">
+                <tr>
+                  <th className="px-4 py-3">Sellable Product</th>
+                  <th className="px-4 py-3">Raw Ingredients (Recipe Breakdown)</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
-                {groupedRecipes.map((item) => (
-                  <tr key={item.productId} className="hover:bg-surface-2/30 transition-colors">
-                    <td className="p-3 font-bold text-ink align-top">{item.productName}</td>
-                    <td className="p-3 align-top">
+              <tbody className="divide-y">
+                {groupedRecipes.map((g) => (
+                  <tr key={g.productId} className="hover:bg-muted/30">
+                    <td className="px-4 py-3 font-semibold text-ink align-top">
+                      {g.productName}
+                    </td>
+                    <td className="px-4 py-3 align-top">
                       <div className="flex flex-wrap gap-1.5">
-                        {item.ingredients.map((ing: any) => (
-                          <span
-                            key={ing.id}
-                            className="inline-flex items-center rounded-lg bg-surface-2 px-2.5 py-1 text-xs font-medium text-ink border border-border/50"
-                          >
-                            <span className="font-semibold text-primary mr-1">
-                              {ing.ingredientName}:
-                            </span>
-                            {ing.quantity} {ing.unit}
-                          </span>
+                        {g.ingredients.map((ing: any) => (
+                          <Badge key={ing.id} variant="secondary" className="text-[11px] font-normal">
+                            {ing.ingredientName}: {ing.quantity} {ing.unit}
+                          </Badge>
                         ))}
                       </div>
                     </td>
-                    <td className="p-3 text-right font-semibold text-ink align-top">
-                      AED {item.totalCost.toFixed(2)}
-                    </td>
-                    <td className="p-3 text-right align-top whitespace-nowrap">
+                    <td className="px-4 py-3 text-right align-top space-x-1">
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleOpenEdit(item)}
+                        onClick={() => handleOpenEdit(g)}
                         className="h-8 w-8 p-0"
                       >
                         <Pencil className="h-4 w-4" />
@@ -4974,7 +5091,7 @@ function RecipesTabContent({ products }: { products: any[] }) {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleDelete(item.productId, item.productName)}
+                        onClick={() => handleDeleteRecipe(g.productId)}
                         className="h-8 w-8 p-0 text-destructive"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -4989,7 +5106,7 @@ function RecipesTabContent({ products }: { products: any[] }) {
       </div>
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-w-lg rounded-2xl">
+        <DialogContent className="sm:max-w-xl md:max-w-2xl w-[95vw] rounded-2xl p-6">
           <DialogHeader>
             <DialogTitle className="font-bold text-ink">
               {selectedProductId ? "Edit Product Recipe" : "Create Product Recipe"}
@@ -4999,94 +5116,82 @@ function RecipesTabContent({ products }: { products: any[] }) {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
+          <div className="space-y-4 py-2 min-w-0">
+            <div className="space-y-1.5 min-w-0">
               <label className="text-xs font-semibold text-ink">Sellable Hot Food Product</label>
-              <Select
+              <SearchableProductSelect
+                products={products}
                 value={selectedProductId}
-                onValueChange={setSelectedProductId}
+                onSelect={setSelectedProductId}
+                placeholder="Type or search sellable product..."
                 disabled={saving}
-              >
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue placeholder="Select Product..." />
-                </SelectTrigger>
-                <SelectContent className="max-h-60 overflow-y-auto">
-                  {products.map((p: any) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name} ({p.category})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                displaySubtext="category"
+              />
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-2 min-w-0">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-semibold text-ink">Recipe Ingredients</label>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={handleAddRow}
-                  className="h-7 text-xs rounded-lg"
+                  className="h-7 text-xs rounded-lg shrink-0"
                 >
                   <Plus className="mr-1 h-3 w-3" /> Add Ingredient
                 </Button>
               </div>
 
               {ingredientRows.map((row, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <Select
-                    value={row.ingredientProductId}
-                    onValueChange={(val) => handleRowChange(idx, "ingredientProductId", val)}
-                  >
-                    <SelectTrigger className="flex-1 h-9 text-xs">
-                      <SelectValue placeholder="Raw Ingredient..." />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-60 overflow-y-auto">
-                      {products
-                        .filter((p: any) => p.id !== selectedProductId)
-                        .map((p: any) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.name} ({p.unit})
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
+                <div key={idx} className="flex items-center gap-2 w-full min-w-0">
+                  <div className="flex-1 min-w-0">
+                    <SearchableProductSelect
+                      products={products}
+                      value={row.ingredientProductId}
+                      onSelect={(val) => handleRowChange(idx, "ingredientProductId", val)}
+                      placeholder="Type or search raw ingredient..."
+                      disabled={saving}
+                      excludeId={selectedProductId}
+                      displaySubtext="unit"
+                    />
+                  </div>
 
                   <Input
                     type="number"
                     step="any"
                     min="0.001"
                     placeholder="Qty"
-                    className="w-20 h-9 text-xs"
+                    className="w-20 shrink-0 h-9 text-xs"
                     value={row.quantity}
                     onChange={(e) =>
                       handleRowChange(idx, "quantity", e.target.value ? Number(e.target.value) : "")
                     }
                   />
 
-                  <Select
-                    value={row.unit}
-                    onValueChange={(val) => handleRowChange(idx, "unit", val)}
-                  >
-                    <SelectTrigger className="w-20 h-9 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="kg">kg</SelectItem>
-                      <SelectItem value="g">g</SelectItem>
-                      <SelectItem value="pcs">pcs</SelectItem>
-                      <SelectItem value="l">l</SelectItem>
-                      <SelectItem value="ml">ml</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="w-20 shrink-0">
+                    <Select
+                      value={row.unit}
+                      onValueChange={(val) => handleRowChange(idx, "unit", val)}
+                    >
+                      <SelectTrigger className="w-full h-9 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="kg">kg</SelectItem>
+                        <SelectItem value="g">g</SelectItem>
+                        <SelectItem value="pcs">pcs</SelectItem>
+                        <SelectItem value="l">l</SelectItem>
+                        <SelectItem value="ml">ml</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
 
                   {ingredientRows.length > 1 && (
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => handleRemoveRow(idx)}
-                      className="h-8 w-8 p-0 text-destructive"
+                      className="h-8 w-8 p-0 shrink-0 text-destructive"
                     >
                       <X className="h-4 w-4" />
                     </Button>
