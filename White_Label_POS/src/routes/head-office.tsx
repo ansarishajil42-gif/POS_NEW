@@ -48,6 +48,7 @@ import { DemoShell, StatCard } from "@/components/demo/DemoShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { SearchableProductSelect } from "@/components/ui/searchable-product-select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -121,9 +122,6 @@ import {
   getProductRecipesServerFn,
   saveProductRecipeServerFn,
   deleteProductRecipeServerFn,
-  createCustomerFn,
-  updateCustomerFn,
-  deleteCustomerFn,
 } from "@/lib/head-office-server";
 import { getAuditLogsServerFn } from "@/lib/super-admin-server";
 import { stockTransferServerFn } from "@/lib/inventory-manager-server";
@@ -196,14 +194,6 @@ function HeadOffice() {
     String(data?.settings?.loyaltyMinPointsToRedeem ?? 5000),
   );
   const [isSavingLoyalty, setIsSavingLoyalty] = useState(false);
-
-  // Customer Management States
-  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
-  const [isEditingCustomer, setIsEditingCustomer] = useState(false);
-  const [isSavingCustomer, setIsSavingCustomer] = useState(false);
-  const [customerForm, setCustomerForm] = useState({ id: "", name: "", phone: "", email: "" });
-  const [deleteCustomerTarget, setDeleteCustomerTarget] = useState<any | null>(null);
-  const [isDeletingCustomer, setIsDeletingCustomer] = useState(false);
 
   // Campaign States
   const [isCreateCampaignOpen, setIsCreateCampaignOpen] = useState(false);
@@ -2345,24 +2335,16 @@ function HeadOffice() {
                       <div key={idx} className="flex gap-2 items-end">
                         <div className="flex-1 space-y-1">
                           <Label className="text-xs">Product</Label>
-                          <Select
-                            onValueChange={(v) => {
+                          <SearchableProductSelect
+                            products={mappedProducts}
+                            value={item.productId}
+                            onSelect={(v) => {
                               const n = [...poItems];
                               n[idx].productId = v;
                               setPoItems(n);
                             }}
-                          >
-                            <SelectTrigger className="h-8">
-                              <SelectValue placeholder="Product" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {mappedProducts.map((p: any) => (
-                                <SelectItem key={p.id} value={p.id}>
-                                  {p.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            placeholder="Select product..."
+                          />
                         </div>
                         <div className="w-20 space-y-1">
                           <Label className="text-xs">Qty</Label>
@@ -3045,25 +3027,6 @@ function HeadOffice() {
                 </Button>
               </div>
             </div>
-
-            <div className="flex items-center justify-between panel p-4">
-              <div>
-                <h3 className="text-base font-bold text-ink">Customer Directory</h3>
-                <p className="text-xs text-muted-foreground">
-                  Manage customer profiles, phone lookups, and loyalty points
-                </p>
-              </div>
-              <Button
-                onClick={() => {
-                  setCustomerForm({ id: "", name: "", phone: "", email: "" });
-                  setIsEditingCustomer(false);
-                  setIsCustomerModalOpen(true);
-                }}
-              >
-                <Plus className="mr-1.5 h-4 w-4" /> Add Customer
-              </Button>
-            </div>
-
             <div className="panel overflow-x-auto">
               <Table className="min-w-[760px]">
                 <TableHeader>
@@ -3082,77 +3045,34 @@ function HeadOffice() {
                     <Dialog key={c.id}>
                       <DialogTrigger asChild>
                         <TableRow className="cursor-pointer hover:bg-surface-2/50 transition-colors">
-                          <TableCell className="font-semibold text-ink">
-                            {c.name}
-                            {!c.isActive && (
-                              <Badge variant="secondary" className="ml-2 text-[10px]">
-                                Inactive
-                              </Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs">{c.phone || "-"}</TableCell>
+                          <TableCell className="font-semibold text-ink">{c.name}</TableCell>
+                          <TableCell className="font-mono text-xs">{c.phone}</TableCell>
                           <TableCell>
                             <span
-                              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${tierTone[c.tier || "Bronze"]}`}
+                              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${tierTone[c.tier]}`}
                             >
-                              <Star className="h-3 w-3" /> {c.tier || "Bronze"}
+                              <Star className="h-3 w-3" /> {c.tier}
                             </span>
                           </TableCell>
                           <TableCell className="text-right tabular-nums">
-                            {(c.points || 0).toLocaleString("en-AE")}
+                            {c.points.toLocaleString("en-AE")}
                           </TableCell>
-                          <TableCell className="text-right tabular-nums">{c.visits || 0}</TableCell>
+                          <TableCell className="text-right tabular-nums">{c.visits}</TableCell>
                           <TableCell className="text-right font-semibold tabular-nums">
-                            {aedShort(c.spend || 0)}
+                            {aedShort(c.spend)}
                           </TableCell>
                           <TableCell className="text-right">
-                            <div
-                              className="flex items-center justify-end gap-1.5"
-                              onClick={(e) => e.stopPropagation()}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="rounded-lg relative z-10"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toast.success(`Voucher issued to ${c.name}`);
+                              }}
                             >
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="rounded-lg relative z-10"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toast.success(`Voucher issued to ${c.name}`);
-                                }}
-                              >
-                                Issue voucher
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-8 w-8 p-0 rounded-lg relative z-10"
-                                title="Edit Customer"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setCustomerForm({
-                                    id: c.id,
-                                    name: c.name || "",
-                                    phone: c.phone || "",
-                                    email: c.email || "",
-                                  });
-                                  setIsEditingCustomer(true);
-                                  setIsCustomerModalOpen(true);
-                                }}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 rounded-lg relative z-10"
-                                title="Delete Customer"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setDeleteCustomerTarget(c);
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
+                              Issue voucher
+                            </Button>
                           </TableCell>
                         </TableRow>
                       </DialogTrigger>
@@ -3195,185 +3115,6 @@ function HeadOffice() {
                 </TableBody>
               </Table>
             </div>
-
-            {/* Add / Edit Customer Modal */}
-            <Dialog open={isCustomerModalOpen} onOpenChange={setIsCustomerModalOpen}>
-              <DialogContent className="max-w-md">
-                <DialogHeader>
-                  <DialogTitle>{isEditingCustomer ? "Edit Customer" : "Add New Customer"}</DialogTitle>
-                  <DialogDescription>
-                    {isEditingCustomer
-                      ? "Update customer profile details below."
-                      : "Enter customer details. Phone number is required for lookup at checkout."}
-                  </DialogDescription>
-                </DialogHeader>
-                <form
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    if (!customerForm.name.trim()) {
-                      return toast.error("Customer name is required");
-                    }
-                    if (!customerForm.phone.trim()) {
-                      return toast.error("Phone number is required");
-                    }
-                    setIsSavingCustomer(true);
-                    const loadToast = toast.loading(
-                      isEditingCustomer ? "Updating customer..." : "Creating customer..."
-                    );
-                    try {
-                      if (isEditingCustomer) {
-                        const res = await updateCustomerFn({
-                          data: {
-                            id: customerForm.id,
-                            name: customerForm.name.trim(),
-                            phone: customerForm.phone.trim() || undefined,
-                            email: customerForm.email.trim() || undefined,
-                          },
-                        });
-                        toast.dismiss(loadToast);
-                        if (res.success) {
-                          toast.success("Customer updated successfully");
-                          setIsCustomerModalOpen(false);
-                          router.invalidate();
-                        } else {
-                          toast.error("Failed to update customer");
-                        }
-                      } else {
-                        const res = await createCustomerFn({
-                          data: {
-                            name: customerForm.name.trim(),
-                            phone: customerForm.phone.trim() || undefined,
-                            email: customerForm.email.trim() || undefined,
-                            tier: "Bronze",
-                          },
-                        });
-                        toast.dismiss(loadToast);
-                        if (res.success) {
-                          toast.success("Customer created successfully");
-                          setIsCustomerModalOpen(false);
-                          router.invalidate();
-                        } else {
-                          toast.error("Failed to create customer");
-                        }
-                      }
-                    } catch (err: any) {
-                      toast.dismiss(loadToast);
-                      toast.error(err.message || "An error occurred while saving customer");
-                    } finally {
-                      setIsSavingCustomer(false);
-                    }
-                  }}
-                  className="space-y-4 mt-2"
-                >
-                  <div className="space-y-1.5">
-                    <Label htmlFor="cust-name">Full Name *</Label>
-                    <Input
-                      id="cust-name"
-                      required
-                      placeholder="e.g. Ahmed Al Mansoori"
-                      value={customerForm.name}
-                      onChange={(e) => setCustomerForm({ ...customerForm, name: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="cust-phone">Phone Number *</Label>
-                    <Input
-                      id="cust-phone"
-                      required
-                      placeholder="e.g. +971501234567"
-                      value={customerForm.phone}
-                      onChange={(e) => setCustomerForm({ ...customerForm, phone: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="cust-email">Email (Optional)</Label>
-                    <Input
-                      id="cust-email"
-                      type="email"
-                      placeholder="e.g. customer@example.com"
-                      value={customerForm.email}
-                      onChange={(e) => setCustomerForm({ ...customerForm, email: e.target.value })}
-                    />
-                  </div>
-                  <DialogFooter className="pt-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setIsCustomerModalOpen(false)}
-                      disabled={isSavingCustomer}
-                    >
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={isSavingCustomer}>
-                      {isSavingCustomer
-                        ? "Saving..."
-                        : isEditingCustomer
-                        ? "Save Changes"
-                        : "Create Customer"}
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </DialogContent>
-            </Dialog>
-
-            {/* Delete Customer Confirmation Modal */}
-            <Dialog
-              open={!!deleteCustomerTarget}
-              onOpenChange={(open) => !open && setDeleteCustomerTarget(null)}
-            >
-              <DialogContent className="max-w-md">
-                <DialogHeader>
-                  <DialogTitle className="text-destructive flex items-center gap-2">
-                    <AlertTriangle className="h-5 w-5" /> Confirm Delete Customer
-                  </DialogTitle>
-                  <DialogDescription>
-                    Are you sure you want to delete <strong>{deleteCustomerTarget?.name}</strong>?
-                    <br />
-                    <span className="text-xs text-muted-foreground mt-2 block">
-                      Note: If this customer has linked order/transaction history, their profile will be deactivated (soft-deleted) to protect historical accounting records.
-                    </span>
-                  </DialogDescription>
-                </DialogHeader>
-                <DialogFooter className="mt-4">
-                  <Button
-                    variant="outline"
-                    onClick={() => setDeleteCustomerTarget(null)}
-                    disabled={isDeletingCustomer}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    disabled={isDeletingCustomer}
-                    onClick={async () => {
-                      if (!deleteCustomerTarget) return;
-                      setIsDeletingCustomer(true);
-                      const loadToast = toast.loading("Deleting customer...");
-                      try {
-                        const res = await deleteCustomerFn({
-                          data: { id: deleteCustomerTarget.id },
-                        });
-                        toast.dismiss(loadToast);
-                        if (res.success) {
-                          toast.success(res.message);
-                          setDeleteCustomerTarget(null);
-                          router.invalidate();
-                        } else {
-                          toast.error("Failed to delete customer");
-                        }
-                      } catch (err: any) {
-                        toast.dismiss(loadToast);
-                        toast.error(err.message || "Error deleting customer");
-                      } finally {
-                        setIsDeletingCustomer(false);
-                      }
-                    }}
-                  >
-                    {isDeletingCustomer ? "Deleting..." : "Confirm Delete"}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
           </TabsContent>
 
           <TabsContent value="price_requests" className="mt-0">
@@ -5019,101 +4760,7 @@ function HeadOffice() {
   );
 }
 
-function SearchableProductSelect({
-  products,
-  value,
-  onSelect,
-  placeholder = "Search product...",
-  disabled = false,
-  excludeId,
-  displaySubtext = "category",
-}: {
-  products: any[];
-  value: string;
-  onSelect: (productId: string) => void;
-  placeholder?: string;
-  disabled?: boolean;
-  excludeId?: string;
-  displaySubtext?: "category" | "unit";
-}) {
-  const [open, setOpen] = useState(false);
 
-  const availableProducts = useMemo(() => {
-    if (!excludeId) return products;
-    return products.filter((p) => p.id !== excludeId);
-  }, [products, excludeId]);
-
-  const selectedProduct = products.find((p) => p.id === value);
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          disabled={disabled}
-          className="w-full h-9 justify-between text-xs font-normal px-3 border-input bg-transparent min-w-0"
-        >
-          <span className="truncate flex-1 text-left">
-            {selectedProduct ? (
-              <>
-                <span className="font-medium text-ink">{selectedProduct.name}</span>
-                <span className="text-muted-foreground ml-1.5 text-[11px]">
-                  ({displaySubtext === "unit" ? (selectedProduct.unit || "pcs") : (selectedProduct.category || "General")})
-                </span>
-              </>
-            ) : (
-              <span className="text-muted-foreground">{placeholder}</span>
-            )}
-          </span>
-          <ChevronsUpDown className="ml-1 h-3.5 w-3.5 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-[320px] p-0" align="start">
-        <Command>
-          <CommandInput placeholder="Type product name, barcode, or SKU..." className="h-9 text-xs" />
-          <CommandList className="max-h-60 overflow-y-auto">
-            <CommandEmpty className="py-4 text-center text-xs text-muted-foreground">
-              No products found.
-            </CommandEmpty>
-            <CommandGroup>
-              {availableProducts.map((p) => {
-                const searchString = `${p.name || ""} ${p.category || ""} ${p.barcode || ""} ${p.sku || ""} ${p.unit || ""}`;
-                return (
-                  <CommandItem
-                    key={p.id}
-                    value={searchString}
-                    onSelect={() => {
-                      onSelect(p.id);
-                      setOpen(false);
-                    }}
-                    className="text-xs cursor-pointer flex items-center justify-between py-2 px-3"
-                  >
-                    <div className="flex flex-col min-w-0 flex-1 mr-2">
-                      <span className="truncate font-medium text-ink">{p.name}</span>
-                      <span className="text-[10px] text-muted-foreground truncate">
-                        {displaySubtext === "unit" ? `Unit: ${p.unit || "pcs"}` : (p.category || "General")}
-                        {p.barcode ? ` • Barcode: ${p.barcode}` : ""}
-                        {p.sku ? ` • SKU: ${p.sku}` : ""}
-                      </span>
-                    </div>
-                    <Check
-                      className={cn(
-                        "h-3.5 w-3.5 shrink-0 text-emerald-600",
-                        value === p.id ? "opacity-100" : "opacity-0"
-                      )}
-                    />
-                  </CommandItem>
-                );
-              })}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 function RecipesTabContent({ products }: { products: any[] }) {
   const fetchRecipes = useServerFn(getProductRecipesServerFn);

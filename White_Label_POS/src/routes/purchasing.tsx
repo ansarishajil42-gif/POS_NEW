@@ -35,6 +35,7 @@ import {
   Menu
 } from "lucide-react";
 import { aed } from "@/lib/demo-data";
+import { SearchableProductSelect } from "@/components/ui/searchable-product-select";
 import { 
   getPurchasingDataServerFn, 
   createPurchaseOrderServerFn, 
@@ -586,18 +587,26 @@ function PurchasingOfficer() {
                 <div className="space-y-3">
                   {poLines.map((line, idx) => (
                     <div key={idx} className="grid grid-cols-1 sm:flex sm:items-center gap-2.5 sm:gap-3 p-3 sm:p-0 rounded-xl bg-surface-2 sm:bg-transparent border border-border/60 sm:border-0">
-                      <select 
-                        className="flex-1 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        value={line.productId} 
-                        onChange={e => { const newL = [...poLines]; if (newL[idx]) { newL[idx]!.productId = e.target.value; setPoLines(newL); } }}
-                      >
-                        <option value="">Select Product...</option>
-                        {products.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
+                      <SearchableProductSelect
+                        products={products}
+                        value={line.productId}
+                        onSelect={(prodId) => {
+                          const newL = [...poLines];
+                          if (newL[idx]) {
+                            newL[idx]!.productId = prodId;
+                            setPoLines(newL);
+                          }
+                        }}
+                        placeholder="Select Product..."
+                        className="flex-1 min-w-[200px]"
+                      />
                       <div className="flex items-center gap-2">
                         <Input type="number" className="flex-1 sm:w-24" placeholder="Qty" value={line.qty || ""} onChange={e => { const newL = [...poLines]; if (newL[idx]) { newL[idx]!.qty = Number(e.target.value); setPoLines(newL); } }} />
                         <Input type="number" className="flex-1 sm:w-28" placeholder="Price" value={line.unitPrice || ""} onChange={e => { const newL = [...poLines]; if (newL[idx]) { newL[idx]!.unitPrice = Number(e.target.value); setPoLines(newL); } }} />
                         <div className="min-w-20 text-right font-semibold text-sm tabular-nums text-ink">{aed(line.qty * line.unitPrice)}</div>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50 shrink-0" onClick={() => setPoLines(poLines.filter((_, i) => i !== idx))}>
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
                     </div>
                   ))}
