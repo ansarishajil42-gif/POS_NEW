@@ -25,6 +25,7 @@ import {
   searchCustomersFn, 
   createCustomerFn, 
   updateCustomerFn, 
+  deleteCustomerFn,
   getCustomerDetailsFn, 
   getCustomerPurchaseHistoryFn, 
   adjustCustomerPointsFn, 
@@ -44,6 +45,8 @@ export function CRMTab() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<any>(null);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Form State
   const [form, setForm] = useState({ name: "", email: "", phone: "", isActive: true });
@@ -213,6 +216,11 @@ export function CRMTab() {
                     }}>
                       View Details
                     </Button>
+                    <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => {
+                      setDeleteTarget(c);
+                    }}>
+                      Delete
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))
@@ -279,6 +287,40 @@ export function CRMTab() {
         </DialogContent>
       </Dialog>
 
+      {/* Delete Dialog */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-destructive">Delete Customer</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Are you sure you want to delete <strong>{deleteTarget?.name}</strong>? If this customer has linked order history, they will be deactivated to protect historical records.
+          </p>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={isDeleting}>Cancel</Button>
+            <Button variant="destructive" disabled={isDeleting} onClick={async () => {
+              if (!deleteTarget) return;
+              try {
+                setIsDeleting(true);
+                const res = await deleteCustomerFn({ data: { id: deleteTarget.id } });
+                if (res.success) {
+                  toast.success(res.message);
+                  setDeleteTarget(null);
+                  fetchCustomers();
+                } else {
+                  toast.error("Failed to delete customer");
+                }
+              } catch (err: any) {
+                toast.error(err.message || "Error deleting customer");
+              } finally {
+                setIsDeleting(false);
+              }
+            }}>
+              {isDeleting ? "Deleting..." : "Confirm Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

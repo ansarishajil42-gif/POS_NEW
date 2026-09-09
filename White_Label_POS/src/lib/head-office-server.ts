@@ -1992,6 +1992,68 @@ export const updateCustomerFn = createServerFn({ method: "POST" })
     return { success: true, customer: updated };
   });
 
+export const deleteCustomerFn = createServerFn({ method: "POST" })
+  .validator((d: { id: string }) => d)
+  .handler(async ({ data }) => {
+    const tenantId = await getHeadOfficeTenant();
+
+    const [existing] = await db
+      .select()
+      .from(customers)
+      .where(and(eq(customers.id, data.id), eq(customers.tenantId, tenantId)));
+
+    if (!existing) throw new Error("Customer not found");
+
+    // Check if customer is referenced by orders or transactions
+    const [linkedOrder] = await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(and(eq(orders.tenantId, tenantId), eq(orders.customerId, data.id)))
+      .limit(1);
+
+    const [linkedTxn] = await db
+      .select({ id: customerTransactions.id })
+      .from(customerTransactions)
+      .where(and(eq(customerTransactions.tenantId, tenantId), eq(customerTransactions.customerId, data.id)))
+      .limit(1);
+
+    if (linkedOrder || linkedTxn) {
+      await db
+        .update(customers)
+        .set({ isActive: false })
+        .where(and(eq(customers.id, data.id), eq(customers.tenantId, tenantId)));
+
+      await logAuditAction({
+        action: "Customer Profile Deactivated (Soft Deleted)",
+        entityType: "Customer",
+        entityId: data.id,
+        afterValue: { isActive: false, reason: "Has linked order/transaction history" },
+      });
+
+      return {
+        success: true,
+        softDeleted: true,
+        message: `Customer ${existing.name} has linked history and was deactivated instead of deleted.`,
+      };
+    }
+
+    await db
+      .delete(customers)
+      .where(and(eq(customers.id, data.id), eq(customers.tenantId, tenantId)));
+
+    await logAuditAction({
+      action: "Customer Profile Deleted",
+      entityType: "Customer",
+      entityId: data.id,
+    });
+
+    return {
+      success: true,
+      softDeleted: false,
+      message: `Customer ${existing.name} deleted successfully.`,
+    };
+  });
+
 export const getCustomerDetailsFn = createServerFn({ method: "POST" })
   .validator((d: { id: string }) => d)
   .handler(async ({ data }) => {
