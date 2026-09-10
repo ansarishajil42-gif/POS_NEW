@@ -95,7 +95,11 @@ import {
     updateTenantPaymentServerFn,
     updateTenantDueDateServerFn,
     getTenantInvoicesServerFn,
-    createTenantInvoicePaymentLinkServerFn
+    createTenantInvoicePaymentLinkServerFn,
+    createManualTenantInvoiceServerFn,
+    updateTenantInvoiceServerFn,
+    deleteTenantInvoiceServerFn,
+    calculateNextDueDate
 } from "@/lib/super-admin-server";
 
 import { generateSubscriptionInvoicePdf } from "@/lib/subscription-invoice-pdf";
@@ -196,6 +200,196 @@ function SuperAdmin() {
     const currentInvoicePage = Math.min(invoicePage, totalInvoicePages);
     const invoiceStartIndex = (currentInvoicePage - 1) * invoicePageSize;
     const paginatedInvoices = filteredInvoices.slice(invoiceStartIndex, invoiceStartIndex + invoicePageSize);
+
+    const [createInvoiceOpen, setCreateInvoiceOpen] = useState(false);
+    const [editingInvoice, setEditingInvoice] = useState<any | null>(null);
+    const [createInvoiceForm, setCreateInvoiceForm] = useState<{
+        tenantId: string;
+        planName: "Starter" | "Growth" | "Enterprise" | "Custom";
+        pricingMode: "standard" | "custom";
+        billingCycle: "monthly" | "quarterly" | "6_months" | "yearly" | "custom";
+        customDays: number;
+        customAmount: string;
+        periodStart: string;
+    }>({
+        tenantId: "",
+        planName: "Starter",
+        pricingMode: "standard",
+        billingCycle: "monthly",
+        customDays: 30,
+        customAmount: "499.00",
+        periodStart: new Date().toISOString().split("T")[0]
+    });
+    const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
+
+    const [invoiceToDelete, setInvoiceToDelete] = useState<any | null>(null);
+    const [isDeletingInvoice, setIsDeletingInvoice] = useState(false);
+
+    const manualInvoicePricing = useMemo(() => {
+        const planToUse = createInvoiceForm.planName === "Custom" ? "Starter" : createInvoiceForm.planName;
+        const defaultPricing = calculatePlanPricing(
+            planToUse,
+            createInvoiceForm.billingCycle,
+            createInvoiceForm.customDays
+        );
+        let subtotal = defaultPricing.subtotal;
+        if (createInvoiceForm.pricingMode === "custom") {
+            const parsed = parseFloat(createInvoiceForm.customAmount);
+            subtotal = !isNaN(parsed) && parsed >= 0 ? parsed : defaultPricing.subtotal;
+        }
+        const vatAmount = Number((subtotal * 0.05).toFixed(2));
+        const totalAmount = Number((subtotal + vatAmount).toFixed(2));
+        return {
+            subtotal,
+            vatAmount,
+            totalAmount,
+            durationMonths: defaultPricing.durationMonths
+        };
+    }, [createInvoiceForm.planName, createInvoiceForm.pricingMode, createInvoiceForm.billingCycle, createInvoiceForm.customDays, createInvoiceForm.customAmount]);
+
+    const manualInvoiceComputedEnd = useMemo(() => {
+        try {
+            const start = createInvoiceForm.periodStart ? new Date(createInvoiceForm.periodStart) : new Date();
+            const end = calculateNextDueDate(start, createInvoiceForm.billingCycle, createInvoiceForm.customDays);
+            return end.toISOString().split("T")[0];
+        } catch {
+            return "-";
+        }
+    }, [createInvoiceForm.periodStart, createInvoiceForm.billingCycle, createInvoiceForm.customDays]);
+
+    const handleOpenCreateInvoice = () => {
+        setEditingInvoice(null);
+        if (tenants.length > 0) {
+            const firstTenant = tenants[0];
+            const plan = (firstTenant?.plan as any) || "Starter";
+            const pricing = calculatePlanPricing(plan, "monthly", 30);
+            setCreateInvoiceForm({
+                tenantId: firstTenant.id,
+                planName: plan,
+                pricingMode: "standard",
+                billingCycle: "monthly",
+                customDays: 30,
+                customAmount: pricing.subtotal.toFixed(2),
+                periodStart: new Date().toISOString().split("T")[0]
+            });
+        } else {
+            setCreateInvoiceForm({
+                tenantId: "",
+                planName: "Starter",
+                pricingMode: "standard",
+                billingCycle: "monthly",
+                customDays: 30,
+                customAmount: "499.00",
+                periodStart: new Date().toISOString().split("T")[0]
+            });
+        }
+        setCreateInvoiceOpen(true);
+    };
+
+    const handleOpenEditInvoice = (inv: any) => {
+        setEditingInvoice(inv);
+        const plan = (inv.planName as any) || "Starter";
+        const cycle = (inv.billingCycle as any) || "monthly";
+        const subtotal = Number(inv.subtotal || 0);
+        const stdPricing = calculatePlanPricing(plan === "Custom" ? "Starter" : plan, cycle, 30);
+        const isCustomAmount = Math.abs(stdPricing.subtotal - subtotal) > 0.01 || plan === "Custom";
+
+        setCreateInvoiceForm({
+            tenantId: inv.tenantId,
+            planName: plan,
+            pricingMode: isCustomAmount ? "custom" : "standard",
+            billingCycle: cycle,
+            customDays: 30,
+            customAmount: subtotal.toFixed(2),
+            periodStart: inv.periodStart ? new Date(inv.periodStart).toISOString().split("T")[0] : new Date().toISOString().split("T")[0]
+        });
+        setCreateInvoiceOpen(true);
+    };
+
+    const handleCreateInvoiceSubmit = async () => {
+        if (!createInvoiceForm.tenantId) {
+            toast.error("Please select a tenant");
+            return;
+        }
+        if (!createInvoiceForm.periodStart) {
+            toast.error("Please select a period start date");
+            return;
+        }
+        setIsCreatingInvoice(true);
+        try {
+            const start = new Date(createInvoiceForm.periodStart);
+            const end = calculateNextDueDate(start, createInvoiceForm.billingCycle, createInvoiceForm.customDays);
+            
+            if (editingInvoice) {
+                const res = await updateTenantInvoiceServerFn({
+                    data: {
+                        invoiceId: editingInvoice.id,
+                        planName: createInvoiceForm.planName,
+                        billingCycle: createInvoiceForm.billingCycle,
+                        customDays: Number(createInvoiceForm.customDays || 30),
+                        customAmount: manualInvoicePricing.subtotal,
+                        subtotal: manualInvoicePricing.subtotal,
+                        vatAmount: manualInvoicePricing.vatAmount,
+                        totalAmount: manualInvoicePricing.totalAmount,
+                        periodStart: start.toISOString(),
+                        periodEnd: end.toISOString()
+                    }
+                });
+                if (res.success) {
+                    toast.success(res.message || "Subscription invoice updated successfully!");
+                    setCreateInvoiceOpen(false);
+                    setEditingInvoice(null);
+                    router.invalidate();
+                } else {
+                    toast.error(res.error || "Failed to update invoice");
+                }
+            } else {
+                const res = await createManualTenantInvoiceServerFn({
+                    data: {
+                        tenantId: createInvoiceForm.tenantId,
+                        planName: createInvoiceForm.planName,
+                        billingCycle: createInvoiceForm.billingCycle,
+                        customDays: Number(createInvoiceForm.customDays || 30),
+                        customAmount: manualInvoicePricing.subtotal,
+                        periodStart: start.toISOString(),
+                        periodEnd: end.toISOString()
+                    }
+                });
+                if (res.success) {
+                    toast.success("Subscription invoice created successfully!");
+                    setCreateInvoiceOpen(false);
+                    router.invalidate();
+                } else {
+                    toast.error(res.error || "Failed to create invoice");
+                }
+            }
+        } catch (err: any) {
+            toast.error(err.message || "An unexpected error occurred");
+        } finally {
+            setIsCreatingInvoice(false);
+        }
+    };
+
+    const handleDeleteInvoiceSubmit = async () => {
+        if (!invoiceToDelete) return;
+        setIsDeletingInvoice(true);
+        try {
+            const res = await deleteTenantInvoiceServerFn({
+                data: { invoiceId: invoiceToDelete.id }
+            });
+            if (res.success) {
+                toast.success(res.message || "Invoice deleted successfully!");
+                setInvoiceToDelete(null);
+                router.invalidate();
+            } else {
+                toast.error(res.error || "Failed to delete invoice");
+            }
+        } catch (err: any) {
+            toast.error(err.message || "An unexpected error occurred");
+        } finally {
+            setIsDeletingInvoice(false);
+        }
+    };
 
     const [open, setOpen] = useState(false);
     const [form, setForm] = useState({ 
@@ -1314,6 +1508,13 @@ function SuperAdmin() {
                                         Official tax invoices generated for client plan subscriptions. Unpaid invoices reflect pending online gateway connection.
                                     </p>
                                 </div>
+                                <Button
+                                    size="sm"
+                                    className="rounded-xl h-9 text-xs font-bold gap-1.5 shadow-sm"
+                                    onClick={handleOpenCreateInvoice}
+                                >
+                                    <Plus className="h-4 w-4" /> Create Invoice
+                                </Button>
                             </div>
 
                             {/* Search & Filter Toolbar */}
@@ -1392,24 +1593,25 @@ function SuperAdmin() {
                             </div>
 
                             {/* Invoices Table */}
-                            <div className="overflow-x-auto w-full rounded-2xl border border-border">
+                            <div className="overflow-x-auto w-full rounded-2xl border border-border shadow-sm">
                                 <Table className="w-full">
                                     <TableHeader className="bg-surface-2/80">
                                         <TableRow className="hover:bg-transparent">
-                                            <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Invoice Ref</TableHead>
-                                            <TableHead className="min-w-[160px] py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Tenant</TableHead>
-                                            <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Plan / Cycle</TableHead>
-                                            <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Coverage Period</TableHead>
-                                            <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Total (AED)</TableHead>
-                                            <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Payment Status</TableHead>
-                                            <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Gateway</TableHead>
-                                            <TableHead className="py-4 text-right text-xs font-bold uppercase tracking-wider text-muted-foreground">Actions</TableHead>
+                                            <TableHead className="sticky left-0 bg-surface-2/95 backdrop-blur-sm z-20 shadow-[4px_0_8px_rgba(0,0,0,0.06)] border-r border-border text-xs font-semibold text-muted-foreground min-w-[220px] pl-4">
+                                                Tenant & Invoice
+                                            </TableHead>
+                                            <TableHead className="text-xs font-semibold text-muted-foreground min-w-[130px] whitespace-nowrap">Plan / Cycle</TableHead>
+                                            <TableHead className="text-xs font-semibold text-muted-foreground min-w-[170px] whitespace-nowrap">Coverage Period</TableHead>
+                                            <TableHead className="text-xs font-semibold text-muted-foreground min-w-[140px] whitespace-nowrap">Total (AED)</TableHead>
+                                            <TableHead className="text-xs font-semibold text-muted-foreground min-w-[170px] whitespace-nowrap">Payment Status</TableHead>
+                                            <TableHead className="text-xs font-semibold text-muted-foreground min-w-[110px] whitespace-nowrap">Gateway</TableHead>
+                                            <TableHead className="text-xs font-semibold text-muted-foreground text-right min-w-[180px] whitespace-nowrap pr-4">Actions</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
                                         {paginatedInvoices.length === 0 ? (
                                             <TableRow>
-                                                <TableCell colSpan={8} className="text-center py-10 text-muted-foreground font-medium">
+                                                <TableCell colSpan={7} className="text-center py-10 text-muted-foreground font-medium">
                                                     {filteredInvoices.length === 0 && (invoiceSearch || invoiceStatusFilter !== "all" || invoicePlanFilter !== "all")
                                                         ? "No subscription invoices match the selected filters."
                                                         : "No subscription invoices found. New invoices are automatically created when onboarding tenants."}
@@ -1423,14 +1625,15 @@ function SuperAdmin() {
 
                                                 return (
                                                     <TableRow key={inv.id} className="group hover:bg-primary/[0.03] transition-colors">
-                                                        <TableCell className="p-4 font-mono text-xs font-extrabold text-ink">
-                                                            {inv.invoiceNumber}
+                                                        {/* Sticky Left Column: Tenant + Subdomain + Invoice Ref */}
+                                                        <TableCell className="sticky left-0 bg-surface group-hover:bg-surface-2/95 backdrop-blur-sm z-10 shadow-[4px_0_8px_rgba(0,0,0,0.06)] border-r border-border min-w-[220px] pl-4 transition-colors">
+                                                            <div className="flex flex-col">
+                                                                <span className="font-extrabold text-sm text-ink">{inv.tenantName}</span>
+                                                                <span className="text-xs text-muted-foreground">{inv.tenantSubdomain}.cloudynationpos.com</span>
+                                                                <span className="font-mono text-[11px] font-semibold text-primary/80 mt-0.5">{inv.invoiceNumber}</span>
+                                                            </div>
                                                         </TableCell>
-                                                        <TableCell className="p-4">
-                                                            <div className="text-sm font-extrabold text-ink">{inv.tenantName}</div>
-                                                            <div className="text-xs text-muted-foreground">{inv.tenantSubdomain}.cloudynationpos.com</div>
-                                                        </TableCell>
-                                                        <TableCell className="p-4">
+                                                        <TableCell className="whitespace-nowrap">
                                                             <Badge variant="secondary" className="rounded-xl px-2.5 py-0.5 text-[11px] uppercase tracking-wider font-extrabold">
                                                                 {inv.planName}
                                                             </Badge>
@@ -1438,10 +1641,10 @@ function SuperAdmin() {
                                                                 {inv.billingCycle.replace(/_/g, " ")} ({inv.durationMonths} mo)
                                                             </div>
                                                         </TableCell>
-                                                        <TableCell className="p-4 text-xs text-muted-foreground font-medium">
-                                                            {formatDateString(inv.periodStart)} to {formatDateString(inv.periodEnd)}
+                                                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground font-medium">
+                                                            {formatDateString(inv.periodStart)} → {formatDateString(inv.periodEnd)}
                                                         </TableCell>
-                                                        <TableCell className="p-4">
+                                                        <TableCell className="whitespace-nowrap">
                                                             <div className="text-sm font-extrabold text-ink">
                                                                 AED {Number(inv.totalAmount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                             </div>
@@ -1449,7 +1652,7 @@ function SuperAdmin() {
                                                                 Subtotal: {inv.subtotal} + VAT: {inv.vatAmount}
                                                             </div>
                                                         </TableCell>
-                                                        <TableCell className="p-4">
+                                                        <TableCell className="whitespace-nowrap">
                                                             {isPaid && (
                                                                 <span className="inline-flex items-center gap-1.5 rounded-xl border border-success/30 bg-success/15 px-3 py-1 text-[11px] uppercase tracking-wider font-extrabold text-success">
                                                                     <span className="h-1.5 w-1.5 rounded-full bg-success"></span>
@@ -1459,7 +1662,7 @@ function SuperAdmin() {
                                                             {isPendingGateway && (
                                                                 <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/15 px-3 py-1 text-[11px] uppercase tracking-wider font-extrabold text-amber-700 dark:text-amber-400">
                                                                     <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-                                                                    Pending Gateway Integration
+                                                                    Pending Gateway
                                                                 </span>
                                                             )}
                                                             {isOverdue && (
@@ -1469,8 +1672,8 @@ function SuperAdmin() {
                                                                 </span>
                                                             )}
                                                         </TableCell>
-                                                        <TableCell className="p-4 text-xs font-semibold text-muted-foreground">
-                                                            {inv.mamoPaymentLinkId ? (
+                                                        <TableCell className="whitespace-nowrap text-xs font-semibold text-muted-foreground">
+                                                            {inv.mamoPaymentUrl ? (
                                                                 <Badge variant="outline" className="rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[11px] font-bold">
                                                                     Link Ready
                                                                 </Badge>
@@ -1480,7 +1683,7 @@ function SuperAdmin() {
                                                                 </span>
                                                             )}
                                                         </TableCell>
-                                                        <TableCell className="p-4 text-right">
+                                                        <TableCell className="whitespace-nowrap text-right pr-4">
                                                             <div className="flex items-center justify-end gap-2">
                                                                 {!isPaid && (
                                                                     <Button
@@ -1510,7 +1713,7 @@ function SuperAdmin() {
                                                                         {generatingLinkInvoiceId === inv.id ? (
                                                                             <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Generating...</>
                                                                         ) : (
-                                                                            <><Link2 className="mr-1.5 h-3.5 w-3.5" /> Generate Link</>
+                                                                            <><Link2 className="mr-1.5 h-3.5 w-3.5" /> {inv.mamoPaymentUrl ? "Regenerate Link" : "Generate Link"}</>
                                                                         )}
                                                                     </Button>
                                                                 )}
@@ -1530,6 +1733,30 @@ function SuperAdmin() {
                                                                 >
                                                                     <Download className="mr-1.5 h-3.5 w-3.5 text-primary group-hover:text-primary-foreground" /> PDF
                                                                 </Button>
+
+                                                                {!isPaid && (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        className="rounded-xl h-8 text-xs font-semibold text-ink hover:bg-surface-2 transition-all shadow-sm"
+                                                                        title="Edit Invoice"
+                                                                        onClick={() => handleOpenEditInvoice(inv)}
+                                                                    >
+                                                                        <Pencil className="h-3.5 w-3.5 mr-1 text-primary" /> Edit
+                                                                    </Button>
+                                                                )}
+
+                                                                {!isPaid && (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        className="rounded-xl h-8 text-xs font-semibold text-destructive border-destructive/20 hover:bg-destructive/10 hover:text-destructive transition-all shadow-sm"
+                                                                        title="Delete Invoice"
+                                                                        onClick={() => setInvoiceToDelete(inv)}
+                                                                    >
+                                                                        <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+                                                                    </Button>
+                                                                )}
                                                             </div>
                                                         </TableCell>
                                                     </TableRow>
@@ -2489,6 +2716,309 @@ function SuperAdmin() {
                             onClick={handleEditDueDateSubmit}
                         >
                             {isSubmittingDueDate ? "Saving..." : "Save Due Date"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Create / Edit Subscription Invoice Dialog */}
+            <Dialog open={createInvoiceOpen} onOpenChange={(o) => {
+                setCreateInvoiceOpen(o);
+                if (!o) setEditingInvoice(null);
+            }}>
+                <DialogContent className="sm:max-w-md w-[95vw]">
+                    <DialogHeader>
+                        <DialogTitle>{editingInvoice ? "Edit Subscription Tax Invoice" : "Create Subscription Tax Invoice"}</DialogTitle>
+                        <DialogDescription>
+                            {editingInvoice
+                                ? `Modify billing details and amounts for invoice ${editingInvoice.invoiceNumber} (${editingInvoice.tenantName || 'Tenant'}).`
+                                : "Manually issue a formal subscription tax invoice for a tenant account."}
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="grid gap-4 py-2">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="create-inv-tenant">Select Tenant</Label>
+                            <Select
+                                value={createInvoiceForm.tenantId}
+                                disabled={!!editingInvoice}
+                                onValueChange={(val) => {
+                                    const targetTenant = tenants.find(t => t.id === val);
+                                    const plan = targetTenant?.plan ? (targetTenant.plan as any) : createInvoiceForm.planName;
+                                    const pricing = calculatePlanPricing(plan, createInvoiceForm.billingCycle, createInvoiceForm.customDays);
+                                    setCreateInvoiceForm(prev => ({
+                                        ...prev,
+                                        tenantId: val,
+                                        planName: plan,
+                                        customAmount: pricing.subtotal.toFixed(2)
+                                    }));
+                                }}
+                            >
+                                <SelectTrigger id="create-inv-tenant" className="w-full">
+                                    <SelectValue placeholder="Choose a tenant..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {tenants.map(t => (
+                                        <SelectItem key={t.id} value={t.id}>
+                                            {t.name} ({t.subdomain})
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {/* Pricing Mode Toggle */}
+                        <div className="space-y-1.5">
+                            <Label className="text-xs font-semibold">Pricing Mode</Label>
+                            <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-surface-2 border border-border/60">
+                                <button
+                                    type="button"
+                                    className={`py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${createInvoiceForm.pricingMode === "standard" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-ink"}`}
+                                    onClick={() => {
+                                        const plan = createInvoiceForm.planName === "Custom" ? "Starter" : createInvoiceForm.planName;
+                                        const pricing = calculatePlanPricing(plan, createInvoiceForm.billingCycle, createInvoiceForm.customDays);
+                                        setCreateInvoiceForm(prev => ({
+                                            ...prev,
+                                            pricingMode: "standard",
+                                            planName: plan,
+                                            customAmount: pricing.subtotal.toFixed(2)
+                                        }));
+                                    }}
+                                >
+                                    Standard Plan Rate
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${createInvoiceForm.pricingMode === "custom" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-ink"}`}
+                                    onClick={() => {
+                                        setCreateInvoiceForm(prev => ({
+                                            ...prev,
+                                            pricingMode: "custom"
+                                        }));
+                                    }}
+                                >
+                                    Custom Amount (Manual)
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1.5">
+                                <Label>Plan</Label>
+                                <Select
+                                    value={createInvoiceForm.planName}
+                                    onValueChange={(val: any) => {
+                                        if (val === "Custom") {
+                                            setCreateInvoiceForm(prev => ({
+                                                ...prev,
+                                                planName: "Custom",
+                                                pricingMode: "custom"
+                                            }));
+                                        } else {
+                                            const pricing = calculatePlanPricing(val, createInvoiceForm.billingCycle, createInvoiceForm.customDays);
+                                            setCreateInvoiceForm(prev => ({
+                                                ...prev,
+                                                planName: val,
+                                                pricingMode: "standard",
+                                                customAmount: pricing.subtotal.toFixed(2)
+                                            }));
+                                        }
+                                    }}
+                                >
+                                    <SelectTrigger className="w-full">
+                                        <SelectValue placeholder="Select Plan" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="Starter">Starter (AED 499/mo)</SelectItem>
+                                        <SelectItem value="Growth">Growth (AED 999/mo)</SelectItem>
+                                        <SelectItem value="Enterprise">Enterprise (AED 1,999/mo)</SelectItem>
+                                        <SelectItem value="Custom">Custom / Manual Amount</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <Label>Billing Cycle</Label>
+                                <Select
+                                    value={createInvoiceForm.billingCycle}
+                                    onValueChange={(val: any) => {
+                                        const planToUse = createInvoiceForm.planName === "Custom" ? "Starter" : createInvoiceForm.planName;
+                                        const pricing = calculatePlanPricing(planToUse, val, createInvoiceForm.customDays);
+                                        setCreateInvoiceForm(prev => ({
+                                            ...prev,
+                                            billingCycle: val,
+                                            customAmount: prev.pricingMode === "standard" ? pricing.subtotal.toFixed(2) : prev.customAmount
+                                        }));
+                                    }}
+                                >
+                                    <SelectTrigger className="w-full">
+                                        <SelectValue placeholder="Select Cycle" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="monthly">Monthly (1 mo)</SelectItem>
+                                        <SelectItem value="quarterly">Quarterly (3 mo)</SelectItem>
+                                        <SelectItem value="6_months">6 Months (6 mo)</SelectItem>
+                                        <SelectItem value="yearly">Annual (12 mo)</SelectItem>
+                                        <SelectItem value="custom">Custom Days</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+
+                        {createInvoiceForm.billingCycle === "custom" && (
+                            <div className="space-y-1.5">
+                                <Label htmlFor="create-inv-custom-days">Custom Duration (Days)</Label>
+                                <Input
+                                    id="create-inv-custom-days"
+                                    type="number"
+                                    min="1"
+                                    value={createInvoiceForm.customDays}
+                                    onChange={(e) => {
+                                        const days = Number(e.target.value) || 30;
+                                        const planToUse = createInvoiceForm.planName === "Custom" ? "Starter" : createInvoiceForm.planName;
+                                        const pricing = calculatePlanPricing(planToUse, "custom", days);
+                                        setCreateInvoiceForm(prev => ({
+                                            ...prev,
+                                            customDays: days,
+                                            customAmount: prev.pricingMode === "standard" ? pricing.subtotal.toFixed(2) : prev.customAmount
+                                        }));
+                                    }}
+                                />
+                            </div>
+                        )}
+
+                        {/* Subtotal Amount (Locked in standard mode, Editable in custom mode) */}
+                        <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                                <Label htmlFor="create-inv-subtotal">Subtotal Amount (AED)</Label>
+                                {createInvoiceForm.pricingMode === "standard" ? (
+                                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider bg-surface-2 px-2 py-0.5 rounded-md">
+                                        Locked (Plan Rate)
+                                    </span>
+                                ) : (
+                                    <span className="text-[10px] font-bold text-primary uppercase tracking-wider bg-primary/10 px-2 py-0.5 rounded-md">
+                                        Custom Editable
+                                    </span>
+                                )}
+                            </div>
+                            <Input
+                                id="create-inv-subtotal"
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                disabled={createInvoiceForm.pricingMode === "standard"}
+                                placeholder="e.g. 499.00"
+                                value={createInvoiceForm.customAmount}
+                                onChange={(e) => setCreateInvoiceForm(prev => ({ ...prev, customAmount: e.target.value }))}
+                                className={createInvoiceForm.pricingMode === "standard" ? "bg-surface-2/70 text-muted-foreground cursor-not-allowed font-medium" : "bg-surface text-ink font-bold border-primary/40"}
+                            />
+                            <p className="text-[11px] text-muted-foreground">
+                                {createInvoiceForm.pricingMode === "standard"
+                                    ? "Locked to standard plan pricing. Switch mode to Custom if you want to enter a manual price."
+                                    : "Enter any custom or negotiated amount here."}
+                            </p>
+                            <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                                ⚠️ Note: Mamo Pay requires a minimum of AED 2.00 for online payment links.
+                            </p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1.5">
+                                <Label htmlFor="create-inv-start">Period Start</Label>
+                                <Input
+                                    id="create-inv-start"
+                                    type="date"
+                                    value={createInvoiceForm.periodStart}
+                                    onChange={(e) => setCreateInvoiceForm(prev => ({ ...prev, periodStart: e.target.value }))}
+                                />
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <Label>Period End (Auto)</Label>
+                                <Input
+                                    type="text"
+                                    disabled
+                                    value={manualInvoiceComputedEnd}
+                                    className="bg-surface-2 font-mono text-xs"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Live Pricing Breakdown */}
+                        <div className="rounded-xl border border-border bg-surface-2/60 p-3 space-y-1.5 text-xs">
+                            <div className="flex justify-between text-muted-foreground">
+                                <span>Subtotal ({manualInvoicePricing.durationMonths} mo):</span>
+                                <span className="font-semibold text-ink">AED {manualInvoicePricing.subtotal.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between text-muted-foreground">
+                                <span>UAE VAT (5%):</span>
+                                <span className="font-semibold text-ink">AED {manualInvoicePricing.vatAmount.toFixed(2)}</span>
+                            </div>
+                            <div className="border-t border-border pt-1.5 flex justify-between font-extrabold text-sm text-ink">
+                                <span>Total Amount:</span>
+                                <span className="text-primary">AED {manualInvoicePricing.totalAmount.toFixed(2)}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" className="rounded-xl" onClick={() => {
+                            setCreateInvoiceOpen(false);
+                            setEditingInvoice(null);
+                        }}>
+                            Cancel
+                        </Button>
+                        <Button
+                            className="rounded-xl font-semibold"
+                            disabled={isCreatingInvoice || !createInvoiceForm.tenantId}
+                            onClick={handleCreateInvoiceSubmit}
+                        >
+                            {isCreatingInvoice ? (editingInvoice ? "Saving Changes..." : "Creating Invoice...") : (editingInvoice ? "Save Changes" : "Create Invoice")}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Delete Invoice Confirmation Dialog */}
+            <Dialog open={!!invoiceToDelete} onOpenChange={(o) => !o && setInvoiceToDelete(null)}>
+                <DialogContent className="sm:max-w-md w-[95vw]">
+                    <DialogHeader>
+                        <DialogTitle className="text-destructive flex items-center gap-2">
+                            <Trash2 className="h-5 w-5" /> Delete Subscription Invoice
+                        </DialogTitle>
+                        <DialogDescription className="text-sm mt-2 font-medium">
+                            Are you sure you want to delete invoice <span className="font-bold text-ink">{invoiceToDelete?.invoiceNumber}</span> ({invoiceToDelete?.tenantName})?
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="py-2 text-xs text-muted-foreground space-y-2">
+                        <div className="rounded-xl bg-surface-2 p-3 border border-border space-y-1 font-mono">
+                            <div>Amount: AED {Number(invoiceToDelete?.totalAmount || 0).toFixed(2)}</div>
+                            <div>Status: {invoiceToDelete?.paymentStatus}</div>
+                            <div>Plan: {invoiceToDelete?.planName} ({invoiceToDelete?.billingCycle})</div>
+                        </div>
+                        <p className="text-destructive font-semibold">
+                            Note: Only pending/unpaid invoices can be deleted. This action cannot be undone.
+                        </p>
+                    </div>
+
+                    <DialogFooter className="gap-2 sm:gap-0 mt-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setInvoiceToDelete(null)}
+                            className="rounded-xl"
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="destructive"
+                            onClick={handleDeleteInvoiceSubmit}
+                            disabled={isDeletingInvoice}
+                            className="rounded-xl"
+                        >
+                            {isDeletingInvoice ? "Deleting..." : "Delete Invoice"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

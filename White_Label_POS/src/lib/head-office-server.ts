@@ -28,7 +28,11 @@ import {
   stockAdjustments,
   inventoryLedger,
   productRecipes,
+  tenantSubscriptions,
+  tenantInvoices,
+  tenantPayments,
 } from "@/server/db/schema";
+
 import { eq, and, sql, desc, inArray, ne, or, ilike, lte, gte } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
 import { logAuditAction } from "@/lib/audit-logger";
@@ -2598,4 +2602,84 @@ export const deleteProductRecipeServerFn = createServerFn({ method: "POST" })
 
     return { success: true };
   });
+
+export const getMyTenantBillingFn = createServerFn({ method: "GET" })
+  .handler(async () => {
+    const session = await getHeadOfficeSession();
+    const tenantId = session.tenantId;
+
+    try {
+      // 1. Fetch Tenant Record
+      const tenantRows = await db
+        .select({
+          id: tenants.id,
+          name: tenants.name,
+          subdomain: tenants.subdomain,
+          plan: tenants.plan,
+          status: tenants.status,
+          outletLimit: tenants.outletLimit,
+          tillLimit: tenants.tillLimit,
+          monthlyOrderLimit: tenants.monthlyOrderLimit,
+          createdAt: tenants.createdAt,
+          trn: tenantSettings.taxRegistrationNumber,
+          currency: tenantSettings.currency,
+        })
+        .from(tenants)
+        .leftJoin(tenantSettings, eq(tenants.id, tenantSettings.tenantId))
+        .where(eq(tenants.id, tenantId))
+        .limit(1);
+
+      const tenant = tenantRows[0] || null;
+
+      // 2. Fetch Subscription Row
+      const subRows = await db
+        .select()
+        .from(tenantSubscriptions)
+        .where(eq(tenantSubscriptions.tenantId, tenantId))
+        .orderBy(desc(tenantSubscriptions.createdAt))
+        .limit(1);
+
+      const subscription = subRows[0] || null;
+
+      // 3. Count Branches
+      const branchRows = await db
+        .select({ id: branches.id })
+        .from(branches)
+        .where(eq(branches.tenantId, tenantId));
+
+      const branchCount = branchRows.length;
+
+      // 4. Invoices
+      const invoices = await db
+        .select()
+        .from(tenantInvoices)
+        .where(eq(tenantInvoices.tenantId, tenantId))
+        .orderBy(desc(tenantInvoices.createdAt));
+
+      // 5. Payment History
+      const payments = await db
+        .select()
+        .from(tenantPayments)
+        .where(eq(tenantPayments.tenantId, tenantId))
+        .orderBy(desc(tenantPayments.paymentDate));
+
+      return {
+        success: true,
+        data: {
+          tenant,
+          subscription,
+          branchCount,
+          invoices,
+          payments,
+        },
+      };
+    } catch (err: any) {
+      console.error("Failed to fetch tenant billing data:", err);
+      return {
+        success: false,
+        error: err.message || "Failed to fetch subscription & billing information",
+      };
+    }
+  });
+
 

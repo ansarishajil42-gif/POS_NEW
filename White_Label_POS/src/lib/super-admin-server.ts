@@ -1381,6 +1381,7 @@ export const getTenantInvoicesServerFn = createServerFn({ method: "GET" })
                 paymentStatus: tenantInvoices.paymentStatus,
                 paymentMethod: tenantInvoices.paymentMethod,
                 mamoPaymentLinkId: tenantInvoices.mamoPaymentLinkId,
+                mamoPaymentUrl: tenantInvoices.mamoPaymentUrl,
                 periodStart: tenantInvoices.periodStart,
                 periodEnd: tenantInvoices.periodEnd,
                 createdAt: tenantInvoices.createdAt,
@@ -1449,11 +1450,12 @@ export const createTenantInvoicePaymentLinkServerFn = createServerFn({ method: "
                 };
             }
 
-            // Save payment link reference in invoice
+            // Save payment link reference and real URL in invoice
             await db
                 .update(tenantInvoices)
                 .set({
                     mamoPaymentLinkId: linkResult.paymentLinkId || null,
+                    mamoPaymentUrl: linkResult.paymentUrl || null,
                 })
                 .where(eq(tenantInvoices.id, invoice.id));
 
@@ -1479,6 +1481,243 @@ export const createTenantInvoicePaymentLinkServerFn = createServerFn({ method: "
             return { success: false, error: error.message };
         }
     });
+
+export const createManualTenantInvoiceServerFn = createServerFn({ method: "POST" })
+    .validator((d: {
+        tenantId: string;
+        planName: string;
+        billingCycle: string;
+        customDays?: number;
+        customAmount?: number;
+        periodStart: string;
+        periodEnd?: string;
+    }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+
+        try {
+            const tenantRows = await db.select().from(tenants).where(eq(tenants.id, data.tenantId)).limit(1);
+            const tenant = tenantRows[0];
+            if (!tenant) {
+                return { success: false, error: "Tenant not found" };
+            }
+
+            const cycle = (data.billingCycle || "monthly") as BillingCycle;
+            const defaultPricing = calculatePlanPricing(data.planName, cycle, data.customDays);
+
+            let subtotal = defaultPricing.subtotal;
+            let vatAmount = defaultPricing.vatAmount;
+            let totalAmount = defaultPricing.totalAmount;
+            const durationMonths = defaultPricing.durationMonths;
+
+            if (data.customAmount !== undefined && data.customAmount !== null && !isNaN(data.customAmount) && data.customAmount >= 0) {
+                subtotal = data.customAmount;
+                vatAmount = Number((subtotal * 0.05).toFixed(2));
+                totalAmount = Number((subtotal + vatAmount).toFixed(2));
+            }
+
+            const startDate = data.periodStart ? new Date(data.periodStart) : new Date();
+            const endDate = data.periodEnd
+                ? new Date(data.periodEnd)
+                : calculateNextDueDate(startDate, cycle, data.customDays);
+
+            const invYear = startDate.getFullYear();
+            const invRand = Math.floor(1000 + Math.random() * 9000);
+            const invoiceNumber = `INV-SUB-${invYear}-${invRand}`;
+
+            const [newInvoice] = await db
+                .insert(tenantInvoices)
+                .values({
+                    invoiceNumber,
+                    tenantId: data.tenantId,
+                    planName: data.planName,
+                    billingCycle: cycle,
+                    durationMonths,
+                    subtotal: subtotal.toFixed(2),
+                    vatAmount: vatAmount.toFixed(2),
+                    totalAmount: totalAmount.toFixed(2),
+                    currency: "AED",
+                    paymentStatus: "pending_gateway_integration",
+                    paymentMethod: "mamo_pay",
+                    periodStart: startDate,
+                    periodEnd: endDate,
+                })
+                .returning();
+
+            await logAuditAction({
+                action: "Create Manual Subscription Invoice",
+                entityType: "tenant_invoice",
+                entityId: newInvoice.id,
+                tenantId: data.tenantId,
+                afterValue: {
+                    invoiceNumber,
+                    tenantName: tenant.name,
+                    planName: data.planName,
+                    billingCycle: cycle,
+                    totalAmount: totalAmount,
+                    periodStart: startDate.toISOString(),
+                    periodEnd: endDate.toISOString(),
+                },
+            });
+
+            return { success: true, invoice: newInvoice };
+        } catch (error: any) {
+            console.error("Create manual invoice error:", error);
+            return { success: false, error: error.message };
+        }
+    });
+
+export const deleteTenantInvoiceServerFn = createServerFn({ method: "POST" })
+    .validator((d: { invoiceId: string }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+
+        try {
+            const invoiceRows = await db
+                .select()
+                .from(tenantInvoices)
+                .where(eq(tenantInvoices.id, data.invoiceId))
+                .limit(1);
+
+            const invoice = invoiceRows[0];
+            if (!invoice) {
+                return { success: false, error: "Invoice not found" };
+            }
+
+            if (invoice.paymentStatus === "paid" || invoice.paymentStatus === "manual_paid") {
+                return {
+                    success: false,
+                    error: "Cannot delete a settled or paid subscription invoice for financial audit and accounting integrity.",
+                };
+            }
+
+            await db.delete(tenantInvoices).where(eq(tenantInvoices.id, data.invoiceId));
+
+            await logAuditAction({
+                action: "Delete Subscription Invoice",
+                entityType: "tenant_invoice",
+                entityId: invoice.id,
+                tenantId: invoice.tenantId,
+                beforeValue: {
+                    invoiceNumber: invoice.invoiceNumber,
+                    totalAmount: invoice.totalAmount,
+                    paymentStatus: invoice.paymentStatus,
+                },
+            });
+
+            return { success: true, message: `Invoice ${invoice.invoiceNumber} deleted successfully.` };
+        } catch (error: any) {
+            console.error("Delete invoice error:", error);
+            return { success: false, error: error.message };
+        }
+    });
+
+export const updateTenantInvoiceServerFn = createServerFn({ method: "POST" })
+    .validator((d: {
+        invoiceId: string;
+        planName?: string;
+        billingCycle?: string;
+        customDays?: number;
+        customAmount?: number;
+        periodStart?: string;
+        periodEnd?: string;
+        subtotal?: number;
+        vatAmount?: number;
+        totalAmount?: number;
+    }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+
+        try {
+            const invoiceRows = await db
+                .select()
+                .from(tenantInvoices)
+                .where(eq(tenantInvoices.id, data.invoiceId))
+                .limit(1);
+
+            const invoice = invoiceRows[0];
+            if (!invoice) {
+                return { success: false, error: "Invoice not found" };
+            }
+
+            if (invoice.paymentStatus === "paid" || invoice.paymentStatus === "manual_paid") {
+                return {
+                    success: false,
+                    error: "Cannot edit a settled or paid subscription invoice for financial audit and accounting integrity.",
+                };
+            }
+
+            const planName = data.planName || invoice.planName;
+            const cycle = (data.billingCycle || invoice.billingCycle || "monthly") as BillingCycle;
+            const planToCompute = planName === "Custom" ? "Starter" : planName;
+            const defaultPricing = calculatePlanPricing(planToCompute, cycle, data.customDays);
+
+            let subtotal = defaultPricing.subtotal;
+            let vatAmount = defaultPricing.vatAmount;
+            let totalAmount = defaultPricing.totalAmount;
+            const durationMonths = defaultPricing.durationMonths;
+
+            const effectiveCustomAmount = data.customAmount ?? data.subtotal;
+            if (effectiveCustomAmount !== undefined && effectiveCustomAmount !== null && !isNaN(effectiveCustomAmount) && effectiveCustomAmount >= 0) {
+                subtotal = effectiveCustomAmount;
+                vatAmount = Number((subtotal * 0.05).toFixed(2));
+                totalAmount = Number((subtotal + vatAmount).toFixed(2));
+            } else if (data.totalAmount !== undefined && data.totalAmount !== null && !isNaN(data.totalAmount) && data.totalAmount >= 0) {
+                totalAmount = data.totalAmount;
+                vatAmount = data.vatAmount ?? Number((totalAmount - totalAmount / 1.05).toFixed(2));
+                subtotal = Number((totalAmount - vatAmount).toFixed(2));
+            }
+
+            const startDate = data.periodStart ? new Date(data.periodStart) : new Date(invoice.periodStart);
+            const endDate = data.periodEnd
+                ? new Date(data.periodEnd)
+                : calculateNextDueDate(startDate, cycle, data.customDays);
+
+            const [updatedInvoice] = await db
+                .update(tenantInvoices)
+                .set({
+                    planName,
+                    billingCycle: cycle,
+                    durationMonths,
+                    subtotal: subtotal.toFixed(2),
+                    vatAmount: vatAmount.toFixed(2),
+                    totalAmount: totalAmount.toFixed(2),
+                    periodStart: startDate,
+                    periodEnd: endDate,
+                    mamoPaymentLinkId: null,
+                    mamoPaymentUrl: null,
+                })
+                .where(eq(tenantInvoices.id, data.invoiceId))
+                .returning();
+
+            await logAuditAction({
+                action: "Update Subscription Invoice",
+                entityType: "tenant_invoice",
+                entityId: invoice.id,
+                tenantId: invoice.tenantId,
+                beforeValue: {
+                    planName: invoice.planName,
+                    billingCycle: invoice.billingCycle,
+                    totalAmount: invoice.totalAmount,
+                    periodStart: invoice.periodStart instanceof Date ? invoice.periodStart.toISOString() : String(invoice.periodStart),
+                    periodEnd: invoice.periodEnd instanceof Date ? invoice.periodEnd.toISOString() : String(invoice.periodEnd),
+                },
+                afterValue: {
+                    planName,
+                    billingCycle: cycle,
+                    totalAmount: totalAmount.toFixed(2),
+                    periodStart: startDate.toISOString(),
+                    periodEnd: endDate.toISOString(),
+                },
+            });
+
+            return { success: true, message: `Invoice ${invoice.invoiceNumber} updated successfully.`, invoice: updatedInvoice };
+        } catch (error: any) {
+            console.error("Update invoice error:", error);
+            return { success: false, error: error.message };
+        }
+    });
+
 
 
 

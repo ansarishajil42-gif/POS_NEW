@@ -90,6 +90,8 @@ import { PromotionsTab } from "@/components/promotions/PromotionsTab";
 import { ReportsTab } from "@/components/reports/ReportsTab";
 import { FinancialReportsTab } from "@/components/reports/FinancialReportsTab";
 import { PayrollTab } from "@/components/payroll/PayrollTab";
+import { TenantSubscriptionBillingTab } from "@/components/subscription/TenantSubscriptionBillingTab";
+
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { aed, aedShort } from "@/lib/demo-data";
@@ -1124,11 +1126,18 @@ function HeadOffice() {
               Financial Reports
             </TabsTrigger>
             <TabsTrigger
+              value="subscription_billing"
+              className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+            >
+              Subscription & Billing
+            </TabsTrigger>
+            <TabsTrigger
               value="audit_logs"
               className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
             >
               Audit Logs
             </TabsTrigger>
+
           </TabsList>
         </aside>
 
@@ -4657,7 +4666,12 @@ function HeadOffice() {
           <TabsContent value="recipes" className="mt-0 space-y-5">
             <RecipesTabContent products={data?.products || []} />
           </TabsContent>
+
+          <TabsContent value="subscription_billing" className="mt-0 space-y-5">
+            <TenantSubscriptionBillingTab />
+          </TabsContent>
         </main>
+
 
         <Dialog open={addBatchOpen} onOpenChange={setAddBatchOpen}>
           <DialogContent className="sm:max-w-[425px]">

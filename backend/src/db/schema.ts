@@ -770,6 +770,7 @@ export const tenantInvoices = pgTable("tenant_invoices", {
   paymentStatus: text("payment_status").notNull().default("pending_gateway_integration"), // 'pending_gateway_integration', 'paid', 'overdue', 'manual_paid'
   paymentMethod: text("payment_method").notNull().default("mamo_pay"), // 'mamo_pay', 'manual_offline', 'bank_transfer'
   mamoPaymentLinkId: text("mamo_payment_link_id"),
+  mamoPaymentUrl: text("mamo_payment_url"),
   periodStart: timestamp("period_start").notNull(),
   periodEnd: timestamp("period_end").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),

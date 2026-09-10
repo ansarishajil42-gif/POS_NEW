@@ -72,17 +72,38 @@ export async function createMamoPaymentLink(
     const responseData = await response.json().catch(() => null);
 
     if (!response.ok) {
-      const errorMsg =
-        responseData?.message ||
-        responseData?.error ||
-        (Array.isArray(responseData?.messages)
-          ? responseData.messages.join(", ")
-          : null) ||
-        `Mamo Pay API returned status ${response.status} (${response.statusText})`;
+      let errorMsg: string | null = null;
+
+      if (responseData?.errors && typeof responseData.errors === "object") {
+        const errorList: string[] = [];
+        for (const [field, errs] of Object.entries(responseData.errors)) {
+          if (Array.isArray(errs)) {
+            errorList.push(`${field}: ${errs.join(", ")}`);
+          } else if (typeof errs === "string") {
+            errorList.push(`${field}: ${errs}`);
+          }
+        }
+        if (errorList.length > 0) {
+          errorMsg = errorList.join("; ");
+        }
+      }
+
+      if (!errorMsg) {
+        errorMsg =
+          (responseData?.message && responseData.message !== "See errors"
+            ? responseData.message
+            : null) ||
+          responseData?.error ||
+          (Array.isArray(responseData?.messages)
+            ? responseData.messages.join(", ")
+            : null) ||
+          `Mamo Pay API returned status ${response.status} (${response.statusText})`;
+      }
 
       console.error("[Mamo Pay] Link creation failed:", {
         status: response.status,
         data: responseData,
+        extractedError: errorMsg,
       });
 
       return {
