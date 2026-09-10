@@ -88,6 +88,8 @@ import { cn } from "@/lib/utils";
 import { CRMTab } from "@/components/crm/CRMTab";
 import { PromotionsTab } from "@/components/promotions/PromotionsTab";
 import { ReportsTab } from "@/components/reports/ReportsTab";
+import { FinancialReportsTab } from "@/components/reports/FinancialReportsTab";
+import { PayrollTab } from "@/components/payroll/PayrollTab";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { aed, aedShort } from "@/lib/demo-data";
@@ -1074,6 +1076,12 @@ function HeadOffice() {
               Staff & Roles
             </TabsTrigger>
             <TabsTrigger
+              value="payroll"
+              className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+            >
+              Payroll
+            </TabsTrigger>
+            <TabsTrigger
               value="vat"
               className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
             >
@@ -1108,6 +1116,12 @@ function HeadOffice() {
               className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
             >
               Reports & VAT
+            </TabsTrigger>
+            <TabsTrigger
+              value="financial_reports"
+              className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+            >
+              Financial Reports
             </TabsTrigger>
             <TabsTrigger
               value="audit_logs"
@@ -3577,6 +3591,14 @@ function HeadOffice() {
 
           <TabsContent value="reports" className="mt-0">
             <ReportsTab />
+          </TabsContent>
+
+          <TabsContent value="financial_reports" className="mt-0">
+            <FinancialReportsTab />
+          </TabsContent>
+
+          <TabsContent value="payroll" className="mt-0">
+            <PayrollTab />
           </TabsContent>
 
           {/* Record GRN Dialog */}

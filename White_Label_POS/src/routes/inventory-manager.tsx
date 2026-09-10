@@ -60,6 +60,8 @@ import {
   logWastageServerFn,
   getWastageReportServerFn,
 } from "@/lib/inventory-manager-server";
+import { MySalaryView } from "@/components/payroll/MySalaryView";
+import { MyLeaveView } from "@/components/payroll/MyLeaveView";
 
 export const Route = createFileRoute("/inventory-manager")({
   beforeLoad: async () => {
@@ -475,7 +477,20 @@ function InventoryManager() {
             </TabsTrigger>
             <TabsTrigger value="ledger" className="w-full justify-start rounded-lg px-4 py-3 text-sm font-semibold transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg"><History className="mr-2 h-5 w-5" />Ledger</TabsTrigger>
             <TabsTrigger value="wastage" className="w-full justify-start rounded-lg px-4 py-3 text-sm font-semibold transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg"><AlertTriangle className="mr-2 h-5 w-5 text-amber-500" />Wastage Tracking</TabsTrigger>
-            <TabsTrigger value="reports" className="w-full justify-start rounded-lg px-4 py-3 text-sm font-semibold transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg"><FileText className="mr-2 h-5 w-5" />Reports</TabsTrigger></TabsList>
+            <TabsTrigger value="reports" className="w-full justify-start rounded-lg px-4 py-3 text-sm font-semibold transition-all data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg"><FileText className="mr-2 h-5 w-5" />Reports</TabsTrigger>
+            <TabsTrigger
+              value="salary"
+              className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+            >
+              My Salary
+            </TabsTrigger>
+            <TabsTrigger
+              value="leave"
+              className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+            >
+              My Leave
+            </TabsTrigger>
+          </TabsList>
         </aside>
 
         <main className="min-w-0 flex-1">
@@ -1063,6 +1078,12 @@ function InventoryManager() {
               batches={batches}
               onOpenLogModal={() => setWastageModalOpen(true)}
             />
+          </TabsContent>
+          <TabsContent value="salary" className="mt-0 space-y-5">
+            <MySalaryView />
+          </TabsContent>
+          <TabsContent value="leave" className="mt-0 space-y-5">
+            <MyLeaveView />
           </TabsContent>
         </main>
       </Tabs>

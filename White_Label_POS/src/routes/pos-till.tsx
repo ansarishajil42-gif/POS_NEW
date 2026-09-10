@@ -24,6 +24,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MySalaryView } from "@/components/payroll/MySalaryView";
+import { MyLeaveView } from "@/components/payroll/MyLeaveView";
 import {
   Dialog,
   DialogContent,
@@ -624,6 +626,8 @@ function PosTill() {
         <TabsList className="rounded-xl">
           <TabsTrigger value="checkout">Checkout</TabsTrigger>
           <TabsTrigger value="shift">Shift & reports</TabsTrigger>
+          <TabsTrigger value="salary">My Salary</TabsTrigger>
+          <TabsTrigger value="leave">My Leave</TabsTrigger>
         </TabsList>
 
         <TabsContent value="checkout" className="mt-5">
@@ -1039,6 +1043,14 @@ function PosTill() {
               </Button>
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="salary" className="mt-5">
+          <MySalaryView />
+        </TabsContent>
+
+        <TabsContent value="leave" className="mt-5">
+          <MyLeaveView />
         </TabsContent>
       </Tabs>
 

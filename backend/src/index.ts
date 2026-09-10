@@ -20,6 +20,7 @@ import storeManagerRouter from "./routes/store-manager.js";
 import inventoryRouter from "./routes/inventory.js";
 import posRouter from "./routes/pos.js";
 import { aggregatorSftpRouter } from "./routes/aggregator-sftp.js";
+import webhooksRouter from "./routes/webhooks.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -64,6 +65,8 @@ app.use("/api/store-manager", storeManagerRouter);
 app.use("/api/inventory", inventoryRouter);
 app.use("/api/pos", posRouter);
 app.use("/api/aggregator-sftp", aggregatorSftpRouter);
+app.use("/api/webhooks", webhooksRouter);
+
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

@@ -1,13 +1,17 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "@supabase/supabase-js";
 import { db } from "@/server/db";
-import { tenants, branches, tenantSettings, orders, platformSettings, staffUsers, auditLogs, inventoryLedger, blogPosts, tenantSubscriptions, tenantPayments } from "@/server/db/schema";
+import { tenants, branches, tenantSettings, orders, platformSettings, staffUsers, auditLogs, inventoryLedger, blogPosts, tenantSubscriptions, tenantPayments, tenantInvoices } from "@/server/db/schema";
 import { eq, and, sql, desc, gte, lte, count } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
 import bcrypt from "bcryptjs";
 import { logAuditAction } from "@/lib/audit-logger";
 import { z } from "zod";
 import { createBranchInternal } from "@/lib/branch-server-helpers";
+import { calculatePlanPricing, getPlan, type BillingCycle } from "@/lib/subscription-plans";
+import { createMamoPaymentLink } from "@/lib/mamo-pay";
+
+
 
 function redactSecrets(obj: any): any {
     if (obj === null || obj === undefined) return obj;
@@ -75,6 +79,7 @@ export const getBranchesServerFn = createServerFn({ method: "GET" })
 export const createTenantServerFn = createServerFn({ method: "POST" })
     .validator((d: { 
         name: string; subdomain: string; plan: string; trn: string;
+        billingCycle?: string; customDays?: number; outlets?: number; tills?: number;
         adminName: string; adminEmail: string; adminPhone: string; adminAddress: string; adminPassword: string;
     }) => d)
     .handler(async ({ data }) => {
@@ -82,12 +87,23 @@ export const createTenantServerFn = createServerFn({ method: "POST" })
         
         try {
             const tenant = await db.transaction(async (tx) => {
+                const planName = data.plan || "Starter";
+                const cycle = (data.billingCycle || "monthly") as BillingCycle;
+                const planDetails = getPlan(planName);
+
+                const outletLimit = data.outlets && data.outlets > 0 ? data.outlets : planDetails.entitlements.outletLimit;
+                const tillLimit = data.tills && data.tills > 0 ? data.tills : planDetails.entitlements.tillLimit;
+                const monthlyOrderLimit = planDetails.entitlements.monthlyOrderLimit;
+
                 // Insert tenant
                 const [newTenant] = await tx.insert(tenants).values({
                     name: data.name,
                     subdomain: data.subdomain,
-                    plan: data.plan,
+                    plan: planName,
                     status: "Active",
+                    outletLimit,
+                    tillLimit,
+                    monthlyOrderLimit,
                 }).returning();
 
                 // Insert settings
@@ -114,15 +130,37 @@ export const createTenantServerFn = createServerFn({ method: "POST" })
 
                 // Create initial tenant subscription record
                 const subStartDate = new Date();
-                const subEndDate = new Date(subStartDate);
-                subEndDate.setMonth(subEndDate.getMonth() + 1);
+                const subEndDate = calculateNextDueDate(subStartDate, cycle, data.customDays);
 
                 await tx.insert(tenantSubscriptions).values({
                     tenantId: newTenant.id,
-                    billingCycle: "monthly",
+                    billingCycle: cycle,
+                    customDays: data.customDays || null,
                     subscriptionStartDate: subStartDate,
                     currentPeriodEndDate: subEndDate,
                     status: "active"
+                });
+
+                // Calculate pricing and create initial subscription invoice record
+                const pricing = calculatePlanPricing(planName, cycle, data.customDays);
+                const invYear = subStartDate.getFullYear();
+                const invRand = Math.floor(1000 + Math.random() * 9000);
+                const invoiceNumber = `INV-SUB-${invYear}-${invRand}`;
+
+                await tx.insert(tenantInvoices).values({
+                    invoiceNumber,
+                    tenantId: newTenant.id,
+                    planName,
+                    billingCycle: cycle,
+                    durationMonths: pricing.durationMonths,
+                    subtotal: pricing.subtotal.toFixed(2),
+                    vatAmount: pricing.vatAmount.toFixed(2),
+                    totalAmount: pricing.totalAmount.toFixed(2),
+                    currency: "AED",
+                    paymentStatus: "pending_gateway_integration",
+                    paymentMethod: "mamo_pay",
+                    periodStart: subStartDate,
+                    periodEnd: subEndDate,
                 });
 
                 await logAuditAction({
@@ -133,10 +171,12 @@ export const createTenantServerFn = createServerFn({ method: "POST" })
                     afterValue: {
                         name: data.name,
                         subdomain: data.subdomain,
-                        plan: data.plan,
+                        plan: planName,
+                        billingCycle: cycle,
                         trn: data.trn,
                         adminName: data.adminName,
                         adminEmail: data.adminEmail,
+                        invoiceNumber,
                         status: "Active"
                     }
                 }, tx);
@@ -155,6 +195,7 @@ export const createTenantServerFn = createServerFn({ method: "POST" })
             return { success: false, error: "Failed to create tenant and admin: " + (error.message || "Unknown database error") };
         }
     });
+
 
 export const updateTenantServerFn = createServerFn({ method: "POST" })
     .validator((d: { id: string; name: string; subdomain: string }) => d)
@@ -1317,6 +1358,130 @@ export const updateTenantDueDateServerFn = createServerFn({ method: "POST" })
             return { success: false, error: error.message };
         }
     });
+
+export const getTenantInvoicesServerFn = createServerFn({ method: "GET" })
+    .handler(async () => {
+
+        await ensureSuperAdmin();
+        try {
+            const invoiceRows = await db.select({
+                id: tenantInvoices.id,
+                invoiceNumber: tenantInvoices.invoiceNumber,
+                tenantId: tenantInvoices.tenantId,
+                tenantName: tenants.name,
+                tenantSubdomain: tenants.subdomain,
+                tenantTrn: tenantSettings.taxRegistrationNumber,
+                planName: tenantInvoices.planName,
+                billingCycle: tenantInvoices.billingCycle,
+                durationMonths: tenantInvoices.durationMonths,
+                subtotal: tenantInvoices.subtotal,
+                vatAmount: tenantInvoices.vatAmount,
+                totalAmount: tenantInvoices.totalAmount,
+                currency: tenantInvoices.currency,
+                paymentStatus: tenantInvoices.paymentStatus,
+                paymentMethod: tenantInvoices.paymentMethod,
+                mamoPaymentLinkId: tenantInvoices.mamoPaymentLinkId,
+                periodStart: tenantInvoices.periodStart,
+                periodEnd: tenantInvoices.periodEnd,
+                createdAt: tenantInvoices.createdAt,
+            })
+            .from(tenantInvoices)
+            .leftJoin(tenants, eq(tenantInvoices.tenantId, tenants.id))
+            .leftJoin(tenantSettings, eq(tenantInvoices.tenantId, tenantSettings.tenantId))
+            .orderBy(sql`${tenantInvoices.createdAt} DESC`);
+
+            return { success: true, invoices: invoiceRows };
+        } catch (error: any) {
+            console.error("Fetch invoices error:", error);
+            return { success: false, error: error.message, invoices: [] };
+        }
+    });
+
+export const createTenantInvoicePaymentLinkServerFn = createServerFn({ method: "POST" })
+    .validator((d: { invoiceId: string }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+
+        try {
+            const invoiceResult = await db
+                .select({
+                    id: tenantInvoices.id,
+                    invoiceNumber: tenantInvoices.invoiceNumber,
+                    tenantId: tenantInvoices.tenantId,
+                    tenantName: tenants.name,
+                    tenantSubdomain: tenants.subdomain,
+                    planName: tenantInvoices.planName,
+                    billingCycle: tenantInvoices.billingCycle,
+                    totalAmount: tenantInvoices.totalAmount,
+                    currency: tenantInvoices.currency,
+                    paymentStatus: tenantInvoices.paymentStatus,
+                    mamoPaymentLinkId: tenantInvoices.mamoPaymentLinkId,
+                })
+                .from(tenantInvoices)
+                .leftJoin(tenants, eq(tenantInvoices.tenantId, tenants.id))
+                .where(eq(tenantInvoices.id, data.invoiceId))
+                .limit(1);
+
+            const invoice = invoiceResult[0];
+            if (!invoice) {
+                return { success: false, error: "Invoice not found" };
+            }
+
+            const linkResult = await createMamoPaymentLink({
+                title: `Subscription - ${invoice.tenantName || "Cloudynation POS"}`,
+                description: `Tax Invoice ${invoice.invoiceNumber} (${invoice.planName} plan)`,
+                amount: Number(invoice.totalAmount),
+                currency: invoice.currency || "AED",
+                externalId: invoice.invoiceNumber,
+                customData: {
+                    invoiceId: invoice.id,
+                    tenantId: invoice.tenantId,
+                    invoiceNumber: invoice.invoiceNumber,
+                },
+                returnUrl: `https://${invoice.tenantSubdomain || "app"}.cloudynationpos.com`,
+                failureUrl: `https://${invoice.tenantSubdomain || "app"}.cloudynationpos.com`,
+            });
+
+            if (!linkResult.success || !linkResult.paymentUrl) {
+                return {
+                    success: false,
+                    error: linkResult.error || "Failed to generate Mamo Pay payment link",
+                };
+            }
+
+            // Save payment link reference in invoice
+            await db
+                .update(tenantInvoices)
+                .set({
+                    mamoPaymentLinkId: linkResult.paymentLinkId || null,
+                })
+                .where(eq(tenantInvoices.id, invoice.id));
+
+            await logAuditAction({
+                action: "Generate Payment Link",
+                entityType: "tenant_invoice",
+                entityId: invoice.id,
+                tenantId: invoice.tenantId,
+                afterValue: {
+                    invoiceNumber: invoice.invoiceNumber,
+                    paymentLinkId: linkResult.paymentLinkId,
+                    paymentUrl: linkResult.paymentUrl,
+                },
+            });
+
+            return {
+                success: true,
+                paymentUrl: linkResult.paymentUrl,
+                paymentLinkId: linkResult.paymentLinkId,
+            };
+        } catch (error: any) {
+            console.error("Generate payment link error:", error);
+            return { success: false, error: error.message };
+        }
+    });
+
+
+
 
 
 

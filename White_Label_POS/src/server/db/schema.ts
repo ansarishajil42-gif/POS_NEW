@@ -11,6 +11,7 @@ import {
   uniqueIndex,
   json,
   unique,
+  date,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -960,4 +961,247 @@ export const productRecipesRelations = relations(productRecipes, ({ one }) => ({
   ingredient: one(products, { fields: [productRecipes.ingredientProductId], references: [products.id] }),
 }));
 
+export const tenantInvoices = pgTable("tenant_invoices", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  invoiceNumber: text("invoice_number").notNull().unique(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  planName: text("plan_name").notNull(),
+  billingCycle: text("billing_cycle").notNull().default("monthly"),
+  durationMonths: integer("duration_months").notNull().default(1),
+  subtotal: decimal("subtotal", { precision: 10, scale: 2 }).notNull(),
+  vatAmount: decimal("vat_amount", { precision: 10, scale: 2 }).notNull().default("0.00"),
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
+  currency: text("currency").notNull().default("AED"),
+  paymentStatus: text("payment_status").notNull().default("pending_gateway_integration"), // 'pending_gateway_integration', 'paid', 'overdue', 'manual_paid'
+  paymentMethod: text("payment_method").notNull().default("mamo_pay"), // 'mamo_pay', 'manual_offline', 'bank_transfer'
+  mamoPaymentLinkId: text("mamo_payment_link_id"),
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const tenantInvoicesRelations = relations(tenantInvoices, ({ one }) => ({
+  tenant: one(tenants, { fields: [tenantInvoices.tenantId], references: [tenants.id] }),
+}));
+
+// 26. employee_salary_profiles
+export const employeeSalaryProfiles = pgTable(
+  "employee_salary_profiles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    staffUserId: uuid("staff_user_id")
+      .notNull()
+      .references(() => staffUsers.id, { onDelete: "cascade" }),
+    basicSalary: decimal("basic_salary", { precision: 12, scale: 2 }).notNull().default("0.00"),
+    housingAllowance: decimal("housing_allowance", { precision: 12, scale: 2 }).default("0.00"),
+    transportAllowance: decimal("transport_allowance", { precision: 12, scale: 2 }).default("0.00"),
+    otherAllowances: decimal("other_allowances", { precision: 12, scale: 2 }).default("0.00"),
+    standardDeductions: decimal("standard_deductions", { precision: 12, scale: 2 }).default("0.00"),
+    paymentFrequency: text("payment_frequency").default("monthly"),
+    currency: text("currency").default("AED"),
+    bankName: text("bank_name"),
+    iban: text("iban"),
+    joinDate: date("join_date"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    unique("emp_salary_tenant_staff_unique").on(t.tenantId, t.staffUserId),
+    index("emp_salary_tenant_idx").on(t.tenantId),
+    index("emp_salary_staff_idx").on(t.staffUserId),
+  ]
+);
+
+export const employeeSalaryProfilesRelations = relations(employeeSalaryProfiles, ({ one }) => ({
+  tenant: one(tenants, { fields: [employeeSalaryProfiles.tenantId], references: [tenants.id] }),
+  staffUser: one(staffUsers, { fields: [employeeSalaryProfiles.staffUserId], references: [staffUsers.id] }),
+}));
+
+// 27. attendance_records
+export const attendanceRecords = pgTable(
+  "attendance_records",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    branchId: uuid("branch_id")
+      .references(() => branches.id, { onDelete: "set null" }),
+    staffUserId: uuid("staff_user_id")
+      .notNull()
+      .references(() => staffUsers.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    status: text("status").notNull(), // 'present', 'absent', 'half_day', 'on_leave', 'rest_day', 'public_holiday'
+    hoursWorked: decimal("hours_worked", { precision: 5, scale: 2 }).default("8.00"),
+    notes: text("notes"),
+    markedBy: uuid("marked_by").references(() => staffUsers.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    unique("att_rec_tenant_staff_date_unique").on(t.tenantId, t.staffUserId, t.date),
+    index("att_rec_tenant_idx").on(t.tenantId),
+    index("att_rec_staff_idx").on(t.staffUserId),
+    index("att_rec_date_idx").on(t.date),
+    index("att_rec_branch_idx").on(t.branchId),
+  ]
+);
+
+export const attendanceRecordsRelations = relations(attendanceRecords, ({ one }) => ({
+  tenant: one(tenants, { fields: [attendanceRecords.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [attendanceRecords.branchId], references: [branches.id] }),
+  staffUser: one(staffUsers, { fields: [attendanceRecords.staffUserId], references: [staffUsers.id] }),
+  marker: one(staffUsers, { fields: [attendanceRecords.markedBy], references: [staffUsers.id] }),
+}));
+
+// 28. branch_report_submissions
+export const branchReportSubmissions = pgTable(
+  "branch_report_submissions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    branchId: uuid("branch_id")
+      .notNull()
+      .references(() => branches.id, { onDelete: "cascade" }),
+    submittedBy: uuid("submitted_by")
+      .notNull()
+      .references(() => staffUsers.id, { onDelete: "cascade" }),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    snapshotData: json("snapshot_data").notNull(),
+    notes: text("notes"),
+    status: text("status").notNull().default("submitted"), // 'submitted', 'reviewed', 'returned'
+    headOfficeMessage: text("head_office_message"),
+    reviewedBy: uuid("reviewed_by").references(() => staffUsers.id, { onDelete: "set null" }),
+    reviewedAt: timestamp("reviewed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("branch_sub_tenant_idx").on(t.tenantId),
+    index("branch_sub_branch_idx").on(t.branchId),
+    index("branch_sub_status_idx").on(t.status),
+    index("branch_sub_created_idx").on(t.createdAt),
+  ]
+);
+
+export const branchReportSubmissionsRelations = relations(branchReportSubmissions, ({ one }) => ({
+  tenant: one(tenants, { fields: [branchReportSubmissions.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [branchReportSubmissions.branchId], references: [branches.id] }),
+  submitter: one(staffUsers, { fields: [branchReportSubmissions.submittedBy], references: [staffUsers.id] }),
+  reviewer: one(staffUsers, { fields: [branchReportSubmissions.reviewedBy], references: [staffUsers.id] }),
+}));
+
+// 29. leave_requests
+export const leaveRequests = pgTable(
+  "leave_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    staffUserId: uuid("staff_user_id")
+      .notNull()
+      .references(() => staffUsers.id, { onDelete: "cascade" }),
+    leaveType: text("leave_type").notNull(), // 'annual', 'sick', 'unpaid', 'emergency', 'maternity_paternity'
+    isPaid: boolean("is_paid").default(true).notNull(),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    daysCount: integer("days_count").notNull(),
+    reason: text("reason"),
+    status: text("status").default("pending").notNull(), // 'pending', 'approved', 'rejected'
+    approvedBy: uuid("approved_by").references(() => staffUsers.id, { onDelete: "set null" }),
+    approvedAt: timestamp("approved_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("leave_req_tenant_idx").on(t.tenantId),
+    index("leave_req_staff_idx").on(t.staffUserId),
+    index("leave_req_status_idx").on(t.status),
+    index("leave_req_dates_idx").on(t.startDate, t.endDate),
+  ]
+);
+
+export const leaveRequestsRelations = relations(leaveRequests, ({ one }) => ({
+  tenant: one(tenants, { fields: [leaveRequests.tenantId], references: [tenants.id] }),
+  staffUser: one(staffUsers, { fields: [leaveRequests.staffUserId], references: [staffUsers.id] }),
+  approver: one(staffUsers, { fields: [leaveRequests.approvedBy], references: [staffUsers.id] }),
+}));
+
+// 30. payroll_runs
+export const payrollRuns = pgTable(
+  "payroll_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    branchId: uuid("branch_id")
+      .references(() => branches.id, { onDelete: "set null" }),
+    month: text("month").notNull(), // 'YYYY-MM'
+    status: text("status").default("Draft").notNull(), // 'Draft', 'Approved', 'Paid'
+    totalGross: decimal("total_gross", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    totalDeductions: decimal("total_deductions", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    totalNet: decimal("total_net", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    generatedBy: uuid("generated_by").references(() => staffUsers.id, { onDelete: "set null" }),
+    generatedAt: timestamp("generated_at").defaultNow().notNull(),
+    approvedBy: uuid("approved_by").references(() => staffUsers.id, { onDelete: "set null" }),
+    approvedAt: timestamp("approved_at"),
+    paidAt: timestamp("paid_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    unique("payroll_runs_tenant_branch_month_unique").on(t.tenantId, t.branchId, t.month),
+    index("payroll_runs_tenant_idx").on(t.tenantId),
+    index("payroll_runs_branch_idx").on(t.branchId),
+    index("payroll_runs_month_idx").on(t.month),
+    index("payroll_runs_status_idx").on(t.status),
+  ]
+);
+
+export const payrollRunsRelations = relations(payrollRuns, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [payrollRuns.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [payrollRuns.branchId], references: [branches.id] }),
+  generator: one(staffUsers, { fields: [payrollRuns.generatedBy], references: [staffUsers.id] }),
+  approver: one(staffUsers, { fields: [payrollRuns.approvedBy], references: [staffUsers.id] }),
+  items: many(payrollItems),
+}));
+
+// 31. payroll_items
+export const payrollItems = pgTable(
+  "payroll_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    payrollRunId: uuid("payroll_run_id")
+      .notNull()
+      .references(() => payrollRuns.id, { onDelete: "cascade" }),
+    staffUserId: uuid("staff_user_id")
+      .notNull()
+      .references(() => staffUsers.id, { onDelete: "cascade" }),
+    basicSalary: decimal("basic_salary", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    totalAllowances: decimal("total_allowances", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    grossSalary: decimal("gross_salary", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    unpaidDays: integer("unpaid_days").default(0).notNull(),
+    unpaidDeduction: decimal("unpaid_deduction", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    standardDeductions: decimal("standard_deductions", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    netSalary: decimal("net_salary", { precision: 12, scale: 2 }).default("0.00").notNull(),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("payroll_items_run_idx").on(t.payrollRunId),
+    index("payroll_items_staff_idx").on(t.staffUserId),
+  ]
+);
+
+export const payrollItemsRelations = relations(payrollItems, ({ one }) => ({
+  payrollRun: one(payrollRuns, { fields: [payrollItems.payrollRunId], references: [payrollRuns.id] }),
+  staffUser: one(staffUsers, { fields: [payrollItems.staffUserId], references: [staffUsers.id] }),
+}));
 

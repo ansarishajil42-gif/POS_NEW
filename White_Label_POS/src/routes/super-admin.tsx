@@ -24,6 +24,14 @@ import {
     FileText,
     FileSpreadsheet,
     Download,
+    Search,
+    ChevronLeft,
+    ChevronRight,
+    Filter,
+    RotateCcw,
+    Link2,
+    Loader2,
+    ExternalLink,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import {
@@ -85,8 +93,13 @@ import {
     recordTenantPaymentServerFn,
     getTenantPaymentHistoryServerFn,
     updateTenantPaymentServerFn,
-    updateTenantDueDateServerFn
+    updateTenantDueDateServerFn,
+    getTenantInvoicesServerFn,
+    createTenantInvoicePaymentLinkServerFn
 } from "@/lib/super-admin-server";
+
+import { generateSubscriptionInvoicePdf } from "@/lib/subscription-invoice-pdf";
+import { SUBSCRIPTION_PLANS, calculatePlanPricing, getPlan } from "@/lib/subscription-plans";
 
 export const Route = createFileRoute("/super-admin")({
     beforeLoad: async () => {
@@ -96,13 +109,14 @@ export const Route = createFileRoute("/super-admin")({
         if (role !== "Super Admin") throw redirect({ to: roleRoutes[role] });
     },
     loader: async () => {
-        const [tenantsRes, branchesRes, taxRes, analyticsRes, platformRes, billingRes] = await Promise.all([
+        const [tenantsRes, branchesRes, taxRes, analyticsRes, platformRes, billingRes, invoicesRes] = await Promise.all([
             getTenantsServerFn(),
             getBranchesServerFn(),
             getGlobalTaxSettingsServerFn(),
             getAnalyticsServerFn(),
             getPlatformSettingsServerFn(),
-            getBillingOverviewServerFn()
+            getBillingOverviewServerFn(),
+            getTenantInvoicesServerFn()
         ]);
         return {
             initialTenants: tenantsRes.success ? tenantsRes.tenants : [],
@@ -110,9 +124,11 @@ export const Route = createFileRoute("/super-admin")({
             taxSettings: taxRes.success ? taxRes : { vatRate: "0", inclusive: false },
             analytics: analyticsRes.success ? analyticsRes : { totalGmv: 0, systemLogs: [], platformSeries: [] },
             platformSettings: platformRes.success && platformRes.data ? platformRes.data : { currency: "AED", timezone: "Asia/Dubai", dateFormat: "DD/MM/YYYY" },
-            billingData: billingRes.success ? billingRes : { overview: { totalTenants: 0, totalRevenueCollected: 0, overdueCount: 0, dueSoonCount: 0, totalOverdueAmount: 0 }, tenants: [] }
+            billingData: billingRes.success ? billingRes : { overview: { totalTenants: 0, totalRevenueCollected: 0, overdueCount: 0, dueSoonCount: 0, totalOverdueAmount: 0 }, tenants: [] },
+            initialInvoices: invoicesRes.success && invoicesRes.invoices ? invoicesRes.invoices : []
         };
     },
+
     head: () => ({
         meta: [
             { title: "Super Admin Portal Demo â€” cloudynationpos" },
@@ -141,9 +157,49 @@ function SuperAdmin() {
     const [activeNavSection, setActiveNavSection] = useState<string>("tenants");
     const [selectedReportTenantId, setSelectedReportTenantId] = useState("all");
     const [tenants, setTenants] = useState<any[]>(loaderData.initialTenants);
+    const [invoices, setInvoices] = useState<any[]>(loaderData.initialInvoices || []);
+    const [billingSubTab, setBillingSubTab] = useState<"subscriptions" | "invoices">("subscriptions");
+    const [invoiceSearch, setInvoiceSearch] = useState("");
+    const [invoiceStatusFilter, setInvoiceStatusFilter] = useState("all");
+    const [invoicePlanFilter, setInvoicePlanFilter] = useState("all");
+    const [invoicePage, setInvoicePage] = useState(1);
+    const [generatingLinkInvoiceId, setGeneratingLinkInvoiceId] = useState<string | null>(null);
+    const invoicePageSize = 10;
+
+
+    const filteredInvoices = useMemo(() => {
+        return invoices.filter((inv: any) => {
+            if (invoiceSearch.trim()) {
+                const q = invoiceSearch.toLowerCase().trim();
+                const numMatch = inv.invoiceNumber?.toLowerCase().includes(q);
+                const tenantMatch = inv.tenantName?.toLowerCase().includes(q);
+                const subMatch = inv.tenantSubdomain?.toLowerCase().includes(q);
+                if (!numMatch && !tenantMatch && !subMatch) return false;
+            }
+            if (invoiceStatusFilter !== "all") {
+                if (invoiceStatusFilter === "paid") {
+                    if (inv.paymentStatus !== "paid" && inv.paymentStatus !== "manual_paid") return false;
+                } else if (invoiceStatusFilter === "pending") {
+                    if (inv.paymentStatus !== "pending_gateway_integration") return false;
+                } else if (invoiceStatusFilter === "overdue") {
+                    if (inv.paymentStatus !== "overdue") return false;
+                }
+            }
+            if (invoicePlanFilter !== "all") {
+                if (inv.planName?.toLowerCase() !== invoicePlanFilter.toLowerCase()) return false;
+            }
+            return true;
+        });
+    }, [invoices, invoiceSearch, invoiceStatusFilter, invoicePlanFilter]);
+
+    const totalInvoicePages = Math.max(1, Math.ceil(filteredInvoices.length / invoicePageSize));
+    const currentInvoicePage = Math.min(invoicePage, totalInvoicePages);
+    const invoiceStartIndex = (currentInvoicePage - 1) * invoicePageSize;
+    const paginatedInvoices = filteredInvoices.slice(invoiceStartIndex, invoiceStartIndex + invoicePageSize);
+
     const [open, setOpen] = useState(false);
     const [form, setForm] = useState({ 
-        name: "", subdomain: "", plan: "Starter", trn: "", outlets: 0, tills: 0,
+        name: "", subdomain: "", plan: "Starter", billingCycle: "monthly", customDays: 30, trn: "", outlets: 1, tills: 3,
         adminName: "", adminEmail: "", adminPhone: "", adminAddress: "", adminPassword: ""
     });
     const [vatRate, setVatRate] = useState(loaderData.taxSettings.vatRate);
@@ -162,7 +218,9 @@ function SuperAdmin() {
     useEffect(() => {
         setTenants(loaderData.initialTenants);
         setBranches(loaderData.initialBranches);
+        setInvoices(loaderData.initialInvoices || []);
     }, [loaderData]);
+
     
     // Manage Branches dialog state
     const [manageTenant, setManageTenant] = useState<any | null>(null);
@@ -695,6 +753,62 @@ function SuperAdmin() {
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-1.5">
+                                    <Label htmlFor="tplan">Subscription Plan</Label>
+                                    <Select
+                                        value={form.plan}
+                                        onValueChange={(val) => {
+                                            const pConfig = getPlan(val);
+                                            setForm({
+                                                ...form,
+                                                plan: val,
+                                                outlets: pConfig.entitlements.outletLimit,
+                                                tills: pConfig.entitlements.tillLimit,
+                                            });
+                                        }}
+                                    >
+                                        <SelectTrigger id="tplan" className="w-full">
+                                            <SelectValue placeholder="Select Plan" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="Starter">Starter (AED 899/mo)</SelectItem>
+                                            <SelectItem value="Growth">Growth (AED 1,690/mo)</SelectItem>
+                                            <SelectItem value="Enterprise">Enterprise (Custom)</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="tbilling">Billing Frequency</Label>
+                                    <Select
+                                        value={form.billingCycle}
+                                        onValueChange={(val) => setForm({ ...form, billingCycle: val })}
+                                    >
+                                        <SelectTrigger id="tbilling" className="w-full">
+                                            <SelectValue placeholder="Billing Frequency" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="monthly">Monthly</SelectItem>
+                                            <SelectItem value="yearly">Annual (15% Savings)</SelectItem>
+                                            <SelectItem value="custom">Custom (Days)</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </div>
+
+                            {form.billingCycle === "custom" && (
+                                <div className="space-y-1.5">
+                                    <Label htmlFor="tcustomdays">Custom Duration (Days)</Label>
+                                    <Input
+                                        id="tcustomdays"
+                                        type="number"
+                                        min={1}
+                                        value={form.customDays}
+                                        onChange={(e) => setForm({ ...form, customDays: Number(e.target.value) })}
+                                    />
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1.5">
                                     <Label htmlFor="touts">Outlet limit</Label>
                                     <Input
                                         id="touts"
@@ -723,6 +837,22 @@ function SuperAdmin() {
                                     onChange={(e) => setForm({ ...form, trn: e.target.value })}
                                 />
                             </div>
+
+                            {(() => {
+                                const pricing = calculatePlanPricing(form.plan, form.billingCycle as any, form.customDays);
+                                return (
+                                    <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs space-y-1">
+                                        <div className="flex justify-between font-bold text-ink">
+                                            <span>{form.plan} Plan ({form.billingCycle === "yearly" ? "Annual" : form.billingCycle === "custom" ? `${form.customDays} Days` : "Monthly"})</span>
+                                            <span>AED {pricing.totalAmount.toFixed(2)} (incl. 5% VAT)</span>
+                                        </div>
+                                        <p className="text-muted-foreground">
+                                            Initial subscription invoice will be issued with status <span className="font-semibold text-amber-600 dark:text-amber-400">"Pending Gateway Integration"</span>.
+                                        </p>
+                                    </div>
+                                );
+                            })()}
+
                             <div className="pt-2 pb-1 border-t mt-2">
                                 <p className="text-xs font-semibold uppercase text-muted-foreground mb-3">Primary Admin Setup</p>
                                 <div className="space-y-3">
@@ -753,8 +883,8 @@ function SuperAdmin() {
                                 </div>
                             </div>
                             <p className="rounded-lg bg-surface-2 p-3 text-xs text-muted-foreground">
-                                Tax template applied on creation: UAE VAT {vatRate}% Â·{" "}
-                                {inclusive ? "inclusive" : "exclusive"} pricing Â· AED
+                                Tax template applied on creation: UAE VAT {vatRate}% ·{" "}
+                                {inclusive ? "inclusive" : "exclusive"} pricing · AED
                             </p>
                         </div>
                         <DialogFooter>
@@ -778,6 +908,10 @@ function SuperAdmin() {
                                             name: form.name,
                                             subdomain: form.subdomain || form.name.toLowerCase().replace(/[^a-z0-9]/g, ''),
                                             plan: form.plan,
+                                            billingCycle: form.billingCycle,
+                                            customDays: form.customDays,
+                                            outlets: form.outlets,
+                                            tills: form.tills,
                                             trn: form.trn,
                                             adminName: form.adminName,
                                             adminEmail: form.adminEmail,
@@ -789,9 +923,9 @@ function SuperAdmin() {
 
                                     if (res.success) {
                                         router.invalidate();
-                                        setForm({ name: "", subdomain: "", plan: "Starter", outlets: 0, tills: 0, trn: "", adminName: "", adminEmail: "", adminPhone: "", adminAddress: "", adminPassword: "" });
+                                        setForm({ name: "", subdomain: "", plan: "Starter", billingCycle: "monthly", customDays: 30, outlets: 1, tills: 3, trn: "", adminName: "", adminEmail: "", adminPhone: "", adminAddress: "", adminPassword: "" });
                                         setOpen(false);
-                                        toast.success("Tenant provisioned", { description: "Trial environment is live." });
+                                        toast.success("Tenant provisioned", { description: "Subscription invoice generated & trial environment is live." });
                                     } else {
                                         toast.error(res.error || "Failed to provision tenant");
                                     }
@@ -800,16 +934,17 @@ function SuperAdmin() {
                                 Create tenant
                             </Button>
                         </DialogFooter>
+
                     </DialogContent>
                 </Dialog>
                 </div>
             }
         >
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <StatCard label="Active tenants" value={String(totals.tenants)} delta={undefined} icon={Building2} />
-                <StatCard label="Outlets on platform" value={String(totals.outlets)} delta={undefined} icon={ShieldCheck} tone="success" />
-                <StatCard label="Active tills" value={String(totals.tills)} delta={undefined} icon={Monitor} />
-                <StatCard label="Monthly orders" value={`${totals.orders}`} delta={undefined} icon={Activity} tone="accent" />
+                <StatCard label="Active tenants" value={String(totals.tenants)} icon={Building2} />
+                <StatCard label="Outlets on platform" value={String(totals.outlets)} icon={ShieldCheck} tone="success" />
+                <StatCard label="Active tills" value={String(totals.tills)} icon={Monitor} />
+                <StatCard label="Monthly orders" value={`${totals.orders}`} icon={Activity} tone="accent" />
             </div>
 
             <Tabs value={activeNavSection} onValueChange={setActiveNavSection} className="mt-8">
@@ -843,7 +978,7 @@ function SuperAdmin() {
                                     </Badge>
                                 </TableCell>
                                 <TableCell className="p-5">
-                                    <span className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1 text-[11px] uppercase tracking-wider font-extrabold shadow-sm ${statusTone[t.status]}`}>
+                                    <span className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1 text-[11px] uppercase tracking-wider font-extrabold shadow-sm ${statusTone[t.status as Tenant["status"]] || "bg-surface-2 text-ink border-border"}`}>
                                         <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70"></span>
                                         {t.status}
                                     </span>
@@ -989,7 +1124,28 @@ function SuperAdmin() {
                         />
                     </div>
 
+                    {/* Billing Sub-Tab Switcher */}
+                    <div className="flex items-center gap-2 mb-6">
+                        <Button
+                            variant={billingSubTab === "subscriptions" ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setBillingSubTab("subscriptions")}
+                            className="rounded-xl font-bold text-xs shadow-sm"
+                        >
+                            <Building2 className="mr-1.5 h-3.5 w-3.5" /> Client Subscriptions ({loaderData.billingData.tenants.length})
+                        </Button>
+                        <Button
+                            variant={billingSubTab === "invoices" ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setBillingSubTab("invoices")}
+                            className="rounded-xl font-bold text-xs shadow-sm"
+                        >
+                            <Receipt className="mr-1.5 h-3.5 w-3.5" /> Subscription Invoices ({invoices.length})
+                        </Button>
+                    </div>
+
                     {/* Per-Tenant Billing Table */}
+                    {billingSubTab === "subscriptions" && (
                     <div className="panel p-6">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
                             <div>
@@ -1141,6 +1297,300 @@ function SuperAdmin() {
                             </Table>
                         </div>
                     </div>
+                    )}
+
+                    {/* Subscription Invoices Sub-View */}
+                    {billingSubTab === "invoices" && (
+                        <div className="panel p-6 space-y-4">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                <div>
+                                    <div className="flex items-center gap-2">
+                                        <h2 className="text-base font-bold text-ink">Subscription Tax Invoices</h2>
+                                        <Badge variant="outline" className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 text-[10px] font-bold uppercase">
+                                            Mamo Pay Integration Pending
+                                        </Badge>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                        Official tax invoices generated for client plan subscriptions. Unpaid invoices reflect pending online gateway connection.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Search & Filter Toolbar */}
+                            <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3 bg-surface-2/60 p-3 rounded-2xl border border-border">
+                                <div className="relative flex-1">
+                                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                                    <Input
+                                        placeholder="Search by invoice ref, tenant name, or subdomain..."
+                                        value={invoiceSearch}
+                                        onChange={(e) => {
+                                            setInvoiceSearch(e.target.value);
+                                            setInvoicePage(1);
+                                        }}
+                                        className="pl-9 h-9 text-xs rounded-xl bg-surface"
+                                    />
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <div className="w-[170px]">
+                                        <Select
+                                            value={invoiceStatusFilter}
+                                            onValueChange={(val) => {
+                                                setInvoiceStatusFilter(val);
+                                                setInvoicePage(1);
+                                            }}
+                                        >
+                                            <SelectTrigger className="h-9 text-xs rounded-xl bg-surface">
+                                                <SelectValue placeholder="All Statuses" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="all">All Statuses</SelectItem>
+                                                <SelectItem value="paid">Paid & Settled</SelectItem>
+                                                <SelectItem value="pending">Pending Gateway</SelectItem>
+                                                <SelectItem value="overdue">Overdue</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+
+                                    <div className="w-[140px]">
+                                        <Select
+                                            value={invoicePlanFilter}
+                                            onValueChange={(val) => {
+                                                setInvoicePlanFilter(val);
+                                                setInvoicePage(1);
+                                            }}
+                                        >
+                                            <SelectTrigger className="h-9 text-xs rounded-xl bg-surface">
+                                                <SelectValue placeholder="All Plans" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="all">All Plans</SelectItem>
+                                                <SelectItem value="Starter">Starter</SelectItem>
+                                                <SelectItem value="Growth">Growth</SelectItem>
+                                                <SelectItem value="Enterprise">Enterprise</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+
+                                    {(invoiceSearch || invoiceStatusFilter !== "all" || invoicePlanFilter !== "all") && (
+                                        <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            className="h-9 px-2.5 text-xs text-muted-foreground hover:text-ink rounded-xl"
+                                            onClick={() => {
+                                                setInvoiceSearch("");
+                                                setInvoiceStatusFilter("all");
+                                                setInvoicePlanFilter("all");
+                                                setInvoicePage(1);
+                                            }}
+                                            title="Clear Filters"
+                                        >
+                                            <RotateCcw className="h-3.5 w-3.5 mr-1" /> Reset
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Invoices Table */}
+                            <div className="overflow-x-auto w-full rounded-2xl border border-border">
+                                <Table className="w-full">
+                                    <TableHeader className="bg-surface-2/80">
+                                        <TableRow className="hover:bg-transparent">
+                                            <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Invoice Ref</TableHead>
+                                            <TableHead className="min-w-[160px] py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Tenant</TableHead>
+                                            <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Plan / Cycle</TableHead>
+                                            <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Coverage Period</TableHead>
+                                            <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Total (AED)</TableHead>
+                                            <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Payment Status</TableHead>
+                                            <TableHead className="py-4 text-xs font-bold uppercase tracking-wider text-muted-foreground">Gateway</TableHead>
+                                            <TableHead className="py-4 text-right text-xs font-bold uppercase tracking-wider text-muted-foreground">Actions</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {paginatedInvoices.length === 0 ? (
+                                            <TableRow>
+                                                <TableCell colSpan={8} className="text-center py-10 text-muted-foreground font-medium">
+                                                    {filteredInvoices.length === 0 && (invoiceSearch || invoiceStatusFilter !== "all" || invoicePlanFilter !== "all")
+                                                        ? "No subscription invoices match the selected filters."
+                                                        : "No subscription invoices found. New invoices are automatically created when onboarding tenants."}
+                                                </TableCell>
+                                            </TableRow>
+                                        ) : (
+                                            paginatedInvoices.map((inv: any) => {
+                                                const isPaid = inv.paymentStatus === "paid" || inv.paymentStatus === "manual_paid";
+                                                const isPendingGateway = inv.paymentStatus === "pending_gateway_integration";
+                                                const isOverdue = inv.paymentStatus === "overdue";
+
+                                                return (
+                                                    <TableRow key={inv.id} className="group hover:bg-primary/[0.03] transition-colors">
+                                                        <TableCell className="p-4 font-mono text-xs font-extrabold text-ink">
+                                                            {inv.invoiceNumber}
+                                                        </TableCell>
+                                                        <TableCell className="p-4">
+                                                            <div className="text-sm font-extrabold text-ink">{inv.tenantName}</div>
+                                                            <div className="text-xs text-muted-foreground">{inv.tenantSubdomain}.cloudynationpos.com</div>
+                                                        </TableCell>
+                                                        <TableCell className="p-4">
+                                                            <Badge variant="secondary" className="rounded-xl px-2.5 py-0.5 text-[11px] uppercase tracking-wider font-extrabold">
+                                                                {inv.planName}
+                                                            </Badge>
+                                                            <div className="text-xs text-muted-foreground mt-0.5 capitalize">
+                                                                {inv.billingCycle.replace(/_/g, " ")} ({inv.durationMonths} mo)
+                                                            </div>
+                                                        </TableCell>
+                                                        <TableCell className="p-4 text-xs text-muted-foreground font-medium">
+                                                            {formatDateString(inv.periodStart)} to {formatDateString(inv.periodEnd)}
+                                                        </TableCell>
+                                                        <TableCell className="p-4">
+                                                            <div className="text-sm font-extrabold text-ink">
+                                                                AED {Number(inv.totalAmount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                            </div>
+                                                            <div className="text-[11px] text-muted-foreground">
+                                                                Subtotal: {inv.subtotal} + VAT: {inv.vatAmount}
+                                                            </div>
+                                                        </TableCell>
+                                                        <TableCell className="p-4">
+                                                            {isPaid && (
+                                                                <span className="inline-flex items-center gap-1.5 rounded-xl border border-success/30 bg-success/15 px-3 py-1 text-[11px] uppercase tracking-wider font-extrabold text-success">
+                                                                    <span className="h-1.5 w-1.5 rounded-full bg-success"></span>
+                                                                    Paid & Settled
+                                                                </span>
+                                                            )}
+                                                            {isPendingGateway && (
+                                                                <span className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/15 px-3 py-1 text-[11px] uppercase tracking-wider font-extrabold text-amber-700 dark:text-amber-400">
+                                                                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                                                                    Pending Gateway Integration
+                                                                </span>
+                                                            )}
+                                                            {isOverdue && (
+                                                                <span className="inline-flex items-center gap-1.5 rounded-xl border border-destructive/30 bg-destructive/15 px-3 py-1 text-[11px] uppercase tracking-wider font-extrabold text-destructive">
+                                                                    <span className="h-1.5 w-1.5 rounded-full bg-destructive"></span>
+                                                                    Overdue
+                                                                </span>
+                                                            )}
+                                                        </TableCell>
+                                                        <TableCell className="p-4 text-xs font-semibold text-muted-foreground">
+                                                            {inv.mamoPaymentLinkId ? (
+                                                                <Badge variant="outline" className="rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[11px] font-bold">
+                                                                    Link Ready
+                                                                </Badge>
+                                                            ) : (
+                                                                <span className="inline-flex items-center gap-1 rounded-lg bg-surface-2 px-2 py-1 text-[11px]">
+                                                                    Mamo Pay (Live)
+                                                                </span>
+                                                            )}
+                                                        </TableCell>
+                                                        <TableCell className="p-4 text-right">
+                                                            <div className="flex items-center justify-end gap-2">
+                                                                {!isPaid && (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="default"
+                                                                        disabled={generatingLinkInvoiceId === inv.id}
+                                                                        className="rounded-xl h-8 text-xs font-bold shadow-sm bg-lime-500 hover:bg-lime-600 text-slate-950 transition-all hover:-translate-y-0.5"
+                                                                        onClick={async () => {
+                                                                            setGeneratingLinkInvoiceId(inv.id);
+                                                                            try {
+                                                                                const res = await createTenantInvoicePaymentLinkServerFn({
+                                                                                    data: { invoiceId: inv.id }
+                                                                                });
+                                                                                if (res.success && res.paymentUrl) {
+                                                                                    toast.success("Mamo Pay payment link generated successfully!");
+                                                                                    router.invalidate();
+                                                                                } else {
+                                                                                    toast.error(res.error || "Failed to generate payment link");
+                                                                                }
+                                                                            } catch (e: any) {
+                                                                                toast.error("Failed to generate payment link: " + e.message);
+                                                                            } finally {
+                                                                                setGeneratingLinkInvoiceId(null);
+                                                                            }
+                                                                        }}
+                                                                    >
+                                                                        {generatingLinkInvoiceId === inv.id ? (
+                                                                            <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Generating...</>
+                                                                        ) : (
+                                                                            <><Link2 className="mr-1.5 h-3.5 w-3.5" /> Generate Link</>
+                                                                        )}
+                                                                    </Button>
+                                                                )}
+
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    className="rounded-xl h-8 text-xs font-semibold hover:bg-primary hover:text-primary-foreground transition-all shadow-sm"
+                                                                    onClick={() => {
+                                                                        try {
+                                                                            generateSubscriptionInvoicePdf(inv);
+                                                                            toast.success("Subscription invoice PDF downloaded!");
+                                                                        } catch (e: any) {
+                                                                            toast.error("Failed to export invoice PDF: " + e.message);
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    <Download className="mr-1.5 h-3.5 w-3.5 text-primary group-hover:text-primary-foreground" /> PDF
+                                                                </Button>
+                                                            </div>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                );
+                                            })
+                                        )}
+                                    </TableBody>
+                                </Table>
+                            </div>
+
+                            {/* Pagination Footer */}
+                            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground px-1 pt-1">
+                                <div>
+                                    {filteredInvoices.length > 0 ? (
+                                        <>
+                                            Showing{" "}
+                                            <span className="font-semibold text-ink">
+                                                {invoiceStartIndex + 1}
+                                            </span>{" "}
+                                            to{" "}
+                                            <span className="font-semibold text-ink">
+                                                {Math.min(invoiceStartIndex + invoicePageSize, filteredInvoices.length)}
+                                            </span>{" "}
+                                            of <span className="font-semibold text-ink">{filteredInvoices.length}</span> invoices
+                                        </>
+                                    ) : (
+                                        <span>0 invoices</span>
+                                    )}
+                                </div>
+
+                                {totalInvoicePages > 1 && (
+                                    <div className="flex items-center gap-1.5">
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="h-8 px-2.5 text-xs font-semibold rounded-xl"
+                                            disabled={currentInvoicePage <= 1}
+                                            onClick={() => setInvoicePage((prev) => Math.max(prev - 1, 1))}
+                                        >
+                                            <ChevronLeft className="h-3.5 w-3.5 mr-1" /> Previous
+                                        </Button>
+
+                                        <span className="px-2 font-mono text-xs font-semibold text-ink">
+                                            Page {currentInvoicePage} of {totalInvoicePages}
+                                        </span>
+
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="h-8 px-2.5 text-xs font-semibold rounded-xl"
+                                            disabled={currentInvoicePage >= totalInvoicePages}
+                                            onClick={() => setInvoicePage((prev) => Math.min(prev + 1, totalInvoicePages))}
+                                        >
+                                            Next <ChevronRight className="h-3.5 w-3.5 ml-1" />
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                 </TabsContent>
 
                 <TabsContent value="analytics" className="mt-5">

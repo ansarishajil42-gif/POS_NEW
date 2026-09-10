@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getSessionServerFn } from "./auth-server";
 import bcrypt from "bcryptjs";
 import { db } from "../server/db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, asc, or, ilike, sql } from "drizzle-orm";
 import {
   branches,
   stockLevels,
@@ -33,115 +33,267 @@ async function getStoreManagerContext() {
   };
 }
 
-export const getStoreManagerDataFn = createServerFn({ method: "GET" }).handler(async () => {
-  try {
-    const { tenantId, branchId } = await getStoreManagerContext();
+export const getLocalStockPaginatedFn = createServerFn({ method: "GET" })
+  .validator((d?: { page?: number; limit?: number; search?: string; category?: string }) => d)
+  .handler(async ({ data }) => {
+    try {
+      const { branchId } = await getStoreManagerContext();
 
-    // 1. Get branch info
-    const branchInfo = await db.query.branches.findFirst({
-      where: eq(branches.id, branchId),
-    });
+      const page = Math.max(1, Number(data?.page) || 1);
+      const limit = Math.max(1, Math.min(200, Number(data?.limit) || 50));
+      const offset = (page - 1) * limit;
 
-    // 2. Get local stock & products
-    const localStock = await db
-      .select({
-        id: stockLevels.id,
-        stock: stockLevels.stock,
-        priceOverride: stockLevels.priceOverride,
-        productId: products.id,
-        productName: products.name,
-        sku: products.barcode, // Fallback sku to barcode
-        barcode: products.barcode,
-        category: products.category,
-        unit: products.unit,
-        basePrice: products.salePrice, // salePrice instead of basePrice
-      })
-      .from(stockLevels)
-      .innerJoin(products, eq(stockLevels.productId, products.id))
-      .where(eq(stockLevels.branchId, branchId));
+      const conditions = [eq(stockLevels.branchId, branchId)];
 
-    // 3. Get recent shifts (today's shifts)
-    const recentShifts = await db.query.shifts.findMany({
-      where: eq(shifts.branchId, branchId),
-      with: {
-        cashier: true,
-      },
-      orderBy: [desc(shifts.openedAt)],
-      limit: 20,
-    });
+      if (data?.search && data.search.trim()) {
+        const q = `%${data.search.trim()}%`;
+        conditions.push(
+          or(
+            ilike(products.name, q),
+            ilike(products.barcode, q),
+            ilike(products.sku, q)
+          )!
+        );
+      }
 
-    // 4. Get recent orders (to compute sales/trends)
-    const recentOrders = await db.query.orders.findMany({
-      where: eq(orders.branchId, branchId),
-      orderBy: [desc(orders.createdAt)],
-      limit: 100, // Just a sample for the dashboard
-      with: {
-        items: {
-          with: {
-            product: true,
+      if (data?.category && data.category !== "All Categories") {
+        conditions.push(eq(products.category, data.category));
+      }
+
+      const whereClause = and(...conditions);
+
+      const [items, countRes] = await Promise.all([
+        db
+          .select({
+            id: stockLevels.id,
+            stock: stockLevels.stock,
+            priceOverride: stockLevels.priceOverride,
+            productId: products.id,
+            productName: products.name,
+            sku: products.barcode,
+            barcode: products.barcode,
+            category: products.category,
+            unit: products.unit,
+            basePrice: products.salePrice,
+          })
+          .from(stockLevels)
+          .innerJoin(products, eq(stockLevels.productId, products.id))
+          .where(whereClause)
+          .orderBy(asc(products.name))
+          .limit(limit)
+          .offset(offset),
+        db
+          .select({ count: sql<number>`count(*)::int` })
+          .from(stockLevels)
+          .innerJoin(products, eq(stockLevels.productId, products.id))
+          .where(whereClause),
+      ]);
+
+      const total = Number(countRes[0]?.count || 0);
+      const totalPages = Math.ceil(total / limit);
+
+      return {
+        success: true,
+        items: JSON.parse(JSON.stringify(items)),
+        total,
+        page,
+        limit,
+        totalPages,
+      };
+    } catch (e: any) {
+      console.error("getLocalStockPaginatedFn error:", e);
+      return {
+        success: false,
+        error: e.message || String(e),
+        items: [],
+        total: 0,
+        page: 1,
+        limit: 50,
+        totalPages: 0,
+      };
+    }
+  });
+
+export const getLocalStockFn = getLocalStockPaginatedFn;
+
+export const getStoreManagerDataFn = createServerFn({ method: "GET" })
+  .validator((d?: { page?: number; limit?: number; search?: string; category?: string }) => d)
+  .handler(async ({ data }) => {
+    try {
+      const { tenantId, branchId } = await getStoreManagerContext();
+
+      // 1. Get branch info
+      const branchInfo = await db.query.branches.findFirst({
+        where: eq(branches.id, branchId),
+      });
+
+      // 2. Get local stock & products (Paginated with LIMIT/OFFSET + separate COUNT query)
+      const page = Math.max(1, Number(data?.page) || 1);
+      const limit = Math.max(1, Math.min(200, Number(data?.limit) || 50));
+      const offset = (page - 1) * limit;
+
+      const stockConditions = [eq(stockLevels.branchId, branchId)];
+      if (data?.search && data.search.trim()) {
+        const q = `%${data.search.trim()}%`;
+        stockConditions.push(
+          or(
+            ilike(products.name, q),
+            ilike(products.barcode, q),
+            ilike(products.sku, q)
+          )!
+        );
+      }
+      if (data?.category && data.category !== "All Categories") {
+        stockConditions.push(eq(products.category, data.category));
+      }
+      const stockWhere = and(...stockConditions);
+
+      const [localStock, countRes, lowStockCountRes, distinctCatsRes, selectableProducts] = await Promise.all([
+        db
+          .select({
+            id: stockLevels.id,
+            stock: stockLevels.stock,
+            priceOverride: stockLevels.priceOverride,
+            productId: products.id,
+            productName: products.name,
+            sku: products.barcode,
+            barcode: products.barcode,
+            category: products.category,
+            unit: products.unit,
+            basePrice: products.salePrice,
+          })
+          .from(stockLevels)
+          .innerJoin(products, eq(stockLevels.productId, products.id))
+          .where(stockWhere)
+          .orderBy(asc(products.name))
+          .limit(limit)
+          .offset(offset),
+        db
+          .select({ count: sql<number>`count(*)::int` })
+          .from(stockLevels)
+          .innerJoin(products, eq(stockLevels.productId, products.id))
+          .where(stockWhere),
+        db
+          .select({ count: sql<number>`count(*)::int` })
+          .from(stockLevels)
+          .where(and(eq(stockLevels.branchId, branchId), sql`${stockLevels.stock} < 20`)),
+        db
+          .selectDistinct({ category: products.category })
+          .from(stockLevels)
+          .innerJoin(products, eq(stockLevels.productId, products.id))
+          .where(eq(stockLevels.branchId, branchId)),
+        db
+          .select({
+            id: products.id,
+            productId: products.id,
+            name: products.name,
+            productName: products.name,
+            sku: products.barcode,
+            barcode: products.barcode,
+            category: products.category,
+            unit: products.unit,
+            basePrice: products.salePrice,
+            stock: stockLevels.stock,
+          })
+          .from(stockLevels)
+          .innerJoin(products, eq(stockLevels.productId, products.id))
+          .where(eq(stockLevels.branchId, branchId))
+          .orderBy(asc(products.name)),
+      ]);
+
+      const totalStock = Number(countRes[0]?.count || 0);
+      const lowStockCount = Number(lowStockCountRes[0]?.count || 0);
+      const categories = distinctCatsRes.map((c) => c.category).filter(Boolean);
+
+      // 3. Get recent shifts (today's shifts)
+      const recentShifts = await db.query.shifts.findMany({
+        where: eq(shifts.branchId, branchId),
+        with: {
+          cashier: true,
+        },
+        orderBy: [desc(shifts.openedAt)],
+        limit: 20,
+      });
+
+      // 4. Get recent orders (to compute sales/trends)
+      const recentOrders = await db.query.orders.findMany({
+        where: eq(orders.branchId, branchId),
+        orderBy: [desc(orders.createdAt)],
+        limit: 100, // Just a sample for the dashboard
+        with: {
+          items: {
+            with: {
+              product: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    // 4.1. Get override requests
-    const dbRequests = await db.query.priceOverrideRequests.findMany({
-      where: eq(priceOverrideRequests.branchId, branchId),
-      orderBy: [desc(priceOverrideRequests.createdAt)],
-      with: {
-        product: true,
-      },
-    });
+      // 4.1. Get override requests
+      const dbRequests = await db.query.priceOverrideRequests.findMany({
+        where: eq(priceOverrideRequests.branchId, branchId),
+        orderBy: [desc(priceOverrideRequests.createdAt)],
+        with: {
+          product: true,
+        },
+      });
 
-    // 4.2. Get branch staff
-    const dbStaff = await db.query.staffUsers.findMany({
-      where: and(eq(staffUsers.tenantId, tenantId), eq(staffUsers.branchId, branchId)),
-      columns: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        isActive: true,
-      },
-    });
+      // 4.2. Get branch staff
+      const dbStaff = await db.query.staffUsers.findMany({
+        where: and(eq(staffUsers.tenantId, tenantId), eq(staffUsers.branchId, branchId)),
+        columns: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          isActive: true,
+        },
+      });
 
-    // 4.3. Get branch tills
-    const dbTills = await db.query.tills.findMany({
-      where: and(eq(tills.tenantId, tenantId), eq(tills.branchId, branchId)),
-      orderBy: [desc(tills.createdAt)],
-    });
+      // 4.3. Get branch tills
+      const dbTills = await db.query.tills.findMany({
+        where: and(eq(tills.tenantId, tenantId), eq(tills.branchId, branchId)),
+        orderBy: [desc(tills.createdAt)],
+      });
 
-    // 5. Get permissions
-    const dbPerms = await db.query.rolePermissions.findMany({
-      where: and(
-        eq(rolePermissions.tenantId, tenantId),
-        eq(rolePermissions.role, "branch_manager"),
-      ),
-    });
+      // 5. Get permissions
+      const dbPerms = await db.query.rolePermissions.findMany({
+        where: and(
+          eq(rolePermissions.tenantId, tenantId),
+          eq(rolePermissions.role, "branch_manager"),
+        ),
+      });
 
-    const result = {
-      branch: branchInfo,
-      stock: localStock,
-      shifts: recentShifts.map((s) => {
-        const matchedTill = dbTills.find((t) => t.id === s.tillId);
-        return {
-          ...s,
-          till: matchedTill ? { name: matchedTill.name } : s.tillId ? { name: s.tillId } : null,
-        };
-      }),
-      orders: recentOrders,
-      requests: dbRequests,
-      staff: dbStaff,
-      tills: dbTills,
-      permissions: dbPerms,
-    };
+      const result = {
+        branch: branchInfo,
+        stock: localStock,
+        totalStock,
+        stockPage: page,
+        stockLimit: limit,
+        stockTotalPages: Math.ceil(totalStock / limit),
+        categories,
+        lowStockCount,
+        selectableProducts,
+        shifts: recentShifts.map((s) => {
+          const matchedTill = dbTills.find((t) => t.id === s.tillId);
+          return {
+            ...s,
+            till: matchedTill ? { name: matchedTill.name } : s.tillId ? { name: s.tillId } : null,
+          };
+        }),
+        orders: recentOrders,
+        requests: dbRequests,
+        staff: dbStaff,
+        tills: dbTills,
+        permissions: dbPerms,
+      };
 
-    return JSON.parse(JSON.stringify(result));
-  } catch (e: any) {
-    console.error("BACKEND CRASH IN STORE MANAGER:", e);
-    return { error: e.stack || e.message || String(e) };
-  }
-});
+      return JSON.parse(JSON.stringify(result));
+    } catch (e: any) {
+      console.error("BACKEND CRASH IN STORE MANAGER:", e);
+      return { error: e.stack || e.message || String(e) };
+    }
+  });
 
 export const requestPriceOverrideFn = createServerFn({ method: "POST" })
   .validator((d: { stockLevelId: string; requestedPrice: string }) => d)

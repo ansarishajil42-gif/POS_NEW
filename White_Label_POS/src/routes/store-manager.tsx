@@ -3,6 +3,9 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { getSessionServerFn, roleRoutes, type Role } from "@/lib/auth";
 import { DemoShell, StatCard } from "@/components/demo/DemoShell";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MySalaryView } from "@/components/payroll/MySalaryView";
+import { MyLeaveView } from "@/components/payroll/MyLeaveView";
+import { BranchFinancialReportsView } from "@/components/reports/BranchFinancialReportsView";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,6 +32,8 @@ import {
   Ban,
   Tag,
   Menu,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { aedShort, aed } from "@/lib/demo-data";
 import {
@@ -44,6 +49,7 @@ import {
 } from "recharts";
 import {
   getStoreManagerDataFn,
+  getLocalStockPaginatedFn,
   requestPriceOverrideFn,
   createOverrideRequestFn,
   createRosterShiftFn,
@@ -56,6 +62,7 @@ import {
   recordCashDropFn,
   closeShiftFn,
 } from "@/lib/store-manager-server";
+import { SearchableProductSelect } from "@/components/ui/searchable-product-select";
 import { useRouter } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/store-manager")({
@@ -167,33 +174,98 @@ function StoreManager() {
     };
   }, []);
 
+  // Local stock pagination & query states
+  const [stockPage, setStockPage] = useState((data as any)?.stockPage || 1);
+  const stockLimit = (data as any)?.stockLimit || 50;
+  const [stockTotal, setStockTotal] = useState<number>(
+    (data as any)?.totalStock !== undefined
+      ? (data as any).totalStock
+      : (data as any)?.stock?.length || 0
+  );
+  const [stockItems, setStockItems] = useState<any[]>((data as any)?.stock || []);
+  const [isStockLoading, setIsStockLoading] = useState(false);
+  const isInitialStockMount = useRef(true);
+
+  const handleFetchStock = async (targetPage: number, searchStr: string, cat?: string) => {
+    setIsStockLoading(true);
+    try {
+      const activeCat = cat !== undefined ? cat : selectedCategory;
+      const res = await getLocalStockPaginatedFn({
+        data: {
+          page: targetPage,
+          limit: stockLimit,
+          search: searchStr,
+          category: activeCat !== "All Categories" ? activeCat : undefined,
+        },
+      });
+      if (res && res.success) {
+        setStockItems(res.items || []);
+        setStockTotal(res.total || 0);
+        setStockPage(res.page || targetPage);
+      } else {
+        toast.error((res as any)?.error || "Failed to load stock");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to load stock");
+    } finally {
+      setIsStockLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if ((data as any)?.stock) {
+      setStockItems((data as any).stock);
+      setStockTotal(
+        (data as any).totalStock !== undefined
+          ? (data as any).totalStock
+          : (data as any).stock.length
+      );
+      setStockPage((data as any).stockPage || 1);
+    }
+  }, [data]);
+
+  useEffect(() => {
+    if (isInitialStockMount.current) {
+      isInitialStockMount.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      handleFetchStock(1, search, selectedCategory);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [search, selectedCategory]);
+
   const categoriesList = useMemo(() => {
+    if ((data as any)?.categories && Array.isArray((data as any).categories)) {
+      return (data as any).categories as string[];
+    }
     if (!data || !(data as any).stock) return [];
     const cats = ((data as any).stock || []).map((s: any) => s.category).filter(Boolean);
     return Array.from(new Set(cats)) as string[];
   }, [data]);
 
-  const filteredStock = useMemo(() => {
-    if (!data || !(data as any).stock) return [];
-    return ((data as any).stock || []).filter((p: any) => {
-      if (selectedCategory !== "All Categories" && p.category !== selectedCategory) {
-        return false;
-      }
-      if (search.trim() !== "") {
-        const s = search.toLowerCase().trim();
-        const nameMatch = p.productName?.toLowerCase().includes(s);
-        const skuMatch = p.sku?.toLowerCase().includes(s);
-        const barcodeMatch = p.barcode?.toLowerCase().includes(s);
-        return nameMatch || skuMatch || barcodeMatch;
-      }
-      return true;
-    });
-  }, [data, selectedCategory, search]);
+  const selectableProducts = useMemo(() => {
+    const list =
+      (data as any)?.selectableProducts ||
+      (data as any)?.stock ||
+      stockItems ||
+      [];
+    return list.map((s: any) => ({
+      id: s.productId || s.id,
+      name: s.productName || s.name,
+      sku: s.sku || s.barcode,
+      barcode: s.barcode,
+      category: s.category,
+      unit: s.unit,
+      basePrice: s.basePrice || s.salePrice,
+      stock: s.stock,
+    }));
+  }, [data, stockItems]);
 
   const selectedProduct = useMemo(() => {
-    if (!data || !(data as any).stock || !selectedProductId) return null;
-    return ((data as any).stock || []).find((s: any) => s.productId === selectedProductId) || null;
-  }, [data, selectedProductId]);
+    if (!selectedProductId) return null;
+    return selectableProducts.find((p: any) => p.id === selectedProductId) || null;
+  }, [selectableProducts, selectedProductId]);
 
   const tillsList = useMemo(() => {
     if (!data || !(data as any).tills) return [];
@@ -579,7 +651,10 @@ function StoreManager() {
     const topItems = Object.values(itemCounts)
       .sort((a: any, b: any) => b.qty - a.qty)
       .slice(0, 4);
-    const lowStock = data.stock.filter((s: any) => s.stock < 20).length;
+    const lowStock =
+      (data as any)?.lowStockCount !== undefined
+        ? (data as any).lowStockCount
+        : (data.stock || []).filter((s: any) => s.stock < 20).length;
 
     const activeTills = data.shifts.filter(
       (s: any) => s.status === "Active" || s.status === "Open",
@@ -667,6 +742,24 @@ function StoreManager() {
                   Shift & Staff
                 </TabsTrigger>
               )}
+              <TabsTrigger
+                value="salary"
+                className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+              >
+                My Salary
+              </TabsTrigger>
+              <TabsTrigger
+                value="leave"
+                className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+              >
+                My Leave
+              </TabsTrigger>
+              <TabsTrigger
+                value="reports"
+                className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+              >
+                Financial Reports
+              </TabsTrigger>
             </TabsList>
           </aside>
 
@@ -764,6 +857,11 @@ function StoreManager() {
                         className="pl-9 h-10 rounded-xl text-sm bg-surface-2 border-transparent focus:border-primary"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            handleFetchStock(1, search, selectedCategory);
+                          }
+                        }}
                       />
                     </div>
 
@@ -796,6 +894,7 @@ function StoreManager() {
                               onClick={() => {
                                 setSelectedCategory("All Categories");
                                 setIsCategoryOpen(false);
+                                handleFetchStock(1, search, "All Categories");
                               }}
                             >
                               All Categories
@@ -818,6 +917,7 @@ function StoreManager() {
                                   onClick={() => {
                                     setSelectedCategory(cat);
                                     setIsCategoryOpen(false);
+                                    handleFetchStock(1, search, cat);
                                   }}
                                 >
                                   {cat}
@@ -831,7 +931,12 @@ function StoreManager() {
                   </div>
 
                   <div className="flex flex-col gap-3 mt-4 overflow-x-auto pb-2">
-                    {filteredStock.length === 0 ? (
+                    {isStockLoading ? (
+                      <div className="flex flex-col items-center justify-center py-16 rounded-2xl border border-dashed border-border bg-surface-2/45">
+                        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary mb-3"></div>
+                        <p className="text-sm font-semibold text-ink">Loading products...</p>
+                      </div>
+                    ) : stockItems.length === 0 ? (
                       <div className="text-center py-10 rounded-2xl border border-dashed border-border bg-surface-2/45">
                         <AlertTriangle className="mx-auto h-8 w-8 text-muted-foreground animate-bounce mb-2" />
                         <p className="text-sm font-semibold text-ink">No products found</p>
@@ -840,14 +945,14 @@ function StoreManager() {
                         </p>
                       </div>
                     ) : (
-                      filteredStock.map((p: any, i: number) => {
+                      stockItems.map((p: any, i: number) => {
                         const localQty = p.stock;
                         const isLow = localQty < 20;
                         return (
                           <div
                             key={p.id}
                             className="group flex min-w-[600px] items-center justify-between rounded-2xl border border-border bg-surface p-4 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md hover:border-primary/30 animate-in fade-in slide-in-from-bottom-4"
-                            style={{ animationFillMode: "both", animationDelay: `${i * 50}ms` }}
+                            style={{ animationFillMode: "both", animationDelay: `${i * 20}ms` }}
                           >
                             <div className="flex items-center gap-4">
                               <div
@@ -931,6 +1036,55 @@ function StoreManager() {
                         );
                       })
                     )}
+                  </div>
+
+                  {/* Clean Pagination Footer */}
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-3.5 border-t border-border/50 bg-surface-2/40 text-xs text-muted-foreground rounded-2xl mt-4">
+                    <div>
+                      Showing{" "}
+                      <span className="font-semibold text-ink">
+                        {stockTotal > 0 ? (stockPage - 1) * stockLimit + 1 : 0}
+                      </span>{" "}
+                      to{" "}
+                      <span className="font-semibold text-ink">
+                        {Math.min(stockPage * stockLimit, stockTotal)}
+                      </span>{" "}
+                      of{" "}
+                      <span className="font-semibold text-ink">
+                        {stockTotal.toLocaleString()}
+                      </span>{" "}
+                      products
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="mr-2">
+                        Page <span className="font-semibold text-ink">{stockPage}</span> of{" "}
+                        <span className="font-semibold text-ink">
+                          {Math.max(1, Math.ceil(stockTotal / stockLimit))}
+                        </span>
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={stockPage <= 1 || isStockLoading}
+                        onClick={() => handleFetchStock(stockPage - 1, search, selectedCategory)}
+                        className="h-8 px-2.5 rounded-lg text-xs"
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5 mr-1" /> Prev
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={
+                          stockPage >= Math.ceil(stockTotal / stockLimit) ||
+                          isStockLoading
+                        }
+                        onClick={() => handleFetchStock(stockPage + 1, search, selectedCategory)}
+                        className="h-8 px-2.5 rounded-lg text-xs"
+                      >
+                        Next <ChevronRight className="h-3.5 w-3.5 ml-1" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1173,22 +1327,16 @@ function StoreManager() {
 
                         <div className="space-y-1.5">
                           <Label htmlFor="product-select">Product</Label>
-                          <select
-                            id="product-select"
+                          <SearchableProductSelect
+                            products={selectableProducts}
                             value={selectedProductId}
-                            onChange={(e) => {
-                              setSelectedProductId(e.target.value);
+                            onSelect={(val) => {
+                              setSelectedProductId(val);
                               setValidationErrors((prev) => ({ ...prev, productId: "" }));
                             }}
-                            className="flex h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                          >
-                            <option value="">Select a product...</option>
-                            {(data.stock || []).map((s: any) => (
-                              <option key={s.productId} value={s.productId}>
-                                {s.productName} (SKU: {s.sku}) · Stock: {s.stock}
-                              </option>
-                            ))}
-                          </select>
+                            placeholder="Search product by name, SKU or barcode..."
+                            className="h-10 rounded-xl"
+                          />
                           {validationErrors["productId"] && (
                             <p className="text-xs font-medium text-red-500">
                               {validationErrors["productId"]}
@@ -2053,6 +2201,18 @@ function StoreManager() {
                   </Dialog>
                 </>
               )}
+            </TabsContent>
+
+            <TabsContent value="salary" className="mt-0">
+              <MySalaryView />
+            </TabsContent>
+
+            <TabsContent value="leave" className="mt-0">
+              <MyLeaveView />
+            </TabsContent>
+
+            <TabsContent value="reports" className="mt-0">
+              <BranchFinancialReportsView />
             </TabsContent>
           </main>
         </Tabs>

@@ -50,6 +50,8 @@ import {
   deleteVendorServerFn,
   submitPurchaseOrderServerFn
 } from "@/lib/purchasing-server";
+import { MySalaryView } from "@/components/payroll/MySalaryView";
+import { MyLeaveView } from "@/components/payroll/MyLeaveView";
 
 export const Route = createFileRoute("/purchasing")({
   beforeLoad: async () => {
@@ -640,6 +642,8 @@ function PurchasingOfficer() {
             <TabsTrigger value="invoices" className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Vendor Invoices</TabsTrigger>
             <TabsTrigger value="ap" className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Accounts Payable</TabsTrigger>
             <TabsTrigger value="vendors" className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">Vendors</TabsTrigger>
+            <TabsTrigger value="salary" className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">My Salary</TabsTrigger>
+            <TabsTrigger value="leave" className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">My Leave</TabsTrigger>
           </TabsList>
         </aside>
 
@@ -1350,6 +1354,14 @@ function PurchasingOfficer() {
               </table>
               </div>
             </div>
+          </TabsContent>
+
+          <TabsContent value="salary" className="mt-0 space-y-5">
+            <MySalaryView />
+          </TabsContent>
+
+          <TabsContent value="leave" className="mt-0 space-y-5">
+            <MyLeaveView />
           </TabsContent>
 
         </main>
