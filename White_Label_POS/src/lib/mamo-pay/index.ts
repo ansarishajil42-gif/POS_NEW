@@ -42,6 +42,8 @@ export async function createMamoPaymentLink(
     external_id: params.externalId || undefined,
     custom_data: params.customData || undefined,
     send_customer_receipt: params.sendEmailNotification ?? true,
+    enable_tabby: true,
+    payment_methods: ["card", "wallet"],
   };
 
   // Add customer details if present
