@@ -30,9 +30,11 @@ import {
   CheckSquare,
   Wallet,
   Receipt,
+  CreditCard,
   ShoppingBag,
   List,
   File,
+  DollarSign,
   ChevronLeft
 } from 'lucide-react-native';
 
@@ -54,7 +56,9 @@ const tabIconMap: Record<string, React.ComponentType<any>> = {
   check: CheckSquare,
   wallet: Wallet,
   receipt: Receipt,
+  'credit-card': CreditCard,
   'shopping-bag': ShoppingBag,
+  'dollar-sign': DollarSign,
   list: List,
   file: File,
 };
@@ -244,12 +248,23 @@ export function BottomNav({
   );
 }
 
-export function ScreenBody({ children, style }: { children: React.ReactNode; style?: any }) {
+export function ScreenBody({
+  children,
+  style,
+  contentContainerStyle,
+  refreshControl,
+}: {
+  children: React.ReactNode;
+  style?: any;
+  contentContainerStyle?: any;
+  refreshControl?: React.ReactElement<any>;
+}) {
   return (
     <ScrollView
       style={[styles.screenBody, style]}
-      contentContainerStyle={styles.screenBodyContent}
+      contentContainerStyle={[styles.screenBodyContent, contentContainerStyle]}
       showsVerticalScrollIndicator={false}
+      refreshControl={refreshControl}
     >
       {children}
     </ScrollView>

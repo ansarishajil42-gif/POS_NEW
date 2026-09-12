@@ -19,7 +19,9 @@ import {
   TenantDetail,
   SuperAdminAnalytics,
   SuperAdminSettings,
+  SuperAdminBillingStatus,
 } from './src/components/roles/SuperAdmin';
+import { SuperAdminSubscription } from './src/components/roles/SuperAdminSubscription';
 import {
   HeadOfficeHome,
   HeadOfficeOutlets,
@@ -64,6 +66,8 @@ const roleTabs: Record<string, Tab[]> = {
   'super-admin': [
     { key: 'home', label: 'Home', icon: 'home' },
     { key: 'tenants', label: 'Tenants', icon: 'building' },
+    { key: 'billing-status', label: 'Billing Status', icon: 'dollar-sign' },
+    { key: 'subscription', label: 'Subscription', icon: 'credit-card' },
     { key: 'analytics', label: 'Analytics', icon: 'chart' },
     { key: 'settings', label: 'Tax & Currency', icon: 'wallet' },
   ],
@@ -122,6 +126,8 @@ function RoleRouter({ role }: { role: string }) {
       switch (active) {
         case 'home': return <SuperAdminHome />;
         case 'tenants': return <SuperAdminTenants onOpen={(id) => push('tenant', id)} />;
+        case 'billing-status': return <SuperAdminBillingStatus />;
+        case 'subscription': return <SuperAdminSubscription />;
         case 'analytics': return <SuperAdminAnalytics />;
         case 'settings': return <SuperAdminSettings />;
       }

@@ -41,7 +41,7 @@ export function StatCard({
   value: string;
   sub?: string;
   icon?: React.ReactNode;
-  accent?: 'brand' | 'ink' | 'amber' | 'sky';
+  accent?: 'brand' | 'ink' | 'amber' | 'sky' | 'rose';
   trend?: { dir: 'up' | 'down'; value: string };
 }) {
   const accentStyles = {
@@ -49,6 +49,7 @@ export function StatCard({
     ink: { bg: '#f1f5f9', text: '#475569' },
     amber: { bg: '#fffbeb', text: '#d97706' },
     sky: { bg: '#f0f9ff', text: '#0284c7' },
+    rose: { bg: '#fef2f2', text: '#dc2626' },
   }[accent];
 
   return (

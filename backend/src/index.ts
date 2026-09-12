@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import "dotenv/config";
+// Environment configuration reloaded
 
 // Route imports
 import authRouter from "./routes/auth.js";
@@ -21,6 +22,7 @@ import inventoryRouter from "./routes/inventory.js";
 import posRouter from "./routes/pos.js";
 import { aggregatorSftpRouter } from "./routes/aggregator-sftp.js";
 import webhooksRouter from "./routes/webhooks.js";
+import superAdminRouter from "./routes/super-admin.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -66,6 +68,7 @@ app.use("/api/inventory", inventoryRouter);
 app.use("/api/pos", posRouter);
 app.use("/api/aggregator-sftp", aggregatorSftpRouter);
 app.use("/api/webhooks", webhooksRouter);
+app.use("/api/super-admin", superAdminRouter);
 
 
 // Error handling middleware

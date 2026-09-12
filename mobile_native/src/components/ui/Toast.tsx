@@ -1,17 +1,18 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Text, StyleSheet, View, TouchableOpacity, Dimensions } from 'react-native';
-import { CheckCircle, XCircle, Info, X } from 'lucide-react-native';
+import { CheckCircle, XCircle, Info, X, AlertTriangle } from 'lucide-react-native';
 
-export type ToastType = 'success' | 'error' | 'info';
+export type ToastType = 'success' | 'error' | 'info' | 'warn' | 'warning';
 
 interface ToastProps {
   message: string;
   type?: ToastType;
-  onHide: () => void;
+  onHide?: () => void;
+  onDismiss?: () => void;
   duration?: number;
 }
 
-export function Toast({ message, type = 'info', onHide, duration = 3000 }: ToastProps) {
+export function Toast({ message, type = 'info', onHide, onDismiss, duration = 3000 }: ToastProps) {
   const translateY = useRef(new Animated.Value(-100)).current;
   const opacity = useRef(new Animated.Value(0)).current;
 
@@ -52,7 +53,12 @@ export function Toast({ message, type = 'info', onHide, duration = 3000 }: Toast
         useNativeDriver: true,
       })
     ]).start(() => {
-      onHide();
+      if (typeof onHide === 'function') {
+        onHide();
+      }
+      if (typeof onDismiss === 'function') {
+        onDismiss();
+      }
     });
   };
 
@@ -62,6 +68,9 @@ export function Toast({ message, type = 'info', onHide, duration = 3000 }: Toast
         return <CheckCircle size={20} color="#10b981" />;
       case 'error':
         return <XCircle size={20} color="#ef4444" />;
+      case 'warn':
+      case 'warning':
+        return <AlertTriangle size={20} color="#f59e0b" />;
       case 'info':
       default:
         return <Info size={20} color="#3b82f6" />;
@@ -71,9 +80,9 @@ export function Toast({ message, type = 'info', onHide, duration = 3000 }: Toast
   const getBgColor = () => {
     switch (type) {
       case 'success':
-        return '#ffffff';
       case 'error':
-        return '#ffffff';
+      case 'warn':
+      case 'warning':
       case 'info':
       default:
         return '#ffffff';
@@ -86,6 +95,9 @@ export function Toast({ message, type = 'info', onHide, duration = 3000 }: Toast
         return '#10b981';
       case 'error':
         return '#ef4444';
+      case 'warn':
+      case 'warning':
+        return '#f59e0b';
       case 'info':
       default:
         return '#3b82f6';

@@ -1,13 +1,17 @@
 import { db } from "../server/db/index";
 import { branches, products, promotions } from "../server/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { encryptSecret, decryptSecret, isEncrypted } from "./crypto";
 import { getAdapter, ProductData } from "./aggregator-adapters/index";
 import { createRequire } from "module";
 import crypto from "crypto";
 import postgres from "postgres";
 
-export async function getAggregatorBranchesFromDb() {
+export async function getAggregatorBranchesFromDb(tenantId: string) {
+  if (!tenantId) {
+    throw new Error("Unauthorized: Tenant ID is required.");
+  }
+
   const resBranches = await db
     .select({
       id: branches.id,
@@ -16,15 +20,20 @@ export async function getAggregatorBranchesFromDb() {
       status: branches.status,
     })
     .from(branches)
-    .where(eq(branches.status, "Active"));
+    .where(and(eq(branches.tenantId, tenantId), eq(branches.status, "Active")));
 
   return resBranches;
 }
 
-export async function getAggregatorConnectionsFromDb() {
+export async function getAggregatorConnectionsFromDb(tenantId: string) {
+  if (!tenantId) {
+    throw new Error("Unauthorized: Tenant ID is required.");
+  }
+
   const rows: any[] = await db.execute(sql`
     SELECT id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, sftp_password, remote_directory, vendor_id, store_vendor_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, last_scheduled_sync_at, has_pending_changes, is_active, created_at, updated_at
     FROM aggregator_connections
+    WHERE tenant_id = ${tenantId}::uuid
     ORDER BY created_at DESC;
   `);
 
@@ -53,35 +62,40 @@ export async function getAggregatorConnectionsFromDb() {
   }));
 }
 
-export async function saveAggregatorConnectionToDb(data: any) {
-  let tenantId = data.tenantId;
+export async function saveAggregatorConnectionToDb(data: any, tenantId: string) {
+  if (!tenantId) {
+    throw new Error("Unauthorized: Valid session tenant ID is required.");
+  }
+
   let branchId = data.branchId;
 
   if (branchId) {
-    const branchInfo: any[] = await db.execute(sql`SELECT id, tenant_id FROM branches WHERE id::text = ${branchId};`);
-    if (branchInfo.length > 0) {
-      tenantId = branchInfo[0].tenant_id;
+    const branchInfo: any[] = await db.execute(
+      sql`SELECT id, tenant_id FROM branches WHERE id::text = ${branchId} AND tenant_id = ${tenantId}::uuid;`,
+    );
+    if (branchInfo.length === 0) {
+      throw new Error("Selected branch does not exist or does not belong to your organization.");
     }
-  }
-
-  if (!tenantId) {
-    const tenantsList: any[] = await db.execute(sql`SELECT id FROM tenants LIMIT 1;`);
-    if (tenantsList.length > 0) tenantId = tenantsList[0].id;
-  }
-
-  if (!branchId) {
-    const branchList: any[] = await db.execute(sql`SELECT id, tenant_id FROM branches WHERE status = 'Active' LIMIT 1;`);
+  } else {
+    const branchList: any[] = await db.execute(
+      sql`SELECT id, tenant_id FROM branches WHERE tenant_id = ${tenantId}::uuid AND status = 'Active' LIMIT 1;`,
+    );
     if (branchList.length > 0) {
       branchId = branchList[0].id;
-      if (!tenantId) tenantId = branchList[0].tenant_id;
+    } else {
+      throw new Error("No active branch found for this tenant.");
     }
   }
 
   const rawHost = data.sftpHost || "";
-  const sftpHost = rawHost.trim().replace(/^(sftp:\/\/|ssh:\/\/|https:\/\/)/, "").split("/")[0];
+  const sftpHost = rawHost
+    .trim()
+    .replace(/^(sftp:\/\/|ssh:\/\/|https:\/\/)/, "")
+    .split("/")[0];
   const sftpPort = data.sftpPort ? Number(data.sftpPort) : 22;
   const sftpUsername = (data.sftpUsername || "").trim();
-  const rawPassword = data.sftpPassword && data.sftpPassword !== "••••••••" ? data.sftpPassword.trim() : null;
+  const rawPassword =
+    data.sftpPassword && data.sftpPassword !== "••••••••" ? data.sftpPassword.trim() : null;
   const vendorId = (data.vendorId || "").trim();
   const storeVendorId = (data.storeVendorId || "").trim();
   const filenamePrefix = (data.filenamePrefix || "").trim();
@@ -93,56 +107,59 @@ export async function saveAggregatorConnectionToDb(data: any) {
   const isActive = Boolean(data.isActive);
 
   if (data.id) {
-    const existing: any[] = await db.execute(sql`SELECT id, sftp_password FROM aggregator_connections WHERE id::text = ${data.id};`);
-    if (existing.length > 0) {
-      const pwdToSave = rawPassword ? encryptSecret(rawPassword) : existing[0].sftp_password || "";
-      const updated: any[] = await db.execute(sql`
-        UPDATE aggregator_connections
-        SET tenant_id = ${tenantId}::uuid,
-            branch_id = ${branchId}::uuid,
-            aggregator_name = ${aggregatorName},
-            sftp_host = ${sftpHost},
-            sftp_port = ${sftpPort},
-            sftp_username = ${sftpUsername},
-            sftp_password = ${pwdToSave},
-            remote_directory = ${remoteDirectory},
-            vendor_id = ${vendorId},
-            store_vendor_id = ${storeVendorId},
-            filename_prefix = ${filenamePrefix},
-            price_format = ${priceFormat},
-            sync_frequency = ${syncFrequency},
-            is_paused = ${isPaused},
-            is_active = ${isActive},
-            updated_at = NOW()
-        WHERE id::text = ${data.id}
-        RETURNING id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, vendor_id, store_vendor_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at;
-      `);
-
-      const saved = updated[0];
-      return {
-        success: true,
-        message: "Connection saved successfully.",
-        connection: {
-          id: saved.id,
-          tenantId: saved.tenant_id,
-          branchId: saved.branch_id,
-          aggregatorName: saved.aggregator_name,
-          sftpHost: saved.sftp_host,
-          sftpPort: saved.sftp_port,
-          sftpUsername: saved.sftp_username,
-          sftpPassword: "••••••••",
-          remoteDirectory: saved.remote_directory,
-          vendorId: saved.vendor_id,
-          storeVendorId: saved.store_vendor_id,
-          filenamePrefix: saved.filename_prefix,
-          priceFormat: saved.price_format,
-          syncFrequency: saved.sync_frequency,
-          isPaused: saved.is_paused,
-          consecutiveFailures: saved.consecutive_failures,
-          isActive: saved.is_active,
-        },
-      };
+    const existing: any[] = await db.execute(
+      sql`SELECT id, sftp_password, tenant_id FROM aggregator_connections WHERE id::text = ${data.id} AND tenant_id = ${tenantId}::uuid;`,
+    );
+    if (existing.length === 0) {
+      throw new Error("Connection not found or unauthorized.");
     }
+    const pwdToSave = rawPassword ? encryptSecret(rawPassword) : existing[0].sftp_password || "";
+    const updated: any[] = await db.execute(sql`
+      UPDATE aggregator_connections
+      SET tenant_id = ${tenantId}::uuid,
+          branch_id = ${branchId}::uuid,
+          aggregator_name = ${aggregatorName},
+          sftp_host = ${sftpHost},
+          sftp_port = ${sftpPort},
+          sftp_username = ${sftpUsername},
+          sftp_password = ${pwdToSave},
+          remote_directory = ${remoteDirectory},
+          vendor_id = ${vendorId},
+          store_vendor_id = ${storeVendorId},
+          filename_prefix = ${filenamePrefix},
+          price_format = ${priceFormat},
+          sync_frequency = ${syncFrequency},
+          is_paused = ${isPaused},
+          is_active = ${isActive},
+          updated_at = NOW()
+      WHERE id::text = ${data.id} AND tenant_id = ${tenantId}::uuid
+      RETURNING id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, vendor_id, store_vendor_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at;
+    `);
+
+    const saved = updated[0];
+    return {
+      success: true,
+      message: "Connection saved successfully.",
+      connection: {
+        id: saved.id,
+        tenantId: saved.tenant_id,
+        branchId: saved.branch_id,
+        aggregatorName: saved.aggregator_name,
+        sftpHost: saved.sftp_host,
+        sftpPort: saved.sftp_port,
+        sftpUsername: saved.sftp_username,
+        sftpPassword: "••••••••",
+        remoteDirectory: saved.remote_directory,
+        vendorId: saved.vendor_id,
+        storeVendorId: saved.store_vendor_id,
+        filenamePrefix: saved.filename_prefix,
+        priceFormat: saved.price_format,
+        syncFrequency: saved.sync_frequency,
+        isPaused: saved.is_paused,
+        consecutiveFailures: saved.consecutive_failures,
+        isActive: saved.is_active,
+      },
+    };
   }
 
   const encryptedPassword = rawPassword ? encryptSecret(rawPassword) : "";
@@ -182,17 +199,32 @@ export async function saveAggregatorConnectionToDb(data: any) {
   };
 }
 
-export async function togglePauseAutomationInDb(id: string, isPaused?: boolean) {
-  const connList: any[] = await db.execute(sql`SELECT id, is_paused, aggregator_name FROM aggregator_connections WHERE id::text = ${id};`);
-  if (connList.length === 0) return { success: false, error: "Connection not found" };
+export async function togglePauseAutomationInDb(id: string, isPaused?: boolean, tenantId?: string) {
+  const connList: any[] = tenantId
+    ? await db.execute(
+        sql`SELECT id, is_paused, aggregator_name FROM aggregator_connections WHERE id::text = ${id} AND tenant_id = ${tenantId}::uuid;`,
+      )
+    : await db.execute(
+        sql`SELECT id, is_paused, aggregator_name FROM aggregator_connections WHERE id::text = ${id};`,
+      );
+
+  if (connList.length === 0)
+    return { success: false, error: "Connection not found or unauthorized" };
 
   const newIsPaused = isPaused !== undefined ? Boolean(isPaused) : !connList[0].is_paused;
-  const updated: any[] = await db.execute(sql`
-    UPDATE aggregator_connections
-    SET is_paused = ${newIsPaused}, updated_at = NOW()
-    WHERE id::text = ${id}
-    RETURNING id, is_paused, aggregator_name;
-  `);
+  const updated: any[] = tenantId
+    ? await db.execute(sql`
+        UPDATE aggregator_connections
+        SET is_paused = ${newIsPaused}, updated_at = NOW()
+        WHERE id::text = ${id} AND tenant_id = ${tenantId}::uuid
+        RETURNING id, is_paused, aggregator_name;
+      `)
+    : await db.execute(sql`
+        UPDATE aggregator_connections
+        SET is_paused = ${newIsPaused}, updated_at = NOW()
+        WHERE id::text = ${id}
+        RETURNING id, is_paused, aggregator_name;
+      `);
 
   return {
     success: true,
@@ -200,18 +232,47 @@ export async function togglePauseAutomationInDb(id: string, isPaused?: boolean) 
   };
 }
 
-export async function deleteAggregatorConnectionFromDb(id: string) {
-  await db.execute(sql`DELETE FROM aggregator_sync_logs WHERE aggregator_connection_id::text = ${id};`);
-  await db.execute(sql`DELETE FROM aggregator_connections WHERE id::text = ${id};`);
+export async function deleteAggregatorConnectionFromDb(id: string, tenantId: string) {
+  if (!tenantId) {
+    throw new Error("Unauthorized: Tenant ID is required.");
+  }
+  const existing: any[] = await db.execute(
+    sql`SELECT id, tenant_id FROM aggregator_connections WHERE id::text = ${id};`,
+  );
+  if (existing.length === 0) {
+    throw new Error("Connection not found.");
+  }
+  if (existing[0].tenant_id !== tenantId) {
+    throw new Error("Unauthorized: You do not have permission to delete this connection.");
+  }
+
+  await db.execute(
+    sql`DELETE FROM aggregator_sync_logs WHERE aggregator_connection_id::text = ${id};`,
+  );
+  await db.execute(
+    sql`DELETE FROM aggregator_connections WHERE id::text = ${id} AND tenant_id = ${tenantId}::uuid;`,
+  );
   return { success: true, message: "Connection deleted." };
 }
 
-export async function getAggregatorSyncLogsFromDb(connectionId: string) {
+export async function getAggregatorSyncLogsFromDb(connectionId: string, tenantId: string) {
+  if (!tenantId) {
+    throw new Error("Unauthorized: Tenant ID is required.");
+  }
+  const conn: any[] = await db.execute(sql`
+    SELECT id, tenant_id FROM aggregator_connections WHERE id::text = ${connectionId} AND tenant_id = ${tenantId}::uuid;
+  `);
+  if (conn.length === 0) {
+    throw new Error("Connection not found or unauthorized.");
+  }
+
   const rows: any[] = await db.execute(sql`
-    SELECT id, aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at
-    FROM aggregator_sync_logs
-    WHERE aggregator_connection_id::text = ${connectionId}
-    ORDER BY created_at DESC
+    SELECT l.id, l.aggregator_connection_id, l.sync_type, l.status, l.file_name, l.row_count, l.error_message, l.created_at
+    FROM aggregator_sync_logs l
+    INNER JOIN aggregator_connections c ON l.aggregator_connection_id = c.id
+    WHERE l.aggregator_connection_id::text = ${connectionId}
+      AND c.tenant_id = ${tenantId}::uuid
+    ORDER BY l.created_at DESC
     LIMIT 50;
   `);
 
@@ -231,10 +292,17 @@ export async function getAggregatorSyncLogsFromDb(connectionId: string) {
  * Lightweight sync summary for the "Sync Now" confirmation dialog.
  * Uses a fast SELECT COUNT(*) query and connection metadata WITHOUT fetching or transferring full rows.
  */
-export async function getSyncSummaryFromDb(connectionId: string, windowStart?: Date | string | null) {
+export async function getSyncSummaryFromDb(
+  connectionId: string,
+  windowStart?: Date | string | null,
+) {
   const t0 = Date.now();
   let conn: any = null;
-  const filterDate = windowStart ? (windowStart instanceof Date ? windowStart.toISOString() : String(windowStart)) : null;
+  const filterDate = windowStart
+    ? windowStart instanceof Date
+      ? windowStart.toISOString()
+      : String(windowStart)
+    : null;
   if (connectionId) {
     try {
       const list: any[] = await db.execute(
@@ -243,7 +311,7 @@ export async function getSyncSummaryFromDb(connectionId: string, windowStart?: D
           FROM aggregator_connections c
           LEFT JOIN branches b ON c.branch_id = b.id
           WHERE c.id::text = ${connectionId}
-        `
+        `,
       );
       if (list && list.length > 0) {
         conn = {
@@ -286,7 +354,9 @@ export async function getSyncSummaryFromDb(connectionId: string, windowStart?: D
   const recordCount = Number(countResult[0]?.total || 0);
   // Average CSV row is ~28 bytes + header
   const estimatedSizeBytes = recordCount > 0 ? recordCount * 28 + 120 : 0;
-  console.log(`[TIMING SERVER] getSyncSummaryFromDb finished in ${Date.now() - t0}ms: ${recordCount} records, file ${fileName}`);
+  console.log(
+    `[TIMING SERVER] getSyncSummaryFromDb finished in ${Date.now() - t0}ms: ${recordCount} records, file ${fileName}`,
+  );
 
   return {
     success: true,
@@ -298,14 +368,23 @@ export async function getSyncSummaryFromDb(connectionId: string, windowStart?: D
   };
 }
 
-export async function generateDirectCsvPreviewFromDb(connectionId: string, windowStart?: Date | string | null) {
+export async function generateDirectCsvPreviewFromDb(
+  connectionId: string,
+  windowStart?: Date | string | null,
+) {
   const t_func_start = Date.now();
   console.log(`\n================================================================================`);
-  console.log(`[TIMING SERVER] (a) generateDirectCsvPreviewFromDb START at ${new Date(t_func_start).toISOString()} (windowStart: ${windowStart})`);
+  console.log(
+    `[TIMING SERVER] (a) generateDirectCsvPreviewFromDb START at ${new Date(t_func_start).toISOString()} (windowStart: ${windowStart})`,
+  );
   console.log(`================================================================================`);
 
   let conn: any = null;
-  const filterDate = windowStart ? (windowStart instanceof Date ? windowStart.toISOString() : String(windowStart)) : null;
+  const filterDate = windowStart
+    ? windowStart instanceof Date
+      ? windowStart.toISOString()
+      : String(windowStart)
+    : null;
   if (connectionId) {
     try {
       const list: any[] = await db.execute(
@@ -314,7 +393,7 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string, windo
           FROM aggregator_connections c
           LEFT JOIN branches b ON c.branch_id = b.id
           WHERE c.id::text = ${connectionId}
-        `
+        `,
       );
       if (list && list.length > 0) {
         conn = {
@@ -349,7 +428,9 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string, windo
 
   // 1. Single Lean SQL JOIN via Dedicated Session Mode Client (Port 5432)
   // Prevents transaction pooler (:6543) proxy socket backpressure on large 61,018-row reads
-  const rawDbUrl = (process.env["DATABASE_URL"] || process.env["POSTGRES_URL"] || "").trim().replace(/\\$/, "");
+  const rawDbUrl = (process.env["DATABASE_URL"] || process.env["POSTGRES_URL"] || "")
+    .trim()
+    .replace(/\\$/, "");
   const sessionDbUrl = rawDbUrl.includes(":6543") ? rawDbUrl.replace(":6543", ":5432") : rawDbUrl;
 
   const sessionClient = postgres(sessionDbUrl, {
@@ -404,12 +485,19 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string, windo
     } catch (e) {}
   }
   const t_query_end = Date.now();
-  console.log(`[TIMING SERVER] (b) DB query completed: +${t_query_end - t_func_start}ms (query duration: ${t_query_end - t_query_start}ms, returned ${joinedRows.length} rows via dedicated port 5432 Session client)`);
+  console.log(
+    `[TIMING SERVER] (b) DB query completed: +${t_query_end - t_func_start}ms (query duration: ${t_query_end - t_query_start}ms, returned ${joinedRows.length} rows via dedicated port 5432 Session client)`,
+  );
 
   if (!joinedRows || joinedRows.length === 0) {
     if (filterDate) {
       const emptyAdapter = getAdapter(aggregatorName);
-      const emptyResult = emptyAdapter.generateFile([], { vendorId, storeVendorId, filenamePrefix, priceFormat });
+      const emptyResult = emptyAdapter.generateFile([], {
+        vendorId,
+        storeVendorId,
+        filenamePrefix,
+        priceFormat,
+      });
       return {
         success: true,
         isPreviewOnly: true,
@@ -428,10 +516,7 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string, windo
   const t_promo_start = Date.now();
   let dbPromotions: any[] = [];
   try {
-    dbPromotions = await db
-      .select()
-      .from(promotions)
-      .where(eq(promotions.tenantId, tenantId));
+    dbPromotions = await db.select().from(promotions).where(eq(promotions.tenantId, tenantId));
   } catch (err) {}
 
   const now = new Date();
@@ -480,7 +565,9 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string, windo
 
       promoObj = {
         startDate: matchingPromo.startDate ? new Date(matchingPromo.startDate) : now,
-        endDate: matchingPromo.endDate ? new Date(matchingPromo.endDate) : new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
+        endDate: matchingPromo.endDate
+          ? new Date(matchingPromo.endDate)
+          : new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
         discountedPrice: calculatedDisc.toFixed(2),
         maxNoOfOrders: matchingPromo.maxQty ? String(matchingPromo.maxQty) : "500",
       };
@@ -495,13 +582,22 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string, windo
       promotion: promoObj,
     };
   });
-  console.log(`[TIMING SERVER] (b.1) Promo & mapping done: +${Date.now() - t_func_start}ms (duration: ${Date.now() - t_promo_start}ms)`);
+  console.log(
+    `[TIMING SERVER] (b.1) Promo & mapping done: +${Date.now() - t_func_start}ms (duration: ${Date.now() - t_promo_start}ms)`,
+  );
 
   const t_csv_start = Date.now();
   const adapter = getAdapter(aggregatorName);
-  const fileResult = adapter.generateFile(adapterItems, { vendorId, storeVendorId, filenamePrefix, priceFormat });
+  const fileResult = adapter.generateFile(adapterItems, {
+    vendorId,
+    storeVendorId,
+    filenamePrefix,
+    priceFormat,
+  });
   const t_csv_end = Date.now();
-  console.log(`[TIMING SERVER] (c) CSV string built: +${t_csv_end - t_func_start}ms (generateFile duration: ${t_csv_end - t_csv_start}ms, CSV length: ${fileResult.fileContent.length})`);
+  console.log(
+    `[TIMING SERVER] (c) CSV string built: +${t_csv_end - t_func_start}ms (generateFile duration: ${t_csv_end - t_csv_start}ms, CSV length: ${fileResult.fileContent.length})`,
+  );
 
   const fileName = fileResult.fileName;
   const csvContent = fileResult.fileContent;
@@ -511,12 +607,14 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string, windo
   if (connectionId) {
     try {
       await db.execute(
-        sql`INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, created_at) VALUES (${connectionId}::uuid, 'preview', 'preview_only', ${fileName}, ${recordCount}, NOW());`
+        sql`INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, created_at) VALUES (${connectionId}::uuid, 'preview', 'preview_only', ${fileName}, ${recordCount}, NOW());`,
       );
     } catch (e) {}
   }
   const t_log_end = Date.now();
-  console.log(`[TIMING SERVER] (d) Audit log INSERT complete: +${t_log_end - t_func_start}ms (log insert duration: ${t_log_end - t_log_start}ms)`);
+  console.log(
+    `[TIMING SERVER] (d) Audit log INSERT complete: +${t_log_end - t_func_start}ms (log insert duration: ${t_log_end - t_log_start}ms)`,
+  );
 
   console.log(`[TIMING SERVER] (e) Right before return: +${Date.now() - t_func_start}ms total\n`);
 
@@ -535,9 +633,11 @@ export async function generateDirectCsvPreviewFromDb(connectionId: string, windo
 export async function triggerAggregatorSyncFromDb(
   connectionId: string,
   preGeneratedPayload?: { fileName: string; csvContent: string; recordCount?: number },
-  windowStart?: Date | string | null
+  windowStart?: Date | string | null,
 ) {
-  const connList: any[] = await db.execute(sql`SELECT * FROM aggregator_connections WHERE id::text = ${connectionId};`);
+  const connList: any[] = await db.execute(
+    sql`SELECT * FROM aggregator_connections WHERE id::text = ${connectionId};`,
+  );
   const conn = connList[0];
   if (!conn) return { success: false, error: "Connection configuration not found." };
 
@@ -550,7 +650,10 @@ export async function triggerAggregatorSyncFromDb(
       INSERT INTO aggregator_sync_logs (aggregator_connection_id, sync_type, status, file_name, row_count, error_message, created_at)
       VALUES (${connectionId}::uuid, 'manual', 'failed', ${defaultFileName}, 0, 'Sync disabled: Connection is inactive. Activation is required before live SFTP transmission.', NOW());
     `);
-    return { success: false, error: "Sync is disabled until this connection is verified and activated." };
+    return {
+      success: false,
+      error: "Sync is disabled until this connection is verified and activated.",
+    };
   }
 
   // 5-Minute Rate Limit Cooldown: Strictly prevents uploads if less than 5 minutes have passed since the last upload
@@ -592,7 +695,10 @@ export async function triggerAggregatorSyncFromDb(
     csvContent = csvPreviewResult.csvContent;
     recordCount = csvPreviewResult.recordCount;
   }
-  const hostClean = (conn.sftp_host || "").trim().replace(/^(sftp:\/\/|ssh:\/\/|https:\/\/)/, "").split("/")[0];
+  const hostClean = (conn.sftp_host || "")
+    .trim()
+    .replace(/^(sftp:\/\/|ssh:\/\/|https:\/\/)/, "")
+    .split("/")[0];
 
   try {
     const req = createRequire(import.meta.url);
@@ -604,7 +710,9 @@ export async function triggerAggregatorSyncFromDb(
     const password = decryptSecret(rawPassword);
 
     if (!password) {
-      throw new Error("Password decryption returned empty value. Please re-enter the password in Connection Settings.");
+      throw new Error(
+        "Password decryption returned empty value. Please re-enter the password in Connection Settings.",
+      );
     }
 
     await sftp.connect({
@@ -616,7 +724,11 @@ export async function triggerAggregatorSyncFromDb(
       readyTimeout: 25000,
     });
 
-    const normalizedDir = (conn.remote_directory || "assortment").replace(/^\/+|\/+$/g, "").toLowerCase().trim() || "assortment";
+    const normalizedDir =
+      (conn.remote_directory || "assortment")
+        .replace(/^\/+|\/+$/g, "")
+        .toLowerCase()
+        .trim() || "assortment";
     const targetPath = `${normalizedDir}/${fileName}`;
     const fileBuffer = Buffer.from(csvContent, "utf-8");
 
@@ -628,12 +740,19 @@ export async function triggerAggregatorSyncFromDb(
     const fileExists = dirListing.some((item: any) => item.name === fileName);
 
     if (!fileExists) {
-      console.error(`❌ [SFTP Sync] Post-upload verification FAILED: File '${fileName}' not found in '${normalizedDir}' listing. Found:`, dirListing.map((i: any) => i.name));
+      console.error(
+        `❌ [SFTP Sync] Post-upload verification FAILED: File '${fileName}' not found in '${normalizedDir}' listing. Found:`,
+        dirListing.map((i: any) => i.name),
+      );
       await sftp.end();
-      throw new Error(`Post-upload verification failed: File '${fileName}' was not found in directory '${normalizedDir}' after upload.`);
+      throw new Error(
+        `Post-upload verification failed: File '${fileName}' was not found in directory '${normalizedDir}' after upload.`,
+      );
     }
 
-    console.log(`✅ [SFTP Sync] Post-upload verification PASSED: '${fileName}' confirmed present in '${normalizedDir}'!`);
+    console.log(
+      `✅ [SFTP Sync] Post-upload verification PASSED: '${fileName}' confirmed present in '${normalizedDir}'!`,
+    );
     await sftp.end();
 
     await db.execute(sql`
@@ -679,13 +798,34 @@ export async function triggerAggregatorSyncFromDb(
   }
 }
 
-export async function deleteAggregatorSyncLogFromDb(logId: string) {
-  await db.execute(sql`DELETE FROM aggregator_sync_logs WHERE id::text = ${logId};`);
+export async function deleteAggregatorSyncLogFromDb(logId: string, tenantId?: string) {
+  if (tenantId) {
+    await db.execute(sql`
+      DELETE FROM aggregator_sync_logs 
+      WHERE id::text = ${logId}
+        AND aggregator_connection_id IN (
+          SELECT id FROM aggregator_connections WHERE tenant_id = ${tenantId}::uuid
+        );
+    `);
+  } else {
+    await db.execute(sql`DELETE FROM aggregator_sync_logs WHERE id::text = ${logId};`);
+  }
   return { success: true };
 }
 
-export async function deleteAllAggregatorSyncLogsFromDb(connectionId: string) {
-  await db.execute(sql`DELETE FROM aggregator_sync_logs WHERE aggregator_connection_id::text = ${connectionId};`);
+export async function deleteAllAggregatorSyncLogsFromDb(connectionId: string, tenantId?: string) {
+  if (tenantId) {
+    await db.execute(sql`
+      DELETE FROM aggregator_sync_logs 
+      WHERE aggregator_connection_id::text = ${connectionId}
+        AND aggregator_connection_id IN (
+          SELECT id FROM aggregator_connections WHERE tenant_id = ${tenantId}::uuid
+        );
+    `);
+  } else {
+    await db.execute(
+      sql`DELETE FROM aggregator_sync_logs WHERE aggregator_connection_id::text = ${connectionId};`,
+    );
+  }
   return { success: true };
 }
-
