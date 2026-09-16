@@ -19,9 +19,9 @@ export const SUBSCRIPTION_PLANS: Record<string, SubscriptionPlan> = {
     id: "Starter",
     name: "Starter",
     blurb: "Single-site grocers and small independents getting off legacy tills.",
-    monthlyPrice: 899,
-    annualPricePerMonth: 764, // 15% discount (Math.round(899 * 0.85))
-    annualTotal: 764 * 12,
+    monthlyPrice: 400,
+    annualPricePerMonth: 340, // 15% discount (Math.round(400 * 0.85))
+    annualTotal: 340 * 12,
     currency: "AED",
     entitlements: {
       outletLimit: 1,
@@ -40,9 +40,9 @@ export const SUBSCRIPTION_PLANS: Record<string, SubscriptionPlan> = {
     id: "Growth",
     name: "Growth",
     blurb: "Multi-branch supermarkets selling in-store and on delivery aggregators.",
-    monthlyPrice: 1690,
-    annualPricePerMonth: 1437, // 15% discount (Math.round(1690 * 0.85))
-    annualTotal: 1437 * 12,
+    monthlyPrice: 1200,
+    annualPricePerMonth: 1020, // 15% discount (Math.round(1200 * 0.85))
+    annualTotal: 1020 * 12,
     currency: "AED",
     entitlements: {
       outletLimit: 10,

@@ -29,7 +29,7 @@ export const Route = createFileRoute("/pricing")({
 const tiers = [
     {
         name: "Starter",
-        monthly: 899,
+        monthly: 400,
         blurb: "Single-site grocers and small independents getting off legacy tills.",
         limits: ["1 outlet included", "Up to 3 POS tills", "10,000 monthly orders"],
         features: [
@@ -43,7 +43,7 @@ const tiers = [
     },
     {
         name: "Growth",
-        monthly: 1690,
+        monthly: 1200,
         blurb: "Multi-branch supermarkets selling in-store and on delivery aggregators.",
         featured: true,
         limits: ["Up to 10 outlets", "Up to 10 tills per outlet", "150,000 monthly orders"],
@@ -89,7 +89,7 @@ const matrix = [
 ] as const;
 
 function PricingPage() {
-    const [annual, setAnnual] = useState(true);
+    const [annual, setAnnual] = useState(false);
 
     return (
         <div className="min-h-screen bg-background">

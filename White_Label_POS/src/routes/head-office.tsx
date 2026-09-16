@@ -32,6 +32,7 @@ import {
   Loader2,
   ChevronsUpDown,
   Check,
+  LifeBuoy,
 } from "lucide-react";
 import {
   Bar,
@@ -91,6 +92,7 @@ import { ReportsTab } from "@/components/reports/ReportsTab";
 import { FinancialReportsTab } from "@/components/reports/FinancialReportsTab";
 import { PayrollTab } from "@/components/payroll/PayrollTab";
 import { TenantSubscriptionBillingTab } from "@/components/subscription/TenantSubscriptionBillingTab";
+import { TenantSupportTab } from "@/components/support/TenantSupportTab";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -487,6 +489,7 @@ function HeadOffice() {
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isNewTicketModalOpen, setIsNewTicketModalOpen] = useState(false);
   const [auditLogsPage, setAuditLogsPage] = useState(1);
   const auditLogsPerPage = 10;
 
@@ -1005,12 +1008,25 @@ function HeadOffice() {
       title="Head Office Dashboard"
       subtitle={`${data?.tenantName || "Tenant"} · ${mappedOutlets.length} outlets · ${mappedOutlets.reduce((s: any, o: any) => s + o.tills, 0)} tills`}
       actions={
-        <Button
-          className="rounded-xl font-semibold"
-          onClick={() => toast.success("Daily brief exported")}
-        >
-          <Download className="mr-1.5 h-4 w-4" /> Export daily brief
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-xl font-semibold border-primary/30 bg-primary/5 text-primary hover:bg-primary/10 shadow-sm"
+            onClick={() => {
+              setActiveTab("support");
+              setIsNewTicketModalOpen(true);
+            }}
+          >
+            <LifeBuoy className="mr-1.5 h-4 w-4" /> Raise Support Ticket
+          </Button>
+          <Button
+            className="rounded-xl font-semibold"
+            onClick={() => toast.success("Daily brief exported")}
+          >
+            <Download className="mr-1.5 h-4 w-4" /> Export daily brief
+          </Button>
+        </div>
       }
     >
       <Tabs 
@@ -1130,6 +1146,12 @@ function HeadOffice() {
               className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
             >
               Subscription & Billing
+            </TabsTrigger>
+            <TabsTrigger
+              value="support"
+              className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+            >
+              Support & Help Desk
             </TabsTrigger>
             <TabsTrigger
               value="audit_logs"
@@ -4669,6 +4691,13 @@ function HeadOffice() {
 
           <TabsContent value="subscription_billing" className="mt-0 space-y-5">
             <TenantSubscriptionBillingTab />
+          </TabsContent>
+
+          <TabsContent value="support" className="mt-0 space-y-5">
+            <TenantSupportTab
+              isNewTicketModalOpen={isNewTicketModalOpen}
+              setIsNewTicketModalOpen={setIsNewTicketModalOpen}
+            />
           </TabsContent>
         </main>
 

@@ -32,6 +32,7 @@ import {
     Link2,
     Loader2,
     ExternalLink,
+    LifeBuoy,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import {
@@ -50,6 +51,7 @@ import {
 } from "recharts";
 import { DemoShell, StatCard } from "@/components/demo/DemoShell";
 import { ReportsTab } from "@/components/reports/ReportsTab";
+import { SuperAdminSupportTicketsTab } from "@/components/support/SuperAdminSupportTicketsTab";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -641,6 +643,7 @@ function SuperAdmin() {
         { id: "tenants", label: "Tenants", icon: Building2, active: activeNavSection === "tenants", onClick: () => setActiveNavSection("tenants") },
         { id: "billing", label: "Billing & Revenue", icon: CreditCard, active: activeNavSection === "billing", onClick: () => setActiveNavSection("billing") },
         { id: "reports", label: "Reports", icon: FileText, active: activeNavSection === "reports", onClick: () => setActiveNavSection("reports") },
+        { id: "tickets", label: "Support Tickets", icon: LifeBuoy, active: activeNavSection === "tickets", onClick: () => setActiveNavSection("tickets") },
         { id: "analytics", label: "Platform Analytics", icon: Activity, active: activeNavSection === "analytics", onClick: () => setActiveNavSection("analytics") },
         { id: "settings", label: "Tax & Currency", icon: Coins, active: activeNavSection === "settings", onClick: () => setActiveNavSection("settings") },
     ];
@@ -964,8 +967,8 @@ function SuperAdmin() {
                                             <SelectValue placeholder="Select Plan" />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="Starter">Starter (AED 899/mo)</SelectItem>
-                                            <SelectItem value="Growth">Growth (AED 1,690/mo)</SelectItem>
+                                            <SelectItem value="Starter">Starter (AED 400/mo)</SelectItem>
+                                            <SelectItem value="Growth">Growth (AED 1,200/mo)</SelectItem>
                                             <SelectItem value="Enterprise">Enterprise (Custom)</SelectItem>
                                         </SelectContent>
                                     </Select>
@@ -1894,6 +1897,10 @@ function SuperAdmin() {
                     <ReportsTab selectedTenantId={selectedReportTenantId} isSuperAdmin={true} />
                 </TabsContent>
 
+                <TabsContent value="tickets" className="mt-8 space-y-6">
+                    <SuperAdminSupportTicketsTab tenants={tenants} />
+                </TabsContent>
+
                 <TabsContent value="settings" className="mt-5">
                     <div className="grid gap-5 lg:grid-cols-2">
                         <div className="panel p-6">
@@ -2455,7 +2462,7 @@ function SuperAdmin() {
                                 id="pay-amount"
                                 type="number"
                                 step="0.01"
-                                placeholder="1690.00"
+                                placeholder="1200.00"
                                 value={recordForm.amount}
                                 onChange={(e) => setRecordForm({ ...recordForm, amount: e.target.value })}
                             />
@@ -2610,7 +2617,7 @@ function SuperAdmin() {
                                 id="edit-amount"
                                 type="number"
                                 step="0.01"
-                                placeholder="1690.00"
+                                placeholder="1200.00"
                                 value={editForm.amount}
                                 onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
                             />

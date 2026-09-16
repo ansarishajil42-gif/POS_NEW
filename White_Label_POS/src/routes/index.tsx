@@ -635,8 +635,8 @@ function PricingTeaser() {
                 </Reveal>
                 <div className="mt-12 grid gap-6 lg:grid-cols-3">
                     {[
-                        { name: "Starter", price: "AED 899", unit: "/ outlet / month", note: "Up to 3 tills per outlet" },
-                        { name: "Growth", price: "AED 1,690", unit: "/ outlet / month", note: "Up to 10 tills + aggregator sync", featured: true },
+                        { name: "Starter", price: "AED 400", unit: "/ outlet / month", note: "Up to 3 tills per outlet" },
+                        { name: "Growth", price: "AED 1,200", unit: "/ outlet / month", note: "Up to 10 tills + aggregator sync", featured: true },
                         { name: "Enterprise", price: "Custom", unit: "annual contract", note: "Unlimited tills, white-label, SLA" },
                     ].map((p, i) => (
                         <Reveal key={p.name} delay={i * 90}>

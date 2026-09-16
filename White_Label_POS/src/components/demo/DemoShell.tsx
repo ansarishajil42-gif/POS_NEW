@@ -1,11 +1,19 @@
 import { Link } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
-import { ArrowLeft, Building2, Layers, Monitor, Truck, Store, Boxes, ShoppingCart, Briefcase, Menu, X, BookOpen } from "lucide-react";
+import { ArrowLeft, Building2, Layers, Monitor, Truck, Store, Boxes, ShoppingCart, Briefcase, Menu, X, BookOpen, User, KeyRound, Save, Loader2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Logo } from "@/components/site/Logo";
 import { cn } from "@/lib/utils";
 
 import { useAuth } from "@/lib/auth";
+import { getMyProfileFn, updateMyProfileFn, changeMyPasswordFn, type MyProfileData } from "@/lib/my-profile-server";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 
 const allNav = [
     { to: "/super-admin", label: "Super Admin", icon: Layers },
@@ -34,6 +42,105 @@ export function DemoShell({
 }) {
     const { role, isLoaded, logout } = useAuth();
     const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+
+    // Profile & Account Settings Dialog State
+    const [profileOpen, setProfileOpen] = useState(false);
+    const [profileLoading, setProfileLoading] = useState(false);
+    const [profileSaving, setProfileSaving] = useState(false);
+    const [passwordSaving, setPasswordSaving] = useState(false);
+    const [profileData, setProfileData] = useState<MyProfileData | null>(null);
+
+    const [nameInput, setNameInput] = useState("");
+    const [phoneInput, setPhoneInput] = useState("");
+    const [addressInput, setAddressInput] = useState("");
+
+    const [currentPassword, setCurrentPassword] = useState("");
+    const [newPassword, setNewPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
+
+    const handleOpenProfile = async () => {
+        setProfileOpen(true);
+        setProfileLoading(true);
+        try {
+            const res = await getMyProfileFn();
+            if (res.success && res.data) {
+                setProfileData(res.data);
+                setNameInput(res.data.name || "");
+                setPhoneInput(res.data.phone || "");
+                setAddressInput(res.data.address || "");
+            }
+        } catch (err: any) {
+            toast.error(err.message || "Failed to load profile");
+        } finally {
+            setProfileLoading(false);
+        }
+    };
+
+    const handleSaveProfile = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setProfileSaving(true);
+        try {
+            const res = await updateMyProfileFn({
+                data: {
+                    name: nameInput,
+                    phone: phoneInput,
+                    address: addressInput,
+                },
+            });
+            if (res.success) {
+                toast.success(res.message || "Profile updated successfully!");
+                if (profileData) {
+                    setProfileData({
+                        ...profileData,
+                        name: nameInput,
+                        phone: phoneInput,
+                        address: addressInput,
+                    });
+                }
+            }
+        } catch (err: any) {
+            toast.error(err.message || "Failed to update profile");
+        } finally {
+            setProfileSaving(false);
+        }
+    };
+
+    const handleChangePassword = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!currentPassword || !newPassword || !confirmPassword) {
+            toast.error("Please fill in all password fields");
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            toast.error("New password and confirmation do not match");
+            return;
+        }
+        if (newPassword.length < 6) {
+            toast.error("New password must be at least 6 characters long");
+            return;
+        }
+
+        setPasswordSaving(true);
+        try {
+            const res = await changeMyPasswordFn({
+                data: {
+                    currentPassword,
+                    newPassword,
+                    confirmPassword,
+                },
+            });
+            if (res.success) {
+                toast.success(res.message || "Password changed successfully!");
+                setCurrentPassword("");
+                setNewPassword("");
+                setConfirmPassword("");
+            }
+        } catch (err: any) {
+            toast.error(err.message || "Failed to change password");
+        } finally {
+            setPasswordSaving(false);
+        }
+    };
 
     const nav = allNav.filter((n) => {
         if (!role) return false;
@@ -119,6 +226,13 @@ export function DemoShell({
                                         <p className="mt-0.5 text-xs font-extrabold text-primary">{role}</p>
                                     </div>
                                     <button
+                                        type="button"
+                                        onClick={handleOpenProfile}
+                                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-ink hover:text-primary transition-colors cursor-pointer"
+                                    >
+                                        <User className="h-3.5 w-3.5" /> My Profile
+                                    </button>
+                                    <button
                                         onClick={logout}
                                         className="inline-flex items-center gap-1.5 text-xs font-semibold text-destructive hover:underline cursor-pointer"
                                     >
@@ -141,6 +255,151 @@ export function DemoShell({
                     {children}
                 </main>
             </div>
+
+            {/* User Profile & Account Settings Dialog */}
+            <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
+                <DialogContent className="sm:max-w-[480px]">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-base font-bold">
+                            <User className="h-4 w-4 text-primary" /> My Profile &amp; Settings
+                        </DialogTitle>
+                        <DialogDescription className="text-xs text-muted-foreground">
+                            View and update your personal details or change your password.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {profileLoading ? (
+                        <div className="flex flex-col items-center justify-center py-10 gap-2">
+                            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                            <p className="text-xs text-muted-foreground">Loading profile...</p>
+                        </div>
+                    ) : (
+                        <Tabs defaultValue="profile" className="mt-2 w-full">
+                            <TabsList className="grid w-full grid-cols-2">
+                                <TabsTrigger value="profile" className="text-xs">Profile Information</TabsTrigger>
+                                <TabsTrigger value="security" className="text-xs">Security &amp; Password</TabsTrigger>
+                            </TabsList>
+
+                            {/* Tab 1: Profile Information */}
+                            <TabsContent value="profile" className="space-y-4 pt-3">
+                                <div className="flex items-center justify-between rounded-lg border border-border/80 bg-surface-2 p-3">
+                                    <div>
+                                        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Account Role</p>
+                                        <div className="mt-1 flex items-center gap-2">
+                                            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs font-bold">
+                                                {profileData?.role || role}
+                                            </Badge>
+                                            {profileData?.branchName && (
+                                                <span className="text-xs text-muted-foreground">· {profileData.branchName}</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <form onSubmit={handleSaveProfile} className="space-y-3">
+                                    <div className="space-y-1">
+                                        <Label htmlFor="profile-email" className="text-xs">Email Address (Read-Only)</Label>
+                                        <Input
+                                            id="profile-email"
+                                            value={profileData?.email || ""}
+                                            disabled
+                                            className="bg-muted text-muted-foreground cursor-not-allowed text-xs"
+                                        />
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <Label htmlFor="profile-name" className="text-xs">Full Name</Label>
+                                        <Input
+                                            id="profile-name"
+                                            value={nameInput}
+                                            onChange={(e) => setNameInput(e.target.value)}
+                                            placeholder="Enter your full name"
+                                            className="text-xs"
+                                        />
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <Label htmlFor="profile-phone" className="text-xs">Phone Number</Label>
+                                        <Input
+                                            id="profile-phone"
+                                            value={phoneInput}
+                                            onChange={(e) => setPhoneInput(e.target.value)}
+                                            placeholder="+971 50 123 4567"
+                                            className="text-xs"
+                                        />
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <Label htmlFor="profile-address" className="text-xs">Physical Address</Label>
+                                        <Input
+                                            id="profile-address"
+                                            value={addressInput}
+                                            onChange={(e) => setAddressInput(e.target.value)}
+                                            placeholder="City, Emirates, UAE"
+                                            className="text-xs"
+                                        />
+                                    </div>
+
+                                    <div className="pt-2 flex justify-end">
+                                        <Button type="submit" size="sm" disabled={profileSaving} className="gap-1.5 text-xs">
+                                            {profileSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                                            Save Profile
+                                        </Button>
+                                    </div>
+                                </form>
+                            </TabsContent>
+
+                            {/* Tab 2: Security & Password */}
+                            <TabsContent value="security" className="space-y-4 pt-3">
+                                <form onSubmit={handleChangePassword} className="space-y-3">
+                                    <div className="space-y-1">
+                                        <Label htmlFor="current-pass" className="text-xs">Current Password</Label>
+                                        <Input
+                                            id="current-pass"
+                                            type="password"
+                                            value={currentPassword}
+                                            onChange={(e) => setCurrentPassword(e.target.value)}
+                                            placeholder="••••••••"
+                                            className="text-xs"
+                                        />
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <Label htmlFor="new-pass" className="text-xs">New Password</Label>
+                                        <Input
+                                            id="new-pass"
+                                            type="password"
+                                            value={newPassword}
+                                            onChange={(e) => setNewPassword(e.target.value)}
+                                            placeholder="Min. 6 characters"
+                                            className="text-xs"
+                                        />
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <Label htmlFor="confirm-pass" className="text-xs">Confirm New Password</Label>
+                                        <Input
+                                            id="confirm-pass"
+                                            type="password"
+                                            value={confirmPassword}
+                                            onChange={(e) => setConfirmPassword(e.target.value)}
+                                            placeholder="Re-enter new password"
+                                            className="text-xs"
+                                        />
+                                    </div>
+
+                                    <div className="pt-2 flex justify-end">
+                                        <Button type="submit" size="sm" disabled={passwordSaving} className="gap-1.5 text-xs">
+                                            {passwordSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}
+                                            Update Password
+                                        </Button>
+                                    </div>
+                                </form>
+                            </TabsContent>
+                        </Tabs>
+                    )}
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
