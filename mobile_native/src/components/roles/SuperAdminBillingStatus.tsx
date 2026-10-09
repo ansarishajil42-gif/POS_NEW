@@ -375,7 +375,7 @@ export function SuperAdminBillingStatus() {
         escapeCsv(t.plan),
         escapeCsv(t.billingCycle || 'monthly'),
         escapeCsv(formatDate(t.currentPeriodEndDate)),
-        escapeCsv(t.daysRemaining !== null ? t.daysRemaining : 'N/A'),
+        escapeCsv((t as any).daysRemaining !== null && (t as any).daysRemaining !== undefined ? (t as any).daysRemaining : 'N/A'),
         escapeCsv(t.punctuality),
         escapeCsv(Number(t.totalPaid || 0).toFixed(2)),
         escapeCsv(t.lastPaymentDate ? formatDate(t.lastPaymentDate) : 'Never'),

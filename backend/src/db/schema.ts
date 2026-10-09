@@ -174,6 +174,11 @@ export const vendors = pgTable("vendors", {
   passwordHash: text("password_hash"),
   contact: text("contact"),
   trn: text("trn"),
+  phone: text("phone"),
+  address: text("address"),
+  status: text("status").notNull().default("Active"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // 8. purchase_orders
@@ -1023,6 +1028,69 @@ export const payrollItems = pgTable(
 export const payrollItemsRelations = relations(payrollItems, ({ one }) => ({
   payrollRun: one(payrollRuns, { fields: [payrollItems.payrollRunId], references: [payrollRuns.id] }),
   staffUser: one(staffUsers, { fields: [payrollItems.staffUserId], references: [staffUsers.id] }),
+}));
+
+// 32. support_tickets
+export const supportTickets = pgTable(
+  "support_tickets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ticketNumber: text("ticket_number").notNull().unique(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    submittedBy: uuid("submitted_by")
+      .notNull()
+      .references(() => staffUsers.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    category: text("category").notNull().default("General"),
+    priority: text("priority").notNull().default("Medium"),
+    status: text("status").notNull().default("Open"),
+    description: text("description").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    closedAt: timestamp("closed_at"),
+    closedBy: uuid("closed_by").references(() => staffUsers.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    index("support_tickets_tenant_idx").on(t.tenantId),
+    index("support_tickets_status_idx").on(t.status),
+    index("support_tickets_submitted_by_idx").on(t.submittedBy),
+  ]
+);
+
+export const supportTicketsRelations = relations(supportTickets, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [supportTickets.tenantId], references: [tenants.id] }),
+  submitter: one(staffUsers, { fields: [supportTickets.submittedBy], references: [staffUsers.id] }),
+  closer: one(staffUsers, { fields: [supportTickets.closedBy], references: [staffUsers.id] }),
+  messages: many(supportTicketMessages),
+}));
+
+// 33. support_ticket_messages
+export const supportTicketMessages = pgTable(
+  "support_ticket_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ticketId: uuid("ticket_id")
+      .notNull()
+      .references(() => supportTickets.id, { onDelete: "cascade" }),
+    senderId: uuid("sender_id")
+      .notNull()
+      .references(() => staffUsers.id, { onDelete: "cascade" }),
+    senderRole: text("sender_role").notNull(),
+    senderName: text("sender_name").notNull(),
+    message: text("message").notNull(),
+    isInternalNote: boolean("is_internal_note").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("support_ticket_messages_ticket_idx").on(t.ticketId),
+  ]
+);
+
+export const supportTicketMessagesRelations = relations(supportTicketMessages, ({ one }) => ({
+  ticket: one(supportTickets, { fields: [supportTicketMessages.ticketId], references: [supportTickets.id] }),
+  sender: one(staffUsers, { fields: [supportTicketMessages.senderId], references: [staffUsers.id] }),
 }));
 
 

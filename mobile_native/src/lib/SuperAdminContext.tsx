@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo, type Re
 import { Platform } from 'react-native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import { apiClient } from './apiClient';
+import { apiClient, API_BASE_URL, storage } from './apiClient';
 
 export interface Tenant {
   id: string;
@@ -168,6 +168,83 @@ export interface RecordPaymentInput {
   notes?: string;
 }
 
+export interface BlogPost {
+  id: string;
+  title: string;
+  slug: string;
+  coverImageUrl?: string | null;
+  shortDescription: string;
+  content: string;
+  status: 'Draft' | 'Published' | string;
+  authorName: string;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string | null;
+}
+
+export interface CreateBlogPostInput {
+  title: string;
+  slug: string;
+  coverImageUrl?: string | null;
+  shortDescription: string;
+  content: string;
+  status?: string;
+  authorName?: string;
+}
+
+export interface UpdateBlogPostInput {
+  title?: string;
+  slug?: string;
+  coverImageUrl?: string | null;
+  shortDescription?: string;
+  content?: string;
+  status?: string;
+  authorName?: string;
+}
+
+export interface SalesVolumeSeriesItem {
+  t: string;
+  sales: number;
+  tills?: number;
+  api?: number;
+}
+
+export interface PlanDistributionItem {
+  plan: string;
+  count: number;
+  percentage: number;
+}
+
+export interface ActivityLogItem {
+  id: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  details?: any;
+  createdAt: string;
+  tenantId?: string;
+  tenantName?: string;
+  userName?: string;
+}
+
+export interface PlatformSettings {
+  id?: string;
+  currency: string;
+  timezone: string;
+  dateFormat: string;
+  vatRate: string;
+  vatInclusive: boolean;
+  updatedAt?: string;
+}
+
+export interface UpdatePlatformSettingsInput {
+  currency?: string;
+  timezone?: string;
+  dateFormat?: string;
+  vatRate?: string;
+  vatInclusive?: boolean;
+}
+
 interface SuperAdminContextProps {
   tenants: Tenant[];
   tenantsTotal: number;
@@ -199,6 +276,16 @@ interface SuperAdminContextProps {
   deleteInvoice: (id: string) => Promise<{ success: boolean; message?: string; error?: string }>;
   generatePaymentLink: (id: string) => Promise<{ success: boolean; paymentUrl?: string; paymentLinkId?: string; error?: string }>;
   downloadInvoicePdf: (id: string) => Promise<{ success: boolean; uri?: string; error?: string }>;
+  getBlogPosts: () => Promise<{ success: boolean; posts?: BlogPost[]; error?: string }>;
+  createBlogPost: (input: CreateBlogPostInput) => Promise<{ success: boolean; post?: BlogPost; error?: string }>;
+  updateBlogPost: (id: string, input: UpdateBlogPostInput) => Promise<{ success: boolean; post?: BlogPost; error?: string }>;
+  deleteBlogPost: (id: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+  uploadBlogCover: (file: any, fileName?: string, mimeType?: string) => Promise<{ success: boolean; url?: string; error?: string }>;
+  getSalesVolume: (params?: { startDate?: string; endDate?: string; tenantId?: string }) => Promise<{ success: boolean; totalGmv?: number; platformSeries?: SalesVolumeSeriesItem[]; orderCount?: number; error?: string }>;
+  getPlanDistribution: () => Promise<{ success: boolean; total?: number; plans?: Record<string, number>; breakdown?: PlanDistributionItem[]; error?: string }>;
+  getActivityLog: (params?: { page?: number; limit?: number }) => Promise<{ success: boolean; logs?: ActivityLogItem[]; error?: string }>;
+  getPlatformSettings: () => Promise<{ success: boolean; settings?: PlatformSettings; error?: string }>;
+  updatePlatformSettings: (data: UpdatePlatformSettingsInput) => Promise<{ success: boolean; settings?: any; message?: string; error?: string }>;
 }
 
 const SuperAdminContext = createContext<SuperAdminContextProps | null>(null);
@@ -526,6 +613,217 @@ export function SuperAdminProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const getBlogPosts = async (): Promise<{ success: boolean; posts?: BlogPost[]; error?: string }> => {
+    try {
+      const res = await apiClient.get<any>('/blog-admin/posts');
+      if (Array.isArray(res)) {
+        return { success: true, posts: res };
+      }
+      if (res && Array.isArray(res.posts)) {
+        return { success: true, posts: res.posts };
+      }
+      return { success: false, error: res?.error || 'Failed to fetch blog posts', posts: [] };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to fetch blog posts', posts: [] };
+    }
+  };
+
+  const createBlogPost = async (input: CreateBlogPostInput): Promise<{ success: boolean; post?: BlogPost; error?: string }> => {
+    try {
+      const res = await apiClient.post<any>('/blog-admin/posts', input);
+      if (res && res.id) {
+        return { success: true, post: res };
+      }
+      return { success: false, error: res?.error || 'Failed to create blog post' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to create blog post' };
+    }
+  };
+
+  const updateBlogPost = async (id: string, input: UpdateBlogPostInput): Promise<{ success: boolean; post?: BlogPost; error?: string }> => {
+    try {
+      const res = await apiClient.patch<any>(`/blog-admin/posts/${id}`, input);
+      if (res && res.id) {
+        return { success: true, post: res };
+      }
+      return { success: false, error: res?.error || 'Failed to update blog post' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to update blog post' };
+    }
+  };
+
+  const deleteBlogPost = async (id: string): Promise<{ success: boolean; message?: string; error?: string }> => {
+    try {
+      const res = await apiClient.delete<any>(`/blog-admin/posts/${id}`);
+      if (res && (res.message || res.success)) {
+        return { success: true, message: res.message || 'Blog post deleted' };
+      }
+      return { success: false, error: res?.error || 'Failed to delete blog post' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to delete blog post' };
+    }
+  };
+
+  const uploadBlogCover = async (file: any, fileName?: string, mimeType?: string): Promise<{ success: boolean; url?: string; error?: string }> => {
+    try {
+      const token = await storage.getToken();
+      const uploadUrl = `${API_BASE_URL}/blog-admin/upload`;
+      const formData = new FormData();
+
+      if (Platform.OS === 'web') {
+        if (file instanceof Blob || (typeof File !== 'undefined' && file instanceof File)) {
+          formData.append('file', file, fileName || (file as any).name || 'cover.jpg');
+        } else if (typeof file === 'object' && file.uri) {
+          formData.append('file', file);
+        } else {
+          formData.append('file', file);
+        }
+
+        const response = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: formData,
+        });
+
+        const data = await response.json();
+        if (response.ok && (data.url || data.success)) {
+          return { success: true, url: data.url };
+        }
+        return { success: false, error: data?.error || 'Failed to upload cover image' };
+      } else {
+        // Native (Android & iOS): Use XMLHttpRequest because Expo's fetch does not support React Native's local file URI in FormData
+        const uri = typeof file === 'string' ? file : (file?.uri || file);
+        const name = fileName || file?.name || `cover-${Date.now()}.jpg`;
+        const type = mimeType || file?.type || 'image/jpeg';
+
+        formData.append('file', {
+          uri,
+          name,
+          type,
+        } as any);
+
+        return new Promise<{ success: boolean; url?: string; error?: string }>((resolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', uploadUrl);
+          if (token) {
+            xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+          }
+          xhr.onload = () => {
+            try {
+              const data = JSON.parse(xhr.responseText);
+              if (xhr.status >= 200 && xhr.status < 300 && (data.url || data.success)) {
+                resolve({ success: true, url: data.url });
+              } else {
+                resolve({ success: false, error: data?.error || `Upload failed with status ${xhr.status}` });
+              }
+            } catch (e: any) {
+              resolve({ success: false, error: 'Failed to parse upload response from server' });
+            }
+          };
+          xhr.onerror = () => {
+            resolve({ success: false, error: 'Network request failed during image upload' });
+          };
+          xhr.ontimeout = () => {
+            resolve({ success: false, error: 'Image upload timed out' });
+          };
+          xhr.send(formData);
+        });
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to upload cover image' };
+    }
+  };
+
+  const getSalesVolume = async (params?: { startDate?: string; endDate?: string; tenantId?: string }) => {
+    try {
+      const queryParts: string[] = [];
+      if (params?.startDate) queryParts.push(`startDate=${encodeURIComponent(params.startDate)}`);
+      if (params?.endDate) queryParts.push(`endDate=${encodeURIComponent(params.endDate)}`);
+      if (params?.tenantId) queryParts.push(`tenantId=${encodeURIComponent(params.tenantId)}`);
+      const qs = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
+
+      const res = await apiClient.get<any>(`/super-admin/analytics/sales-volume${qs}`);
+      if (res && res.success) {
+        return {
+          success: true,
+          totalGmv: res.totalGmv || 0,
+          platformSeries: res.platformSeries || [],
+          orderCount: res.orderCount || 0,
+        };
+      }
+      return { success: false, error: res?.error || 'Failed to fetch sales volume' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to fetch sales volume' };
+    }
+  };
+
+  const getPlanDistribution = async () => {
+    try {
+      const res = await apiClient.get<any>('/super-admin/analytics/plan-distribution');
+      if (res && res.success) {
+        return {
+          success: true,
+          total: res.total || 0,
+          plans: res.plans || {},
+          breakdown: res.breakdown || [],
+        };
+      }
+      return { success: false, error: res?.error || 'Failed to fetch plan distribution' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to fetch plan distribution' };
+    }
+  };
+
+  const getActivityLog = async (params?: { page?: number; limit?: number }) => {
+    try {
+      const page = params?.page || 1;
+      const limit = params?.limit || 25;
+      const res = await apiClient.get<any>(`/super-admin/analytics/activity-log?page=${page}&limit=${limit}`);
+      if (res && res.success) {
+        return {
+          success: true,
+          logs: res.logs || [],
+        };
+      }
+      return { success: false, error: res?.error || 'Failed to fetch activity log' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to fetch activity log' };
+    }
+  };
+
+  const getPlatformSettings = async () => {
+    try {
+      const res = await apiClient.get<any>('/super-admin/platform-settings');
+      if (res && res.success && res.settings) {
+        return {
+          success: true,
+          settings: res.settings,
+        };
+      }
+      return { success: false, error: res?.error || 'Failed to fetch platform settings' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to fetch platform settings' };
+    }
+  };
+
+  const updatePlatformSettings = async (data: UpdatePlatformSettingsInput) => {
+    try {
+      const res = await apiClient.patch<any>('/super-admin/platform-settings', data);
+      if (res && res.success) {
+        return {
+          success: true,
+          settings: res.settings,
+          message: res.message || 'Platform settings updated',
+        };
+      }
+      return { success: false, error: res?.error || 'Failed to update platform settings' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Failed to update platform settings' };
+    }
+  };
+
   useEffect(() => {
     refreshAll();
   }, []);
@@ -562,6 +860,16 @@ export function SuperAdminProvider({ children }: { children: ReactNode }) {
       deleteInvoice,
       generatePaymentLink,
       downloadInvoicePdf,
+      getBlogPosts,
+      createBlogPost,
+      updateBlogPost,
+      deleteBlogPost,
+      uploadBlogCover,
+      getSalesVolume,
+      getPlanDistribution,
+      getActivityLog,
+      getPlatformSettings,
+      updatePlatformSettings,
     }),
     [
       tenants,

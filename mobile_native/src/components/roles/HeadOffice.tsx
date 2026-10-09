@@ -39,7 +39,11 @@ import {
   Trash2,
   X,
   ChevronLeft,
-  Check
+  Check,
+  TrendingUp,
+  DollarSign,
+  CreditCard,
+  User,
 } from 'lucide-react-native';
 
 export function HeadOfficeHome() {
@@ -689,7 +693,7 @@ export function ProductDetail({ id, onBack }: { id: string; onBack: () => void }
   );
 }
 
-export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | 'grn' | 'invoice' | 'vendors' }) {
+export function HeadOfficePurchasing({ stepOverride, onBack }: { stepOverride?: 'po' | 'grn' | 'invoice' | 'vendors'; onBack?: () => void }) {
   const { branch, role } = useAuth();
   const roleLabel = role === 'purchasing-officer' ? 'PO' : 'HO';
   const { purchases, vendors, products, branches, createPurchaseOrder, submitPurchaseOrder, deletePurchaseOrder, updatePurchaseOrder, recordGRN, convertToInvoice, addVendor, updateVendor, deleteVendor } = useHeadOffice();
@@ -720,7 +724,7 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
   // Vendor Form
   const [vendorOpen, setVendorOpen] = useState(false);
   const [editVendor, setEditVendor] = useState<any | null>(null);
-  const [vendorForm, setVendorForm] = useState({ name: '', email: '', trn: '' });
+  const [vendorForm, setVendorForm] = useState({ name: '', email: '', trn: '', contact: '', phone: '', address: '' });
 
   const [grnNumber, setGrnNumber] = useState('');
   
@@ -1084,7 +1088,14 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
 
 
   const handleEditVendorClick = (v: any) => {
-    setVendorForm({ name: v.name || '', email: v.email || '', trn: v.trn || '' });
+    setVendorForm({
+      name: v.name || '',
+      email: v.email || '',
+      trn: v.trn || '',
+      contact: v.contact || '',
+      phone: v.phone || '',
+      address: v.address || '',
+    });
     setEditVendor(v);
     setVendorOpen(true);
   };
@@ -1126,7 +1137,7 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
         await addVendor(vendorForm);
         showToast('Vendor added successfully', 'success');
       }
-      setVendorForm({ name: '', email: '', trn: '' });
+      setVendorForm({ name: '', email: '', trn: '', contact: '', phone: '', address: '' });
       setEditVendor(null);
       setVendorOpen(false);
     } catch (e: any) {
@@ -1138,8 +1149,16 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
     <View style={styles.flex1}>
       <AppHeader roleLabel={roleLabel} branch={branch} />
       <ScreenBody>
+        {onBack && (
+          <TouchableOpacity onPress={onBack} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+            <ChevronLeft size={20} color="#64748b" />
+            <Text style={{ fontSize: 14, color: '#64748b', fontWeight: '500', marginLeft: 4 }}>Back</Text>
+          </TouchableOpacity>
+        )}
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <Text style={[styles.mainTitle, { marginBottom: 0 }]}>Purchasing</Text>
+          <Text style={[styles.mainTitle, { marginBottom: 0 }]}>
+            {stepOverride === 'vendors' ? 'Vendors' : 'Purchasing'}
+          </Text>
           {step === 'po' && (
             <Button variant="primary" onClick={() => {
               setEditPoId(null);
@@ -1157,7 +1176,7 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
           {step === 'vendors' && (
             <Button variant="primary" onClick={() => {
               setEditVendor(null);
-              setVendorForm({ name: '', email: '', trn: '' });
+              setVendorForm({ name: '', email: '', trn: '', contact: '', phone: '', address: '' });
               setVendorOpen(true);
             }}>
               <Plus size={16} color="#0f172a" style={{ marginRight: 8 }} />
@@ -1312,9 +1331,12 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
                   <View style={styles.cardHeaderRow}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.productName}>{v.name}</Text>
+                      {v.contact ? <Text style={styles.productMeta}>Contact: {v.contact}</Text> : null}
+                      {v.phone ? <Text style={styles.productMeta}>Phone: {v.phone}</Text> : null}
                       <Text style={styles.productMeta}>{v.email || 'No email'} · {v.trn ? `TRN: ${v.trn}` : 'No TRN'}</Text>
+                      {v.address ? <Text style={[styles.productMeta, { color: '#64748b', fontStyle: 'italic' }]}>Address: {v.address}</Text> : null}
                     </View>
-                    <View style={{ flexDirection: 'row', gap: 12 }}>
+                    <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
                       <TouchableOpacity onPress={() => handleEditVendorClick(v)} style={{ padding: 4 }}>
                         <Edit2 size={16} color="#64748b" />
                       </TouchableOpacity>
@@ -1677,18 +1699,27 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
               <X size={24} color="#64748b" />
             </TouchableOpacity>
           </View>
-          <View style={styles.modalBody}>
-            <Field label="Vendor Name">
-              <TextInput style={styles.input} value={vendorForm.name} onChangeText={t => setVendorForm({ ...vendorForm, name: t })} />
+          <ScrollView style={styles.modalBody}>
+            <Field label="Vendor Name *">
+              <TextInput style={styles.input} value={vendorForm.name} onChangeText={t => setVendorForm({ ...vendorForm, name: t })} placeholder="e.g. Al Rawabi Dairy" />
+            </Field>
+            <Field label="Contact Person">
+              <TextInput style={styles.input} value={vendorForm.contact} onChangeText={t => setVendorForm({ ...vendorForm, contact: t })} placeholder="e.g. Ahmed Ali" />
+            </Field>
+            <Field label="Phone Number">
+              <TextInput style={styles.input} value={vendorForm.phone} onChangeText={t => setVendorForm({ ...vendorForm, phone: t })} placeholder="e.g. +971 50 123 4567" keyboardType="phone-pad" />
             </Field>
             <Field label="Email">
-              <TextInput style={styles.input} value={vendorForm.email} onChangeText={t => setVendorForm({ ...vendorForm, email: t })} />
+              <TextInput style={styles.input} value={vendorForm.email} onChangeText={t => setVendorForm({ ...vendorForm, email: t })} placeholder="e.g. supplier@domain.com" keyboardType="email-address" autoCapitalize="none" />
             </Field>
-            <Field label="TRN">
-              <TextInput style={styles.input} value={vendorForm.trn} onChangeText={t => setVendorForm({ ...vendorForm, trn: t })} />
+            <Field label="Address">
+              <TextInput style={styles.input} value={vendorForm.address} onChangeText={t => setVendorForm({ ...vendorForm, address: t })} placeholder="e.g. Industrial Area 1, Sharjah, UAE" />
             </Field>
-            <Button variant="primary" onClick={submitVendor} style={{ marginTop: 24 }}>{editVendor ? 'Save Changes' : 'Add Vendor'}</Button>
-          </View>
+            <Field label="TRN (Tax Registration Number)">
+              <TextInput style={styles.input} value={vendorForm.trn} onChangeText={t => setVendorForm({ ...vendorForm, trn: t })} placeholder="15-digit TRN" />
+            </Field>
+            <Button variant="primary" onClick={submitVendor} style={{ marginTop: 20, marginBottom: 36 }}>{editVendor ? 'Save Changes' : 'Add Vendor'}</Button>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -1699,12 +1730,18 @@ export function HeadOfficePurchasing({ stepOverride }: { stepOverride?: 'po' | '
 export function HeadOfficeMore({ onOpen }: { onOpen: (key: string) => void }) {
   const { branch } = useAuth();
   const items = [
+    { key: 'my-profile', label: 'My Profile', desc: 'Account details, contact info & password', icon: <User size={18} color="#39ff14" /> },
+    { key: 'financial-reports', label: 'Financial Reports', desc: 'Executive P&L, margins, aging & VAT', icon: <TrendingUp size={18} color="#39ff14" /> },
+    { key: 'reports-vat', label: 'Reports & VAT', desc: '11 operational & inventory reports with export', icon: <FileText size={18} color="#39ff14" /> },
+    { key: 'vendors', label: 'Vendors', desc: 'Supplier profiles, contacts, phones & TRNs', icon: <Truck size={18} color="#39ff14" /> },
+    { key: 'payroll', label: 'Payroll & HR', desc: 'Salary profiles & compensation', icon: <DollarSign size={18} color="#39ff14" /> },
     { key: 'rbac', label: 'Staff & Roles', desc: 'RBAC permissions editor', icon: <Users size={18} color="#39ff14" /> },
     { key: 'vat', label: 'VAT Compliance', desc: 'FTA summaries & tax filing downloads', icon: <FileText size={18} color="#39ff14" /> },
     { key: 'crm', label: 'Customer Loyalty', desc: 'Loyalty policies & vouchers issuing', icon: <Users size={18} color="#39ff14" /> },
     { key: 'promotions', label: 'Promotions', desc: 'Marketing campaigns & bundle codes', icon: <Tag size={18} color="#39ff14" /> },
     { key: 'price-requests', label: 'Price Requests', desc: 'Approve or reject override requests', icon: <ShoppingCart size={18} color="#39ff14" /> },
     { key: 'audit-logs', label: 'Audit Logs', desc: 'System actions and operations log', icon: <FileText size={18} color="#39ff14" /> },
+    { key: 'billing', label: 'Subscription & Billing', desc: 'Plan, limits, renewal & invoice history', icon: <CreditCard size={18} color="#39ff14" /> },
     { key: 'aggregator', label: 'Aggregator Sync', desc: 'Talabat, Careem & more', icon: <Layers size={18} color="#39ff14" /> },
   ];
 

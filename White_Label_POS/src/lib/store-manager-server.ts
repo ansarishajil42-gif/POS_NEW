@@ -148,7 +148,7 @@ export const getStoreManagerDataFn = createServerFn({ method: "GET" })
       }
       const stockWhere = and(...stockConditions);
 
-      const [localStock, countRes, lowStockCountRes, distinctCatsRes, selectableProducts] = await Promise.all([
+      const [localStock, countRes, lowStockCountRes, distinctCatsRes] = await Promise.all([
         db
           .select({
             id: stockLevels.id,
@@ -182,23 +182,6 @@ export const getStoreManagerDataFn = createServerFn({ method: "GET" })
           .from(stockLevels)
           .innerJoin(products, eq(stockLevels.productId, products.id))
           .where(eq(stockLevels.branchId, branchId)),
-        db
-          .select({
-            id: products.id,
-            productId: products.id,
-            name: products.name,
-            productName: products.name,
-            sku: products.barcode,
-            barcode: products.barcode,
-            category: products.category,
-            unit: products.unit,
-            basePrice: products.salePrice,
-            stock: stockLevels.stock,
-          })
-          .from(stockLevels)
-          .innerJoin(products, eq(stockLevels.productId, products.id))
-          .where(eq(stockLevels.branchId, branchId))
-          .orderBy(asc(products.name)),
       ]);
 
       const totalStock = Number(countRes[0]?.count || 0);
@@ -273,7 +256,7 @@ export const getStoreManagerDataFn = createServerFn({ method: "GET" })
         stockTotalPages: Math.ceil(totalStock / limit),
         categories,
         lowStockCount,
-        selectableProducts,
+        selectableProducts: [] as any[],
         shifts: recentShifts.map((s) => {
           const matchedTill = dbTills.find((t) => t.id === s.tillId);
           return {
@@ -292,6 +275,55 @@ export const getStoreManagerDataFn = createServerFn({ method: "GET" })
     } catch (e: any) {
       console.error("BACKEND CRASH IN STORE MANAGER:", e);
       return { error: e.stack || e.message || String(e) };
+    }
+  });
+
+export const searchBranchProductsFn = createServerFn({ method: "GET" })
+  .validator((d?: { q?: string }) => d)
+  .handler(async ({ data }) => {
+    try {
+      const { branchId, tenantId } = await getStoreManagerContext();
+      const q = (data?.q || "").trim();
+
+      const conditions = [
+        eq(stockLevels.branchId, branchId),
+        eq(products.tenantId, tenantId),
+      ];
+
+      if (q) {
+        const queryPattern = `%${q}%`;
+        conditions.push(
+          or(
+            ilike(products.name, queryPattern),
+            ilike(products.barcode, queryPattern),
+            ilike(products.sku, queryPattern),
+          )!,
+        );
+      }
+
+      const rows = await db
+        .select({
+          id: products.id,
+          productId: products.id,
+          name: products.name,
+          productName: products.name,
+          sku: products.sku,
+          barcode: products.barcode,
+          category: products.category,
+          unit: products.unit,
+          basePrice: products.salePrice,
+          stock: stockLevels.stock,
+        })
+        .from(stockLevels)
+        .innerJoin(products, eq(stockLevels.productId, products.id))
+        .where(and(...conditions))
+        .orderBy(asc(products.name))
+        .limit(20);
+
+      return { success: true, products: rows };
+    } catch (err: any) {
+      console.error("searchBranchProductsFn error:", err);
+      return { success: false, error: err.message, products: [] };
     }
   });
 
@@ -567,7 +599,7 @@ export const createTillFn = createServerFn({ method: "POST" })
         .where(eq(tills.tenantId, tenantId));
 
       if (activeTills[0].count >= tenantRec.tillLimit) {
-        throw new Error("Till limit reached for this tenant.");
+        throw new Error(`Till limit reached (${activeTills[0].count} of ${tenantRec.tillLimit}). Ask the platform admin to increase your till limit.`);
       }
 
       // Insert new till

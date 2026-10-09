@@ -25,10 +25,10 @@ import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { getMyTenantBillingFn } from "@/lib/head-office-server";
+import { getMyTenantBillingFn, markTenantInvoicesSeenFn } from "@/lib/head-office-server";
 import { generateSubscriptionInvoicePdf } from "@/lib/subscription-invoice-pdf";
 
-export function TenantSubscriptionBillingTab() {
+export function TenantSubscriptionBillingTab({ onSeen }: { onSeen?: () => void } = {}) {
   const [loading, setLoading] = useState(true);
   const [billingData, setBillingData] = useState<any>(null);
 
@@ -44,6 +44,10 @@ export function TenantSubscriptionBillingTab() {
       const res = await getMyTenantBillingFn();
       if (res.success && res.data) {
         setBillingData(res.data);
+        // Mark sent invoices as seen
+        markTenantInvoicesSeenFn().then(() => {
+          onSeen?.();
+        }).catch(() => {});
       } else {
         toast.error(res.error || "Failed to load subscription details");
       }
@@ -324,8 +328,15 @@ export function TenantSubscriptionBillingTab() {
 
                   return (
                     <TableRow key={inv.id} className="group hover:bg-primary/[0.03] transition-colors">
-                      <TableCell className="p-4 font-mono text-xs font-extrabold text-ink">
-                        {inv.invoiceNumber}
+                      <TableCell className="p-4 font-mono text-xs font-extrabold text-ink whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <span>{inv.invoiceNumber}</span>
+                          {inv.sentToClientAt && !inv.clientSeenAt && (
+                            <Badge className="bg-lime-500 hover:bg-lime-600 text-slate-950 font-black text-[10px] px-1.5 py-0.5 rounded-md uppercase tracking-wider shadow-sm">
+                              New
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="p-4">
                         <Badge variant="secondary" className="rounded-xl px-2.5 py-0.5 text-[11px] uppercase tracking-wider font-extrabold">

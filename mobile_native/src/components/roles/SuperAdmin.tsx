@@ -11,13 +11,22 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  Switch,
 } from 'react-native';
 import { AppHeader, ScreenBody, ScreenHeader } from '../Shell';
 import { Card, StatCard } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { Toast, ToastType } from '../ui/Toast';
 import { useAuth } from '../../lib/auth';
-import { useSuperAdmin, Tenant, Branch, CreateTenantInput } from '../../lib/SuperAdminContext';
+import {
+  useSuperAdmin,
+  Tenant,
+  Branch,
+  CreateTenantInput,
+  SalesVolumeSeriesItem,
+  PlanDistributionItem,
+  ActivityLogItem,
+} from '../../lib/SuperAdminContext';
 import {
   Building2,
   AlertTriangle,
@@ -36,6 +45,11 @@ import {
   MapPin,
   Layers,
   Check,
+  Activity,
+  Filter,
+  Clock,
+  Globe,
+  Calendar,
 } from 'lucide-react-native';
 
 // Helper to format dates cleanly
@@ -738,24 +752,374 @@ export function TenantDetail({ id, onBack }: { id: string; onBack: () => void })
 
 /**
  * SuperAdminAnalytics Screen
+ * Real-time Fleet GMV, Sales Volume Series, Tier Distribution & Audit Logs
  */
-export function SuperAdminAnalytics() {
+export function SuperAdminAnalytics({ onBack }: { onBack?: () => void } = {}) {
   const { branch } = useAuth();
-  const { tenants } = useSuperAdmin();
+  const { tenants, getSalesVolume, getPlanDistribution, getActivityLog } = useSuperAdmin();
+
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedTenantId, setSelectedTenantId] = useState<string>('all');
+  const [totalGmv, setTotalGmv] = useState<number>(0);
+  const [platformSeries, setPlatformSeries] = useState<SalesVolumeSeriesItem[]>([]);
+  const [orderCount, setOrderCount] = useState<number>(0);
+  const [planData, setPlanData] = useState<{ total: number; breakdown: PlanDistributionItem[] }>({
+    total: 0,
+    breakdown: [],
+  });
+  const [activityLogs, setActivityLogs] = useState<ActivityLogItem[]>([]);
+  const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
+
+  const loadData = async (tenantId = selectedTenantId) => {
+    try {
+      const [salesRes, planRes, logsRes] = await Promise.all([
+        getSalesVolume(tenantId !== 'all' ? { tenantId } : undefined),
+        getPlanDistribution(),
+        getActivityLog({ limit: 15 }),
+      ]);
+
+      if (salesRes.success) {
+        setTotalGmv(salesRes.totalGmv || 0);
+        setPlatformSeries(salesRes.platformSeries || []);
+        setOrderCount(salesRes.orderCount || 0);
+      }
+      if (planRes.success) {
+        setPlanData({
+          total: planRes.total || 0,
+          breakdown: planRes.breakdown || [],
+        });
+      }
+      if (logsRes.success) {
+        setActivityLogs(logsRes.logs || []);
+      }
+    } catch (err: any) {
+      setToast({ message: err.message || 'Failed to load analytics', type: 'error' });
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData(selectedTenantId);
+  }, [selectedTenantId]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadData(selectedTenantId);
+  };
+
+  const selectedTenantName =
+    selectedTenantId === 'all'
+      ? 'All Tenants (Fleet-wide)'
+      : tenants.find((t) => t.id === selectedTenantId)?.name || 'Selected Tenant';
+
+  const maxSeriesSales = Math.max(...platformSeries.map((s) => Number(s.sales) || 0), 1);
 
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="SA" branch={branch} />
-      <ScreenBody>
-        <ScrollView style={styles.flex1} contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.screenMainTitle}>Platform Analytics</Text>
-          <Text style={styles.screenSubtitle}>System summary</Text>
+      {onBack && (
+        <ScreenHeader
+          title="Platform Analytics"
+          subtitle="Fleet GMV, tier distribution & audit trails"
+          onBack={onBack}
+        />
+      )}
 
-          <View style={styles.statsGrid}>
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onDismiss={() => setToast(null)}
+        />
+      )}
+
+      <ScreenBody>
+        <ScrollView
+          style={styles.flex1}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: 60 }]}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        >
+          {!onBack && (
+            <View style={{ marginBottom: 16 }}>
+              <Text style={styles.screenMainTitle}>Platform Analytics</Text>
+              <Text style={styles.screenSubtitle}>Fleet GMV, tier distribution & audit trails</Text>
+            </View>
+          )}
+
+          {/* Tenant Drilldown Filter */}
+          <View style={analyticsStyles.section}>
+            <View style={analyticsStyles.sectionHeaderRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Filter size={14} color="#0f172a" />
+                <Text style={analyticsStyles.sectionTitle}>Tenant Drilldown</Text>
+              </View>
+              <Text style={analyticsStyles.scopeSubtitle} numberOfLines={1}>
+                {selectedTenantName}
+              </Text>
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={analyticsStyles.pillsContainer}
+            >
+              <TouchableOpacity
+                style={[
+                  analyticsStyles.scopePill,
+                  selectedTenantId === 'all' && analyticsStyles.scopePillActive,
+                ]}
+                onPress={() => setSelectedTenantId('all')}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    analyticsStyles.scopePillText,
+                    selectedTenantId === 'all' && analyticsStyles.scopePillTextActive,
+                  ]}
+                >
+                  All Tenants ({tenants.length})
+                </Text>
+              </TouchableOpacity>
+
+              {tenants.map((t) => {
+                const isActive = selectedTenantId === t.id;
+                return (
+                  <TouchableOpacity
+                    key={t.id}
+                    style={[analyticsStyles.scopePill, isActive && analyticsStyles.scopePillActive]}
+                    onPress={() => setSelectedTenantId(t.id)}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        analyticsStyles.scopePillText,
+                        isActive && analyticsStyles.scopePillTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {t.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+
+          {/* Core Stat Cards */}
+          <View style={[styles.statsGrid, { marginTop: 4 }]}>
             <View style={styles.halfCol}>
-              <StatCard label="Registered Tenants" value={String(tenants.length)} accent="brand" />
+              <StatCard
+                label="Sales Volume (GMV)"
+                value={`${Number(totalGmv || 0).toLocaleString()} AED`}
+                sub={selectedTenantId === 'all' ? 'Network-wide' : 'Tenant total'}
+                accent="brand"
+              />
+            </View>
+            <View style={styles.halfCol}>
+              <StatCard
+                label="Completed Orders"
+                value={String(orderCount || 0)}
+                sub="Processed"
+                accent="sky"
+              />
+            </View>
+            <View style={styles.halfCol}>
+              <StatCard
+                label="Registered Fleet"
+                value={String(planData.total || tenants.length)}
+                sub="Active accounts"
+                accent="amber"
+              />
+            </View>
+            <View style={styles.halfCol}>
+              <StatCard
+                label="System Health"
+                value="99.98%"
+                sub="Operational"
+                accent="rose"
+              />
             </View>
           </View>
+
+          {/* Sales Volume Visual Chart */}
+          <Card style={analyticsStyles.cardContainer}>
+            <View style={analyticsStyles.cardHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={[analyticsStyles.iconBadge, { backgroundColor: '#f0fdf4' }]}>
+                  <TrendingUp size={16} color="#39ff14" />
+                </View>
+                <View>
+                  <Text style={analyticsStyles.cardTitle}>Sales Volume Timeline</Text>
+                  <Text style={analyticsStyles.cardSubtitle}>
+                    Daily GMV aggregation for {selectedTenantName}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            {loading ? (
+              <View style={analyticsStyles.loadingBox}>
+                <ActivityIndicator size="small" color="#0f172a" />
+              </View>
+            ) : platformSeries.length === 0 ? (
+              <View style={analyticsStyles.emptyBox}>
+                <Text style={analyticsStyles.emptyText}>No sales recorded for this scope</Text>
+              </View>
+            ) : (
+              <View style={analyticsStyles.barList}>
+                {platformSeries.map((item, idx) => {
+                  const val = Number(item.sales) || 0;
+                  const percent = Math.max(6, Math.min(100, Math.round((val / maxSeriesSales) * 100)));
+                  return (
+                    <View key={idx} style={analyticsStyles.barRow}>
+                      <View style={analyticsStyles.barLabelCol}>
+                        <Text style={analyticsStyles.barDateText}>{item.t}</Text>
+                        <Text style={analyticsStyles.barAmountText}>
+                          {val.toLocaleString()} AED
+                        </Text>
+                      </View>
+                      <View style={analyticsStyles.barTrack}>
+                        <View
+                          style={[
+                            analyticsStyles.barFill,
+                            {
+                              width: `${percent}%`,
+                              backgroundColor: val > 0 ? '#39ff14' : '#cbd5e1',
+                            },
+                          ]}
+                        />
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </Card>
+
+          {/* Tenant Plan Distribution Breakdown */}
+          <Card style={analyticsStyles.cardContainer}>
+            <View style={analyticsStyles.cardHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={[analyticsStyles.iconBadge, { backgroundColor: '#f0f9ff' }]}>
+                  <Layers size={16} color="#0284c7" />
+                </View>
+                <View>
+                  <Text style={analyticsStyles.cardTitle}>Tenant Plan Distribution</Text>
+                  <Text style={analyticsStyles.cardSubtitle}>
+                    {planData.total} total active accounts across tiers
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={analyticsStyles.planList}>
+              {(planData.breakdown.length > 0
+                ? planData.breakdown
+                : [
+                    { plan: 'Starter', count: 0, percentage: 0 },
+                    { plan: 'Growth', count: 0, percentage: 0 },
+                    { plan: 'Enterprise', count: 0, percentage: 0 },
+                  ]
+              ).map((p) => {
+                const planColor =
+                  p.plan === 'Enterprise'
+                    ? { bar: '#a855f7', badge: 'brand' as const }
+                    : p.plan === 'Growth'
+                    ? { bar: '#0284c7', badge: 'info' as const }
+                    : { bar: '#64748b', badge: 'neutral' as const };
+
+                return (
+                  <View key={p.plan} style={analyticsStyles.planRow}>
+                    <View style={analyticsStyles.planInfoRow}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Badge variant={planColor.badge}>{p.plan}</Badge>
+                        <Text style={analyticsStyles.planCountText}>{p.count} tenants</Text>
+                      </View>
+                      <Text style={analyticsStyles.planPercentText}>{p.percentage}%</Text>
+                    </View>
+                    <View style={analyticsStyles.planTrack}>
+                      <View
+                        style={[
+                          analyticsStyles.planFill,
+                          {
+                            width: `${Math.max(3, p.percentage)}%`,
+                            backgroundColor: planColor.bar,
+                          },
+                        ]}
+                      />
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </Card>
+
+          {/* Live System Activity Log */}
+          <Card style={analyticsStyles.cardContainer}>
+            <View style={analyticsStyles.cardHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={[analyticsStyles.iconBadge, { backgroundColor: '#fffbeb' }]}>
+                  <Activity size={16} color="#d97706" />
+                </View>
+                <View>
+                  <Text style={analyticsStyles.cardTitle}>System Activity Log</Text>
+                  <Text style={analyticsStyles.cardSubtitle}>
+                    Real-time platform events & audit actions
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            {loading ? (
+              <View style={analyticsStyles.loadingBox}>
+                <ActivityIndicator size="small" color="#0f172a" />
+              </View>
+            ) : activityLogs.length === 0 ? (
+              <View style={analyticsStyles.emptyBox}>
+                <Text style={analyticsStyles.emptyText}>No recent platform events recorded</Text>
+              </View>
+            ) : (
+              <View style={analyticsStyles.logList}>
+                {activityLogs.map((log) => {
+                  const isSuccess =
+                    log.action.toLowerCase().includes('create') ||
+                    log.action.toLowerCase().includes('payment') ||
+                    log.action.toLowerCase().includes('active');
+                  const isWarn =
+                    log.action.toLowerCase().includes('suspend') ||
+                    log.action.toLowerCase().includes('delete') ||
+                    log.action.toLowerCase().includes('archive');
+
+                  const variant = isWarn ? 'warn' : isSuccess ? 'success' : 'info';
+
+                  return (
+                    <View key={log.id} style={analyticsStyles.logItem}>
+                      <View style={analyticsStyles.logHeaderRow}>
+                        <Text style={analyticsStyles.logActionText}>{log.action}</Text>
+                        <Badge variant={variant}>{log.entityType}</Badge>
+                      </View>
+                      <View style={analyticsStyles.logMetaRow}>
+                        {log.tenantName && (
+                          <Text style={analyticsStyles.logTenantText}>
+                            Tenant: {log.tenantName}
+                          </Text>
+                        )}
+                        {log.userName && (
+                          <Text style={analyticsStyles.logUserText}>By: {log.userName}</Text>
+                        )}
+                        <Text style={analyticsStyles.logDateText}>
+                          {formatDate(log.createdAt)}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </Card>
         </ScrollView>
       </ScreenBody>
     </View>
@@ -764,28 +1128,677 @@ export function SuperAdminAnalytics() {
 
 /**
  * SuperAdminSettings Screen
+ * Tax & Currency Settings: UAE VAT, Inclusive/Exclusive mode, Base Currency, Timezone & Date Format
  */
-export function SuperAdminSettings() {
+export function SuperAdminSettings({ onBack }: { onBack?: () => void } = {}) {
   const { branch } = useAuth();
+  const { getPlatformSettings, updatePlatformSettings } = useSuperAdmin();
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [vatRate, setVatRate] = useState('5.00');
+  const [vatInclusive, setVatInclusive] = useState(true);
+  const [currency, setCurrency] = useState('AED');
+  const [timezone, setTimezone] = useState('Asia/Dubai');
+  const [dateFormat, setDateFormat] = useState('DD/MM/YYYY');
+  const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        const res = await getPlatformSettings();
+        if (res.success && res.settings) {
+          if (res.settings.vatRate !== undefined) setVatRate(String(res.settings.vatRate));
+          if (res.settings.vatInclusive !== undefined) setVatInclusive(Boolean(res.settings.vatInclusive));
+          if (res.settings.currency) setCurrency(res.settings.currency);
+          if (res.settings.timezone) setTimezone(res.settings.timezone);
+          if (res.settings.dateFormat) setDateFormat(res.settings.dateFormat);
+        }
+      } catch (err: any) {
+        setToast({ message: err.message || 'Failed to load platform settings', type: 'error' });
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      const res = await updatePlatformSettings({
+        vatRate: vatRate.trim(),
+        vatInclusive,
+        currency,
+        timezone,
+        dateFormat,
+      });
+
+      if (res.success) {
+        setToast({ message: res.message || 'Platform settings updated successfully', type: 'success' });
+      } else {
+        setToast({ message: res.error || 'Failed to update platform settings', type: 'error' });
+      }
+    } catch (err: any) {
+      setToast({ message: err.message || 'Failed to update platform settings', type: 'error' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const currencyOptions = ['AED', 'SAR', 'USD', 'EUR'];
+  const timezoneOptions = [
+    { label: 'Dubai (GST +04:00)', value: 'Asia/Dubai' },
+    { label: 'Riyadh (AST +03:00)', value: 'Asia/Riyadh' },
+    { label: 'UTC (GMT +00:00)', value: 'UTC' },
+    { label: 'New York (EST/EDT)', value: 'America/New_York' },
+    { label: 'London (GMT/BST)', value: 'Europe/London' },
+  ];
+  const dateFormatOptions = [
+    { label: 'DD/MM/YYYY (Standard)', value: 'DD/MM/YYYY' },
+    { label: 'MM/DD/YYYY (US Format)', value: 'MM/DD/YYYY' },
+    { label: 'YYYY-MM-DD (ISO Format)', value: 'YYYY-MM-DD' },
+  ];
 
   return (
     <View style={styles.flex1}>
       <AppHeader roleLabel="SA" branch={branch} />
-      <ScreenBody>
-        <ScrollView style={styles.flex1} contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.screenMainTitle}>Tax & Currency Settings</Text>
-          <Text style={styles.screenSubtitle}>UAE VAT & regional parameters</Text>
+      {onBack && (
+        <ScreenHeader
+          title="Tax & Currency Settings"
+          subtitle="UAE VAT rates, financial currency & regional localization"
+          onBack={onBack}
+        />
+      )}
 
-          <Card style={styles.itemCard}>
-            <Text style={styles.detailLabel}>Standard VAT: 5.00%</Text>
-            <Text style={styles.detailLabel}>Currency: AED</Text>
-            <Text style={styles.detailLabel}>Pricing Mode: Tax-Inclusive</Text>
-          </Card>
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onDismiss={() => setToast(null)}
+        />
+      )}
+
+      <ScreenBody>
+        <ScrollView
+          style={styles.flex1}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: 60 }]}
+        >
+          {!onBack && (
+            <View style={{ marginBottom: 16 }}>
+              <Text style={styles.screenMainTitle}>Tax & Currency Settings</Text>
+              <Text style={styles.screenSubtitle}>
+                UAE VAT rates, financial currency & regional localization
+              </Text>
+            </View>
+          )}
+
+          {loading ? (
+            <View style={settingsStyles.loadingCenter}>
+              <ActivityIndicator size="large" color="#0f172a" />
+              <Text style={settingsStyles.loadingText}>Loading platform configuration...</Text>
+            </View>
+          ) : (
+            <>
+              {/* VAT Configuration Card */}
+              <Card style={settingsStyles.sectionCard}>
+                <View style={settingsStyles.sectionHeader}>
+                  <View style={[settingsStyles.iconBadge, { backgroundColor: '#f0fdf4' }]}>
+                    <Coins size={18} color="#39ff14" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={settingsStyles.sectionTitle}>Value-Added Tax (VAT)</Text>
+                    <Text style={settingsStyles.sectionSubtitle}>
+                      Regional tax applied to transactions across all tenant tills
+                    </Text>
+                  </View>
+                </View>
+
+                {/* VAT Rate Input */}
+                <View style={settingsStyles.fieldGroup}>
+                  <Text style={settingsStyles.fieldLabel}>Standard VAT Rate (%)</Text>
+                  <View style={settingsStyles.inputWithSuffix}>
+                    <TextInput
+                      style={settingsStyles.textInput}
+                      value={vatRate}
+                      onChangeText={setVatRate}
+                      placeholder="5.00"
+                      keyboardType="numeric"
+                    />
+                    <Text style={settingsStyles.inputSuffix}>%</Text>
+                  </View>
+                  <Text style={settingsStyles.fieldHint}>
+                    UAE Federal Tax Authority standard rate is 5.00%.
+                  </Text>
+                </View>
+
+                {/* Tax Inclusive Toggle */}
+                <View style={settingsStyles.toggleRow}>
+                  <View style={{ flex: 1, paddingRight: 16 }}>
+                    <Text style={settingsStyles.toggleTitle}>Tax-Inclusive Pricing</Text>
+                    <Text style={settingsStyles.toggleDesc}>
+                      {vatInclusive
+                        ? 'Active: Displayed product prices on POS and receipts already include VAT.'
+                        : 'Inactive: VAT will be calculated and added on top of item prices at checkout.'}
+                    </Text>
+                  </View>
+                  <Switch
+                    value={vatInclusive}
+                    onValueChange={setVatInclusive}
+                    trackColor={{ false: '#cbd5e1', true: '#39ff14' }}
+                    thumbColor="#ffffff"
+                  />
+                </View>
+              </Card>
+
+              {/* Currency Selector Card */}
+              <Card style={settingsStyles.sectionCard}>
+                <View style={settingsStyles.sectionHeader}>
+                  <View style={[settingsStyles.iconBadge, { backgroundColor: '#f0f9ff' }]}>
+                    <Globe size={18} color="#0284c7" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={settingsStyles.sectionTitle}>Base Platform Currency</Text>
+                    <Text style={settingsStyles.sectionSubtitle}>
+                      Standard billing, reporting & subscription currency
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={settingsStyles.currencyGrid}>
+                  {currencyOptions.map((curr) => {
+                    const isSelected = currency === curr;
+                    return (
+                      <TouchableOpacity
+                        key={curr}
+                        style={[
+                          settingsStyles.currencyPill,
+                          isSelected && settingsStyles.currencyPillSelected,
+                        ]}
+                        onPress={() => setCurrency(curr)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            settingsStyles.currencyText,
+                            isSelected && settingsStyles.currencyTextSelected,
+                          ]}
+                        >
+                          {curr}
+                        </Text>
+                        {isSelected && <Check size={14} color="#ffffff" />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </Card>
+
+              {/* Timezone Card */}
+              <Card style={settingsStyles.sectionCard}>
+                <View style={settingsStyles.sectionHeader}>
+                  <View style={[settingsStyles.iconBadge, { backgroundColor: '#fffbeb' }]}>
+                    <Clock size={18} color="#d97706" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={settingsStyles.sectionTitle}>Regional Timezone</Text>
+                    <Text style={settingsStyles.sectionSubtitle}>
+                      Used for daily sales cutoff, reporting aggregation and timestamps
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={settingsStyles.optionsList}>
+                  {timezoneOptions.map((tz) => {
+                    const isSelected = timezone === tz.value;
+                    return (
+                      <TouchableOpacity
+                        key={tz.value}
+                        style={[
+                          settingsStyles.radioOption,
+                          isSelected && settingsStyles.radioOptionSelected,
+                        ]}
+                        onPress={() => setTimezone(tz.value)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            settingsStyles.radioOptionText,
+                            isSelected && settingsStyles.radioOptionTextSelected,
+                          ]}
+                        >
+                          {tz.label}
+                        </Text>
+                        {isSelected && <Check size={16} color="#39ff14" />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </Card>
+
+              {/* Date Format Card */}
+              <Card style={settingsStyles.sectionCard}>
+                <View style={settingsStyles.sectionHeader}>
+                  <View style={[settingsStyles.iconBadge, { backgroundColor: '#f1f5f9' }]}>
+                    <Calendar size={18} color="#475569" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={settingsStyles.sectionTitle}>Date Format</Text>
+                    <Text style={settingsStyles.sectionSubtitle}>
+                      Preferred date display format across invoices, reports and tables
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={settingsStyles.optionsList}>
+                  {dateFormatOptions.map((df) => {
+                    const isSelected = dateFormat === df.value;
+                    return (
+                      <TouchableOpacity
+                        key={df.value}
+                        style={[
+                          settingsStyles.radioOption,
+                          isSelected && settingsStyles.radioOptionSelected,
+                        ]}
+                        onPress={() => setDateFormat(df.value)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            settingsStyles.radioOptionText,
+                            isSelected && settingsStyles.radioOptionTextSelected,
+                          ]}
+                        >
+                          {df.label}
+                        </Text>
+                        {isSelected && <Check size={16} color="#39ff14" />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </Card>
+
+              {/* Save Button */}
+              <TouchableOpacity
+                style={[settingsStyles.saveButton, saving && settingsStyles.saveButtonDisabled]}
+                onPress={handleSave}
+                disabled={saving}
+                activeOpacity={0.85}
+              >
+                {saving ? (
+                  <ActivityIndicator size="small" color="#0f172a" />
+                ) : (
+                  <>
+                    <Check size={18} color="#0f172a" />
+                    <Text style={settingsStyles.saveButtonText}>Save Platform Settings</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </>
+          )}
         </ScrollView>
       </ScreenBody>
     </View>
   );
 }
+
+const analyticsStyles = StyleSheet.create({
+  section: {
+    marginBottom: 12,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  scopeSubtitle: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '500',
+    maxWidth: 180,
+  },
+  pillsContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingVertical: 2,
+  },
+  scopePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  scopePillActive: {
+    backgroundColor: '#0f172a',
+    borderColor: '#0f172a',
+  },
+  scopePillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  scopePillTextActive: {
+    color: '#ffffff',
+  },
+  cardContainer: {
+    marginTop: 12,
+    padding: 16,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  iconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  cardSubtitle: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  loadingBox: {
+    paddingVertical: 24,
+    alignItems: 'center',
+  },
+  emptyBox: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 12,
+    color: '#94a3b8',
+    fontStyle: 'italic',
+  },
+  barList: {
+    gap: 12,
+  },
+  barRow: {
+    gap: 4,
+  },
+  barLabelCol: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  barDateText: {
+    fontSize: 11,
+    color: '#475569',
+    fontWeight: '500',
+  },
+  barAmountText: {
+    fontSize: 12,
+    color: '#0f172a',
+    fontWeight: '700',
+  },
+  barTrack: {
+    height: 8,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  barFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  planList: {
+    gap: 12,
+  },
+  planRow: {
+    gap: 6,
+  },
+  planInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  planCountText: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '600',
+  },
+  planPercentText: {
+    fontSize: 12,
+    color: '#0f172a',
+    fontWeight: '700',
+  },
+  planTrack: {
+    height: 8,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  planFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  logList: {
+    gap: 10,
+  },
+  logItem: {
+    padding: 10,
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  logHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  logActionText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0f172a',
+    flex: 1,
+    marginRight: 8,
+  },
+  logMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  logTenantText: {
+    fontSize: 10,
+    color: '#64748b',
+  },
+  logUserText: {
+    fontSize: 10,
+    color: '#64748b',
+  },
+  logDateText: {
+    fontSize: 10,
+    color: '#94a3b8',
+    marginLeft: 'auto',
+  },
+});
+
+const settingsStyles = StyleSheet.create({
+  loadingCenter: {
+    paddingVertical: 40,
+    alignItems: 'center',
+    gap: 10,
+  },
+  loadingText: {
+    fontSize: 13,
+    color: '#64748b',
+  },
+  sectionCard: {
+    marginBottom: 14,
+    padding: 16,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  iconBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  sectionSubtitle: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  fieldGroup: {
+    marginBottom: 14,
+  },
+  fieldLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  inputWithSuffix: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+  },
+  textInput: {
+    flex: 1,
+    height: 42,
+    fontSize: 14,
+    color: '#0f172a',
+  },
+  inputSuffix: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#64748b',
+    paddingLeft: 8,
+  },
+  fieldHint: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 4,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+  },
+  toggleTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  toggleDesc: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  currencyGrid: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  currencyPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 42,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+  },
+  currencyPillSelected: {
+    backgroundColor: '#0f172a',
+    borderColor: '#0f172a',
+  },
+  currencyText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  currencyTextSelected: {
+    color: '#ffffff',
+  },
+  optionsList: {
+    gap: 8,
+  },
+  radioOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+  },
+  radioOptionSelected: {
+    borderColor: '#39ff14',
+    backgroundColor: 'rgba(57, 255, 20, 0.05)',
+  },
+  radioOptionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  radioOptionTextSelected: {
+    color: '#0f172a',
+    fontWeight: '700',
+  },
+  saveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#39ff14',
+    height: 48,
+    borderRadius: 10,
+    marginTop: 6,
+    marginBottom: 20,
+  },
+  saveButtonDisabled: {
+    opacity: 0.6,
+  },
+  saveButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+});
 
 /* ========================================================================= */
 /* MODAL COMPONENTS                                                         */

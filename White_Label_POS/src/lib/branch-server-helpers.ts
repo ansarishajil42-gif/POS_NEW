@@ -18,7 +18,7 @@ export async function createBranchInternal(data: { tenantId: string; name: strin
       .where(eq(branches.tenantId, data.tenantId));
       
     if (activeBranches[0].count >= tenantRec.outletLimit) {
-      throw new Error("Outlet limit reached for this tenant.");
+      throw new Error(`Branch limit reached (${activeBranches[0].count} of ${tenantRec.outletLimit}). Ask the platform admin to increase your outlet limit.`);
     }
 
     const [newBranch] = await tx.insert(branches).values({

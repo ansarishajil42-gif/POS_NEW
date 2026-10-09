@@ -31,14 +31,17 @@ import {
   tenantSubscriptions,
   tenantInvoices,
   tenantPayments,
+  salesChannels,
+  productChannelPriceOverrides,
 } from "@/server/db/schema";
 
-import { eq, and, sql, desc, inArray, ne, or, ilike, lte, gte } from "drizzle-orm";
+import { eq, and, sql, desc, inArray, ne, or, ilike, lte, gte, isNull, isNotNull } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
 import { logAuditAction } from "@/lib/audit-logger";
 import bcrypt from "bcryptjs";
 import { createBranchInternal } from "@/lib/branch-server-helpers";
 import { z } from "zod";
+import { resolveChannelPrice } from "@/lib/channel-pricing";
 
 // Middleware
 async function getHeadOfficeSession() {
@@ -298,102 +301,196 @@ export const getCatalogProductsFn = createServerFn({ method: "GET" })
 export const getHeadOfficeDataFn = createServerFn({ method: "GET" })
   .validator((d?: { page?: number; pageSize?: number; search?: string; branchId?: string }) => d)
   .handler(async ({ data }) => {
+  const tStart = performance.now();
   try {
     const tenantId = await getHeadOfficeTenant();
 
-    const tenantInfo = await db.query.tenants.findFirst({
-      where: eq(tenants.id, tenantId),
-    });
-
-    // Settings
-    let settings = await db.query.tenantSettings.findFirst({
-      where: eq(tenantSettings.tenantId, tenantId),
-    });
-    if (!settings) {
-      const [newSet] = await db.insert(tenantSettings).values({ tenantId }).returning();
-      settings = newSet;
-    }
-
-    // Branches
-    const dbBranches = await db.query.branches.findMany({
-      where: eq(branches.tenantId, tenantId),
-    });
-
-    // Products (Paginated with O(N+M) mapping)
     const page = Math.max(1, Number(data?.page) || 1);
     const pageSize = Math.max(1, Math.min(200, Number(data?.pageSize) || 50));
     const offset = (page - 1) * pageSize;
 
-    let dbProducts: any[] = [];
-    let totalProducts = 0;
+    const productsPromise = (async () => {
+      let dbProducts: any[] = [];
+      let totalProducts = 0;
 
-    if (data?.branchId && data.branchId !== "all") {
-      const branchId = data.branchId;
-      let searchFilter = sql`TRUE`;
-      if (data?.search && data.search.trim()) {
-        const q = `%${data.search.trim()}%`;
-        searchFilter = sql`(p.name ILIKE ${q} OR p.barcode ILIKE ${q} OR p.sku ILIKE ${q})`;
+      if (data?.branchId && data.branchId !== "all") {
+        const branchId = data.branchId;
+        let searchFilter = sql`TRUE`;
+        if (data?.search && data.search.trim()) {
+          const q = `%${data.search.trim()}%`;
+          searchFilter = sql`(p.name ILIKE ${q} OR p.barcode ILIKE ${q} OR p.sku ILIKE ${q})`;
+        }
+
+        const [prodsRes, countRes] = await Promise.all([
+          db.execute(sql`
+            SELECT p.*
+            FROM products p
+            INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+            WHERE p.tenant_id = ${tenantId}::uuid
+              AND ${searchFilter}
+            ORDER BY p.created_at DESC
+            LIMIT ${pageSize} OFFSET ${offset};
+          `),
+          db.execute(sql`
+            SELECT count(*)::int as total
+            FROM products p
+            INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+            WHERE p.tenant_id = ${tenantId}::uuid
+              AND ${searchFilter};
+          `),
+        ]);
+
+        const rawProds = Array.isArray(prodsRes) ? prodsRes : (prodsRes as any)?.rows || [];
+        dbProducts = rawProds.map((p: any) => ({
+          id: p.id,
+          tenantId: p.tenant_id,
+          name: p.name,
+          barcode: p.barcode,
+          sku: p.sku,
+          category: p.category,
+          unit: p.unit,
+          costPrice: p.cost_price,
+          salePrice: p.sale_price,
+          isBatchTracked: p.is_batch_tracked,
+          createdAt: p.created_at,
+          updatedAt: p.updated_at,
+        }));
+        const rawCount = Array.isArray(countRes) ? countRes : (countRes as any)?.rows || [];
+        totalProducts = Number(rawCount[0]?.total || 0);
+      } else {
+        let prodWhere = eq(products.tenantId, tenantId);
+        if (data?.search && data.search.trim()) {
+          const q = `%${data.search.trim()}%`;
+          prodWhere = and(
+            eq(products.tenantId, tenantId),
+            or(ilike(products.name, q), ilike(products.barcode, q), ilike(products.sku, q)),
+          )!;
+        }
+
+        const [allProds, totalProductsCountRes] = await Promise.all([
+          db.query.products.findMany({
+            where: prodWhere,
+            limit: pageSize,
+            offset: offset,
+            orderBy: [desc(products.createdAt)],
+          }),
+          db.execute(sql`SELECT count(*)::int as total FROM products WHERE ${prodWhere};`),
+        ]);
+        dbProducts = allProds;
+        const rawCount = Array.isArray(totalProductsCountRes) ? totalProductsCountRes : (totalProductsCountRes as any)?.rows || [];
+        totalProducts = Number(rawCount[0]?.total || 0);
       }
+      return { dbProducts, totalProducts };
+    })();
 
-      const [prodsRes, countRes] = await Promise.all([
-        db.execute(sql`
-          SELECT p.*
-          FROM products p
-          INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
-          WHERE p.tenant_id = ${tenantId}::uuid
-            AND ${searchFilter}
-          ORDER BY p.created_at DESC
-          LIMIT ${pageSize} OFFSET ${offset};
-        `),
-        db.execute(sql`
-          SELECT count(*)::int as total
-          FROM products p
-          INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
-          WHERE p.tenant_id = ${tenantId}::uuid
-            AND ${searchFilter};
-        `),
-      ]);
-
-      const rawProds = Array.isArray(prodsRes) ? prodsRes : (prodsRes as any)?.rows || [];
-      dbProducts = rawProds.map((p: any) => ({
-        id: p.id,
-        tenantId: p.tenant_id,
-        name: p.name,
-        barcode: p.barcode,
-        sku: p.sku,
-        category: p.category,
-        unit: p.unit,
-        costPrice: p.cost_price,
-        salePrice: p.sale_price,
-        isBatchTracked: p.is_batch_tracked,
-        createdAt: p.created_at,
-        updatedAt: p.updated_at,
-      }));
-      const rawCount = Array.isArray(countRes) ? countRes : (countRes as any)?.rows || [];
-      totalProducts = Number(rawCount[0]?.total || 0);
-    } else {
-      let prodWhere = eq(products.tenantId, tenantId);
-      if (data?.search && data.search.trim()) {
-        const q = `%${data.search.trim()}%`;
-        prodWhere = and(
-          eq(products.tenantId, tenantId),
-          or(ilike(products.name, q), ilike(products.barcode, q), ilike(products.sku, q)),
-        )!;
+    const settingsPromise = (async () => {
+      let s = await db.query.tenantSettings.findFirst({
+        where: eq(tenantSettings.tenantId, tenantId),
+      });
+      if (!s) {
+        const [newSet] = await db.insert(tenantSettings).values({ tenantId }).returning();
+        s = newSet;
       }
+      return s;
+    })();
 
-      const [allProds, totalProductsCountRes] = await Promise.all([
-        db.query.products.findMany({
-          where: prodWhere,
-          limit: pageSize,
-          offset: offset,
-          orderBy: [desc(products.createdAt)],
-        }),
-        db.execute(sql`SELECT count(*)::int as total FROM products WHERE ${prodWhere};`),
-      ]);
-      dbProducts = allProds;
-      const rawCount = Array.isArray(totalProductsCountRes) ? totalProductsCountRes : (totalProductsCountRes as any)?.rows || [];
-      totalProducts = Number(rawCount[0]?.total || 0);
-    }
+    const [
+      tenantInfo,
+      settings,
+      dbBranches,
+      { dbProducts, totalProducts },
+      dbBatches,
+      dbPos,
+      dbVendors,
+      dbStaff,
+      dbCustomers,
+      dbPromotions,
+      dbPermissions,
+      dbOrders,
+      dbInvoices,
+      dbPriceOverrideRequests,
+      unseenInvoiceRows,
+      reminderInvoices,
+    ] = await Promise.all([
+      db.query.tenants.findFirst({
+        where: eq(tenants.id, tenantId),
+      }),
+      settingsPromise,
+      db.query.branches.findMany({
+        where: eq(branches.tenantId, tenantId),
+      }),
+      productsPromise,
+      db.query.batches.findMany({
+        where: eq(batches.tenantId, tenantId),
+        orderBy: [batches.expiryDate],
+      }),
+      db.query.purchaseOrders.findMany({
+        where: eq(purchaseOrders.tenantId, tenantId),
+        with: { vendor: true, branch: true, items: { with: { product: true } } },
+        orderBy: [desc(purchaseOrders.createdAt)],
+      }),
+      db.query.vendors.findMany({
+        where: eq(vendors.tenantId, tenantId),
+      }),
+      db.query.staffUsers.findMany({
+        where: eq(staffUsers.tenantId, tenantId),
+        columns: {
+          id: true,
+          tenantId: true,
+          branchId: true,
+          name: true,
+          email: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+        },
+      }),
+      db.query.customers.findMany({
+        where: eq(customers.tenantId, tenantId),
+      }),
+      db.query.promotions.findMany({
+        where: eq(promotions.tenantId, tenantId),
+      }),
+      db.query.rolePermissions.findMany({
+        where: eq(rolePermissions.tenantId, tenantId),
+      }),
+      db.query.orders.findMany({
+        where: eq(orders.tenantId, tenantId),
+        columns: { branchId: true, total: true, vat: true, subtotal: true, createdAt: true },
+      }),
+      db.query.vendorInvoices.findMany({
+        where: eq(vendorInvoices.tenantId, tenantId),
+      }),
+      db.query.priceOverrideRequests.findMany({
+        where: eq(priceOverrideRequests.tenantId, tenantId),
+        orderBy: [desc(priceOverrideRequests.createdAt)],
+        with: {
+          product: true,
+          branch: true,
+        },
+      }),
+      db
+        .select({ id: tenantInvoices.id })
+        .from(tenantInvoices)
+        .where(
+          and(
+            eq(tenantInvoices.tenantId, tenantId),
+            isNotNull(tenantInvoices.sentToClientAt),
+            isNull(tenantInvoices.clientSeenAt),
+          ),
+        ),
+      db
+        .select()
+        .from(tenantInvoices)
+        .where(
+          and(
+            eq(tenantInvoices.tenantId, tenantId),
+            isNotNull(tenantInvoices.reminderSentAt),
+            sql`${tenantInvoices.paymentStatus} NOT IN ('paid', 'manual_paid')`,
+          ),
+        )
+        .orderBy(desc(tenantInvoices.reminderSentAt)),
+    ]);
 
     const productIds = dbProducts.map((p) => p.id);
 
@@ -456,71 +553,9 @@ export const getHeadOfficeDataFn = createServerFn({ method: "GET" })
       conversions: conversionsMap.get(p.id) || [],
     }));
 
-    // Batches
-    const dbBatches = await db.query.batches.findMany({
-      where: inArray(
-        batches.branchId,
-        dbBranches.map((b) => b.id).concat(["00000000-0000-0000-0000-000000000000"]),
-      ),
-      orderBy: [batches.expiryDate],
-    });
-
-    // POs
-    const dbPos = await db.query.purchaseOrders.findMany({
-      where: eq(purchaseOrders.tenantId, tenantId),
-      with: { vendor: true, branch: true, items: { with: { product: true } } },
-      orderBy: [desc(purchaseOrders.createdAt)],
-    });
-
-    // Vendors
-    const dbVendors = await db.query.vendors.findMany({
-      where: eq(vendors.tenantId, tenantId),
-    });
-
-    // Staff
-    const dbStaff = await db.query.staffUsers.findMany({
-      where: eq(staffUsers.tenantId, tenantId),
-      columns: {
-        id: true,
-        tenantId: true,
-        branchId: true,
-        name: true,
-        email: true,
-        role: true,
-        isActive: true,
-        createdAt: true,
-      },
-    });
-
-    // Customers
-    const dbCustomers = await db.query.customers.findMany({
-      where: eq(customers.tenantId, tenantId),
-    });
-
-    // Promotions
-    const dbPromotions = await db.query.promotions.findMany({
-      where: eq(promotions.tenantId, tenantId),
-    });
-
-    // Permissions
-    const dbPermissions = await db.query.rolePermissions.findMany({
-      where: eq(rolePermissions.tenantId, tenantId),
-    });
-
-    // Orders for branch trend
-    const dbOrders = await db.query.orders.findMany({
-      where: eq(orders.tenantId, tenantId),
-      columns: { branchId: true, total: true, vat: true, subtotal: true, createdAt: true },
-    });
-
     // Calculate Output VAT (VAT collected on completed orders)
     const outputVat = dbOrders.reduce((sum, o) => sum + Number(o.vat || 0), 0);
     const salesTotal = dbOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
-
-    // Fetch Invoices to calculate Input VAT (VAT paid on purchases)
-    const dbInvoices = await db.query.vendorInvoices.findMany({
-      where: eq(vendorInvoices.tenantId, tenantId),
-    });
 
     const vatRateVal = settings ? Number(settings.vatRate) : 5.0;
     const inputVat = dbInvoices.reduce((sum, inv) => {
@@ -567,14 +602,8 @@ export const getHeadOfficeDataFn = createServerFn({ method: "GET" })
       branchTrend.push(dayData);
     }
 
-    const dbPriceOverrideRequests = await db.query.priceOverrideRequests.findMany({
-      where: eq(priceOverrideRequests.tenantId, tenantId),
-      orderBy: [desc(priceOverrideRequests.createdAt)],
-      with: {
-        product: true,
-        branch: true,
-      },
-    });
+    const elapsed = Math.round(performance.now() - tStart);
+    console.log(`[perf] getHeadOfficeDataFn ${elapsed}ms`);
 
     return {
       success: true,
@@ -600,6 +629,8 @@ export const getHeadOfficeDataFn = createServerFn({ method: "GET" })
       purchasesTotal,
       reportingPeriod,
       tenantName: tenantInfo ? tenantInfo.name : "Tenant",
+      unseenInvoicesCount: unseenInvoiceRows.length,
+      reminderInvoices,
     };
   } catch (err: any) {
     console.error("getHeadOfficeDataFn error:", err);
@@ -1143,7 +1174,7 @@ export const createProductFn = createServerFn({ method: "POST" })
           await tx.insert(stockLevels).values(stockInserts);
         }
       });
-      return { success: true };
+      return { success: true, id: newProduct.id };
     } catch (error: any) {
       console.error(error);
       return { success: false, error: "Failed to create product" };
@@ -1299,19 +1330,7 @@ export const deleteProductFn = createServerFn({ method: "POST" })
           return { success: false, error: "Unauthorized" };
         }
 
-        // 1. Stock Levels (block if stock != 0 in any branch)
-        const activeStock = await tx
-          .select()
-          .from(stockLevels)
-          .where(and(eq(stockLevels.productId, data.id), ne(stockLevels.stock, 0)));
-        if (activeStock.length > 0) {
-          if (process.env["NODE_ENV"] !== "production") {
-            console.log(`[DEBUG] Delete blocked: product ${data.id} has active stock`, activeStock);
-          }
-          return { success: false, error: "PRODUCT_USED_IN_STOCK" };
-        }
-
-        // 2. Stock Transfers
+        // 1. Stock Transfers
         const transfers = await tx
           .select()
           .from(stockTransfers)
@@ -1423,6 +1442,259 @@ export const deleteProductFn = createServerFn({ method: "POST" })
         console.error(`[ERROR] Delete failed for product ${data.id}:`, error);
       }
       return { success: false, error: error.message || "Failed to delete product" };
+    }
+  });
+
+export const bulkDeleteProductsFn = createServerFn({ method: "POST" })
+  .validator(
+    (d?: {
+      productIds?: string[];
+      allMatching?: {
+        search?: string;
+        branchId?: string;
+      };
+    }) => d,
+  )
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+    const tenantId = session.tenantId;
+
+    try {
+      let resolvedIds: string[] = [];
+
+      if (data?.allMatching) {
+        const { search, branchId } = data.allMatching;
+        if (branchId && branchId !== "all") {
+          let searchFilter = sql`TRUE`;
+          if (search && search.trim()) {
+            const q = `%${search.trim()}%`;
+            searchFilter = sql`(p.name ILIKE ${q} OR p.barcode ILIKE ${q} OR p.sku ILIKE ${q})`;
+          }
+
+          const prodsRes = await db.execute(sql`
+            SELECT p.id
+            FROM products p
+            INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+            WHERE p.tenant_id = ${tenantId}::uuid
+              AND ${searchFilter};
+          `);
+          const rawRows = Array.isArray(prodsRes) ? prodsRes : (prodsRes as any)?.rows || [];
+          resolvedIds = rawRows.map((r: any) => String(r.id));
+        } else {
+          let prodWhere = eq(products.tenantId, tenantId);
+          if (search && search.trim()) {
+            const q = `%${search.trim()}%`;
+            prodWhere = and(
+              eq(products.tenantId, tenantId),
+              or(ilike(products.name, q), ilike(products.barcode, q), ilike(products.sku, q)),
+            )!;
+          }
+          const allProds = await db
+            .select({ id: products.id })
+            .from(products)
+            .where(prodWhere);
+          resolvedIds = allProds.map((p) => p.id);
+        }
+      } else if (data?.productIds && data.productIds.length > 0) {
+        resolvedIds = Array.from(new Set(data.productIds));
+      }
+
+      if (resolvedIds.length === 0) {
+        return { deleted: 0, skipped: 0, skippedRows: [] };
+      }
+
+      let totalDeleted = 0;
+      const skippedRows: Array<{ name: string; barcode?: string; reason: string }> = [];
+
+      const chunkSize = 1000;
+      for (let i = 0; i < resolvedIds.length; i += chunkSize) {
+        const chunkIds = resolvedIds.slice(i, i + chunkSize);
+
+        // Fetch products belonging to this tenant for this chunk
+        const chunkProducts = await db
+          .select({
+            id: products.id,
+            name: products.name,
+            barcode: products.barcode,
+          })
+          .from(products)
+          .where(and(eq(products.tenantId, tenantId), inArray(products.id, chunkIds)));
+
+        if (chunkProducts.length === 0) continue;
+
+        const currentProductIds = chunkProducts.map((p) => p.id);
+
+        // Run dependency / history checks
+        const [
+          transferRows,
+          batchRows,
+          salesRows,
+          purchaseRows,
+          grnRows,
+          ledgerRows,
+        ] = await Promise.all([
+          db
+            .select({ productId: stockTransfers.productId })
+            .from(stockTransfers)
+            .where(
+              and(
+                eq(stockTransfers.tenantId, tenantId),
+                inArray(stockTransfers.productId, currentProductIds),
+              ),
+            ),
+          db
+            .select({ productId: batches.productId })
+            .from(batches)
+            .where(
+              and(eq(batches.tenantId, tenantId), inArray(batches.productId, currentProductIds)),
+            ),
+          db
+            .select({ productId: orderItems.productId })
+            .from(orderItems)
+            .where(inArray(orderItems.productId, currentProductIds)),
+          db
+            .select({ productId: purchaseOrderItems.productId })
+            .from(purchaseOrderItems)
+            .where(inArray(purchaseOrderItems.productId, currentProductIds)),
+          db
+            .select({ productId: grnItems.productId })
+            .from(grnItems)
+            .where(inArray(grnItems.productId, currentProductIds)),
+          db
+            .select({ productId: inventoryLedger.productId })
+            .from(inventoryLedger)
+            .where(
+              and(
+                eq(inventoryLedger.tenantId, tenantId),
+                inArray(inventoryLedger.productId, currentProductIds),
+              ),
+            ),
+        ]);
+
+        const blockedMap = new Map<string, string>();
+        for (const r of transferRows) {
+          if (r.productId && !blockedMap.has(r.productId)) {
+            blockedMap.set(r.productId, "Used in stock transfers");
+          }
+        }
+        for (const r of batchRows) {
+          if (r.productId && !blockedMap.has(r.productId)) {
+            blockedMap.set(r.productId, "Has batch history");
+          }
+        }
+        for (const r of salesRows) {
+          if (r.productId && !blockedMap.has(r.productId)) {
+            blockedMap.set(r.productId, "Used in sales/orders");
+          }
+        }
+        for (const r of purchaseRows) {
+          if (r.productId && !blockedMap.has(r.productId)) {
+            blockedMap.set(r.productId, "Used in purchase orders");
+          }
+        }
+        for (const r of grnRows) {
+          if (r.productId && !blockedMap.has(r.productId)) {
+            blockedMap.set(r.productId, "Used in goods received notes (GRN)");
+          }
+        }
+        for (const r of ledgerRows) {
+          if (r.productId && !blockedMap.has(r.productId)) {
+            blockedMap.set(r.productId, "Used in inventory ledger");
+          }
+        }
+
+        const validChunkToDelete: string[] = [];
+        for (const p of chunkProducts) {
+          const reason = blockedMap.get(p.id);
+          if (reason) {
+            skippedRows.push({
+              name: p.name,
+              barcode: p.barcode || undefined,
+              reason,
+            });
+          } else {
+            validChunkToDelete.push(p.id);
+          }
+        }
+
+        // Delete valid products and their dependent configurations inside a transaction
+        if (validChunkToDelete.length > 0) {
+          await db.transaction(async (tx) => {
+            await tx
+              .delete(priceOverrideRequests)
+              .where(inArray(priceOverrideRequests.productId, validChunkToDelete));
+            await tx
+              .delete(stockLevels)
+              .where(inArray(stockLevels.productId, validChunkToDelete));
+            await tx
+              .delete(productBarcodes)
+              .where(inArray(productBarcodes.productId, validChunkToDelete));
+            await tx
+              .delete(productVariants)
+              .where(inArray(productVariants.productId, validChunkToDelete));
+            await tx
+              .delete(unitConversions)
+              .where(inArray(unitConversions.productId, validChunkToDelete));
+            await tx
+              .delete(stockAdjustments)
+              .where(inArray(stockAdjustments.productId, validChunkToDelete));
+            await tx
+              .delete(productChannelPriceOverrides)
+              .where(
+                and(
+                  eq(productChannelPriceOverrides.tenantId, tenantId),
+                  inArray(productChannelPriceOverrides.productId, validChunkToDelete),
+                ),
+              );
+            await tx
+              .delete(productRecipes)
+              .where(
+                and(
+                  eq(productRecipes.tenantId, tenantId),
+                  or(
+                    inArray(productRecipes.productId, validChunkToDelete),
+                    inArray(productRecipes.ingredientProductId, validChunkToDelete),
+                  ),
+                ),
+              );
+
+            await tx
+              .delete(products)
+              .where(
+                and(eq(products.tenantId, tenantId), inArray(products.id, validChunkToDelete)),
+              );
+          });
+
+          totalDeleted += validChunkToDelete.length;
+        }
+      }
+
+      // ONE audit log entry per call
+      if (totalDeleted > 0 || skippedRows.length > 0) {
+        await logAuditAction({
+          action: "Bulk Delete Products",
+          entityType: "product",
+          entityId: tenantId,
+          details: {
+            deletedCount: totalDeleted,
+            skippedCount: skippedRows.length,
+            sampleSkipped: skippedRows.slice(0, 5),
+          },
+          tenantId,
+          userId: session.userId,
+        });
+      }
+
+      return {
+        deleted: totalDeleted,
+        skipped: skippedRows.length,
+        skippedRows,
+      };
+    } catch (error: any) {
+      if (process.env["NODE_ENV"] !== "production") {
+        console.error("[ERROR] bulkDeleteProductsFn failed:", error);
+      }
+      throw new Error(error.message || "Failed to bulk delete products");
     }
   });
 
@@ -2649,11 +2921,16 @@ export const getMyTenantBillingFn = createServerFn({ method: "GET" })
 
       const branchCount = branchRows.length;
 
-      // 4. Invoices
+      // 4. Invoices (shows invoices that were sent OR are paid)
       const invoices = await db
         .select()
         .from(tenantInvoices)
-        .where(eq(tenantInvoices.tenantId, tenantId))
+        .where(
+          and(
+            eq(tenantInvoices.tenantId, tenantId),
+            sql`(${tenantInvoices.sentToClientAt} IS NOT NULL OR ${tenantInvoices.paymentStatus} IN ('paid', 'manual_paid'))`
+          )
+        )
         .orderBy(desc(tenantInvoices.createdAt));
 
       // 5. Payment History
@@ -2681,5 +2958,1105 @@ export const getMyTenantBillingFn = createServerFn({ method: "GET" })
       };
     }
   });
+
+export const markTenantInvoicesSeenFn = createServerFn({ method: "POST" })
+  .handler(async () => {
+    const sessionRes = await getSessionServerFn();
+    if (
+      !sessionRes.success ||
+      !sessionRes.session ||
+      sessionRes.session.role !== "Head Office Admin"
+    ) {
+      throw new Error("Unauthorized");
+    }
+    const tenantId = sessionRes.session.tenantId;
+    const now = new Date();
+    await db
+      .update(tenantInvoices)
+      .set({ clientSeenAt: now })
+      .where(
+        and(
+          eq(tenantInvoices.tenantId, tenantId),
+          isNotNull(tenantInvoices.sentToClientAt),
+          isNull(tenantInvoices.clientSeenAt)
+        )
+      );
+    return { success: true };
+  });
+
+export const getExistingProductIdentifiersFn = createServerFn({ method: "POST" })
+  .validator((d: { branchIds?: string[]; barcodes?: string[] }) => d)
+  .handler(async ({ data }) => {
+    const sessionRes = await getSessionServerFn();
+    if (
+      !sessionRes.success ||
+      !sessionRes.session ||
+      sessionRes.session.role !== "Head Office Admin"
+    ) {
+      throw new Error("Unauthorized");
+    }
+    const tenantId = sessionRes.session.tenantId;
+
+    const requestedBranchIds = Array.isArray(data?.branchIds) ? data.branchIds : [];
+
+    const tenantBranches = await db
+      .select({ id: branches.id, name: branches.name })
+      .from(branches)
+      .where(
+        requestedBranchIds.length > 0
+          ? and(eq(branches.tenantId, tenantId), inArray(branches.id, requestedBranchIds))
+          : eq(branches.tenantId, tenantId),
+      );
+
+    const validBranchIds = tenantBranches.map((b) => b.id);
+
+    const rawBarcodes = Array.isArray(data?.barcodes) ? data.barcodes : undefined;
+    let existingProds: {
+      id: string;
+      name: string;
+      barcode: string | null;
+      sku: string | null;
+      category: string | null;
+    }[] = [];
+
+    if (rawBarcodes !== undefined) {
+      const cleanBarcodes = Array.from(
+        new Set(rawBarcodes.map((b) => String(b || "").trim()).filter(Boolean))
+      );
+      if (cleanBarcodes.length === 0) {
+        return {
+          success: true,
+          existingProducts: [],
+          existingBarcodes: [],
+          existingSkus: [],
+          branches: tenantBranches,
+        };
+      }
+      existingProds = await db
+        .select({
+          id: products.id,
+          name: products.name,
+          barcode: products.barcode,
+          sku: products.sku,
+          category: products.category,
+        })
+        .from(products)
+        .where(
+          and(
+            eq(products.tenantId, tenantId),
+            inArray(products.barcode, cleanBarcodes)
+          )
+        );
+    } else {
+      existingProds = await db
+        .select({
+          id: products.id,
+          name: products.name,
+          barcode: products.barcode,
+          sku: products.sku,
+          category: products.category,
+        })
+        .from(products)
+        .where(eq(products.tenantId, tenantId));
+    }
+
+    const barcodesSet = new Set<string>();
+    const skusSet = new Set<string>();
+
+    for (const p of existingProds) {
+      if (p.barcode) barcodesSet.add(p.barcode.trim());
+      if (p.sku) skusSet.add(p.sku.trim());
+    }
+
+    const productBranchesMap = new Map<string, string[]>();
+    if (validBranchIds.length > 0 && existingProds.length > 0) {
+      const prodIds = existingProds.map((p) => p.id);
+      const existingStocks = await db
+        .select({
+          productId: stockLevels.productId,
+          branchId: stockLevels.branchId,
+        })
+        .from(stockLevels)
+        .where(
+          and(
+            inArray(stockLevels.branchId, validBranchIds),
+            inArray(stockLevels.productId, prodIds)
+          )
+        );
+
+      for (const s of existingStocks) {
+        const list = productBranchesMap.get(s.productId) || [];
+        if (!list.includes(s.branchId)) {
+          list.push(s.branchId);
+        }
+        productBranchesMap.set(s.productId, list);
+      }
+    }
+
+    return {
+      success: true,
+      existingProducts: existingProds
+        .filter((p) => p.barcode && p.barcode.trim())
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          barcode: p.barcode!.trim(),
+          sku: p.sku ? p.sku.trim() : "",
+          existingBranchIds: productBranchesMap.get(p.id) || [],
+        })),
+      existingBarcodes: Array.from(barcodesSet),
+      existingSkus: Array.from(skusSet),
+      branches: tenantBranches,
+    };
+  });
+
+export function extractRealDbError(err: any): string {
+  if (!err) return "Database error";
+  const cause = err.cause || err;
+  const code = cause.code || err.code;
+  const detail = cause.detail || err.detail;
+  const constraint = cause.constraint || cause.constraint_name || err.constraint || err.constraint_name || "";
+
+  if (
+    code === "23505" ||
+    String(err.message || "").includes("duplicate key") ||
+    String(cause.message || "").includes("duplicate key")
+  ) {
+    if (detail) {
+      const skuMatch = detail.match(/sku\)=\([^,]+,\s*([^)]+)\)/i) || detail.match(/sku\)=\(([^)]+)\)/i);
+      if (skuMatch) {
+        return `Duplicate SKU ${skuMatch[1].trim()}`;
+      }
+      const barcodeMatch = detail.match(/barcode\)=\([^,]+,\s*([^)]+)\)/i) || detail.match(/barcode\)=\(([^)]+)\)/i);
+      if (barcodeMatch) {
+        return `Duplicate barcode ${barcodeMatch[1].trim()}`;
+      }
+      const keyMatch = detail.match(/Key \(([^)]+)\)=\(([^)]+)\) already exists/i);
+      if (keyMatch) {
+        const cols = keyMatch[1].split(",").map((c: string) => c.trim());
+        const vals = keyMatch[2].split(",").map((v: string) => v.trim());
+        const nonTenantIndex = cols.findIndex((c: string) => !c.toLowerCase().includes("tenant"));
+        if (nonTenantIndex >= 0 && vals[nonTenantIndex]) {
+          return `Duplicate ${cols[nonTenantIndex]} ${vals[nonTenantIndex]}`;
+        }
+      }
+      return detail;
+    }
+    if (constraint.includes("sku")) return "Duplicate SKU in database or file";
+    if (constraint.includes("barcode")) return "Duplicate barcode in database or file";
+    return "Duplicate record already exists";
+  }
+
+  if (code === "23502") {
+    const col = cause.column || cause.column_name;
+    return col ? `Missing required field: ${col}` : "Missing required database field";
+  }
+
+  if (code === "23503") {
+    return "Referenced record does not exist";
+  }
+
+  if (code === "22001") {
+    return "Value exceeds maximum allowed length";
+  }
+
+  const rawMsg = cause.message || err.message || "";
+  if (rawMsg) {
+    if (rawMsg.startsWith("Failed query:") || rawMsg.includes("insert into") || rawMsg.includes("UPDATE ")) {
+      return detail || "Database query failed";
+    }
+    return rawMsg;
+  }
+
+  return "Database operation failed";
+}
+
+export const bulkImportProductsFn = createServerFn({ method: "POST" })
+  .validator(
+    (d: {
+      products: {
+        action?: "create" | "update" | "skip";
+        existingProductId?: string | null;
+        name: string;
+        barcode?: string | null;
+        sku?: string | null;
+        category?: string | null;
+        unit?: string | null;
+        costPrice?: string | number | null;
+        salePrice: string | number;
+        isBatchTracked?: boolean;
+        stock?: number | null;
+      }[];
+      branchIds: string[];
+    }) => d,
+  )
+  .handler(async ({ data }) => {
+    const tBatchStart = performance.now();
+    const sessionRes = await getSessionServerFn();
+    if (
+      !sessionRes.success ||
+      !sessionRes.session ||
+      sessionRes.session.role !== "Head Office Admin"
+    ) {
+      throw new Error("Unauthorized");
+    }
+    const tenantId = sessionRes.session.tenantId;
+    const userId = sessionRes.session.id;
+
+    if (!data.products || data.products.length === 0) {
+      return { success: false, error: "No products provided for import." };
+    }
+
+    if (!data.branchIds || data.branchIds.length === 0) {
+      return { success: false, error: "Please select at least one branch for stock allocation." };
+    }
+
+    // Verify selected branch IDs belong to this tenant
+    const tenantBranches = await db
+      .select({ id: branches.id })
+      .from(branches)
+      .where(
+        and(
+          eq(branches.tenantId, tenantId),
+          inArray(branches.id, data.branchIds),
+        ),
+      );
+
+    const validBranchIds = tenantBranches.map((b) => b.id);
+    if (validBranchIds.length === 0) {
+      return { success: false, error: "Selected branches are invalid or unauthorized." };
+    }
+
+    const cleanPrice = (val: any): number => {
+      if (val === undefined || val === null || val === "") return NaN;
+      const cleaned = String(val).replace(/AED/gi, "").replace(/,/g, "").replace(/\s/g, "").trim();
+      return Number(cleaned);
+    };
+
+    const formatSalePrice = (val: any): string => {
+      const strVal = String(val ?? "").trim();
+      const num = Number(strVal);
+      if (!isNaN(num)) {
+        const parts = strVal.split(".");
+        if (parts.length === 2 && parts[1].length <= 3) {
+          return parts[0] + "." + parts[1];
+        } else if (parts.length === 1) {
+          return parts[0] + ".000";
+        } else {
+          return num.toFixed(3);
+        }
+      }
+      const cleaned = cleanPrice(val);
+      return isNaN(cleaned) ? "0.000" : cleaned.toFixed(3);
+    };
+
+    // Collect candidate identifiers to query existing products in ONE batch
+    const candidateProductIds = new Set<string>();
+    const candidateBarcodes = new Set<string>();
+
+    for (const item of data.products) {
+      if (item.action === "skip") continue;
+      if (item.existingProductId) {
+        candidateProductIds.add(item.existingProductId);
+      }
+      if (item.barcode) {
+        const bc = String(item.barcode).trim();
+        if (bc) candidateBarcodes.add(bc);
+      }
+    }
+
+    const existingProductsList: (typeof products.$inferSelect)[] = [];
+
+    if (candidateProductIds.size > 0 || candidateBarcodes.size > 0) {
+      const conditions = [];
+      if (candidateProductIds.size > 0) {
+        conditions.push(inArray(products.id, Array.from(candidateProductIds)));
+      }
+      if (candidateBarcodes.size > 0) {
+        conditions.push(inArray(products.barcode, Array.from(candidateBarcodes)));
+      }
+
+      const fetched = await db
+        .select()
+        .from(products)
+        .where(
+          and(
+            eq(products.tenantId, tenantId),
+            conditions.length === 1 ? conditions[0] : or(...conditions),
+          ),
+        );
+      existingProductsList.push(...fetched);
+    }
+
+    const existingById = new Map<string, typeof products.$inferSelect>();
+    const existingByBarcode = new Map<string, typeof products.$inferSelect>();
+
+    for (const p of existingProductsList) {
+      existingById.set(p.id, p);
+      if (p.barcode) {
+        existingByBarcode.set(p.barcode.trim(), p);
+      }
+    }
+
+    // Fetch existing stock_levels for candidate products across all valid branches in ONE query
+    const allExistingIds = Array.from(existingById.keys());
+    const existingStockLevelsMap = new Map<string, { id: string; stock: number }>();
+
+    if (allExistingIds.length > 0 && validBranchIds.length > 0) {
+      for (let s = 0; s < allExistingIds.length; s += 5000) {
+        const chunkIds = allExistingIds.slice(s, s + 5000);
+        const fetchedLevels = await db
+          .select({
+            id: stockLevels.id,
+            productId: stockLevels.productId,
+            branchId: stockLevels.branchId,
+            stock: stockLevels.stock,
+          })
+          .from(stockLevels)
+          .where(
+            and(
+              inArray(stockLevels.productId, chunkIds),
+              inArray(stockLevels.branchId, validBranchIds),
+            ),
+          );
+
+        for (const lvl of fetchedLevels) {
+          existingStockLevelsMap.set(`${lvl.productId}_${lvl.branchId}`, {
+            id: lvl.id,
+            stock: lvl.stock,
+          });
+        }
+      }
+    }
+
+    let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+    const failedRows: { barcode?: string; name?: string; reason: string }[] = [];
+
+    async function executeItemsChunk(
+      items: typeof data.products,
+      tx: any,
+    ): Promise<{ created: number; updated: number; skipped: number }> {
+      let chunkCreated = 0;
+      let chunkUpdated = 0;
+      let chunkSkipped = 0;
+
+      const toInsert: {
+        item: typeof data.products[0];
+        insertProduct: any;
+        targetStock: number;
+      }[] = [];
+
+      const toUpdate: {
+        item: typeof data.products[0];
+        updateProduct: any;
+        stockUpdates: { id: string; stock: number }[];
+        stockInserts: { productId: string; branchId: string; stock: number; reorderLevel: number }[];
+      }[] = [];
+
+      for (const item of items) {
+        const action = item.action || "create";
+        if (action === "skip") {
+          chunkSkipped++;
+          continue;
+        }
+
+        const nameStr = (item.name || "").trim();
+        if (!nameStr) {
+          throw new Error("Missing product name");
+        }
+
+        const retailPriceNum = cleanPrice(item.salePrice);
+        if (isNaN(retailPriceNum) || retailPriceNum <= 0) {
+          throw new Error("Invalid sale price (must be > 0)");
+        }
+
+        const barcodeVal = item.barcode ? String(item.barcode).trim() : "";
+
+        if (action === "update") {
+          let existing = item.existingProductId ? existingById.get(item.existingProductId) : undefined;
+          if (!existing && barcodeVal) {
+            existing = existingByBarcode.get(barcodeVal);
+          }
+          if (!existing) {
+            throw new Error("Existing product not found");
+          }
+
+          const salePriceStr = formatSalePrice(item.salePrice);
+          const categoryStr = (item.category || "").trim() || "Uncategorized";
+          const newSkuTrimmed = item.sku ? String(item.sku).trim() : null;
+          let finalSku = existing.sku;
+          if (!existing.sku || (newSkuTrimmed && existing.sku.trim().toLowerCase() === newSkuTrimmed.toLowerCase())) {
+            finalSku = newSkuTrimmed || existing.sku;
+          }
+
+          const isStockFilled =
+            item.stock !== undefined && item.stock !== null && typeof item.stock === "number" && !isNaN(item.stock);
+          const targetStock = isStockFilled ? Math.max(0, Math.floor(item.stock!)) : 0;
+
+          const stockUpdates: { id: string; stock: number }[] = [];
+          const stockInserts: { productId: string; branchId: string; stock: number; reorderLevel: number }[] = [];
+
+          for (const bId of validBranchIds) {
+            const existingLevel = existingStockLevelsMap.get(`${existing.id}_${bId}`);
+            if (existingLevel) {
+              if (isStockFilled) {
+                stockUpdates.push({ id: existingLevel.id, stock: targetStock });
+              }
+            } else {
+              stockInserts.push({
+                productId: existing.id,
+                branchId: bId,
+                stock: targetStock,
+                reorderLevel: 10,
+              });
+            }
+          }
+
+          toUpdate.push({
+            item,
+            updateProduct: {
+              id: existing.id,
+              name: nameStr,
+              salePrice: salePriceStr,
+              category: categoryStr,
+              sku: finalSku,
+            },
+            stockUpdates,
+            stockInserts,
+          });
+          continue;
+        }
+
+        // action === "create"
+        const salePriceStr = formatSalePrice(item.salePrice);
+        let parsedCost = "0.00";
+        if (item.costPrice !== undefined && item.costPrice !== null && item.costPrice !== "") {
+          const costNum = cleanPrice(item.costPrice);
+          if (!isNaN(costNum) && costNum >= 0) {
+            parsedCost = costNum.toFixed(2);
+          }
+        }
+        const categoryStr = (item.category || "").trim() || "Uncategorized";
+        const barcodeStr = barcodeVal || null;
+        const skuStr = item.sku ? String(item.sku).trim() : null;
+        const targetStock =
+          item.stock !== undefined && item.stock !== null && typeof item.stock === "number" && !isNaN(item.stock)
+            ? Math.max(0, Math.floor(item.stock))
+            : 0;
+
+        toInsert.push({
+          item,
+          insertProduct: {
+            tenantId,
+            name: nameStr,
+            barcode: barcodeStr,
+            sku: skuStr,
+            category: categoryStr,
+            unit: (item.unit || "").trim().toUpperCase() === "KG" ? "KG" : "PCS",
+            costPrice: parsedCost,
+            salePrice: salePriceStr,
+            isBatchTracked: Boolean(item.isBatchTracked),
+            isExpiryTracked: Boolean(item.isBatchTracked),
+          },
+          targetStock,
+        });
+      }
+
+      // 1. Multi-row INSERT products and stock levels
+      if (toInsert.length > 0) {
+        const allStockToInsert: {
+          productId: string;
+          branchId: string;
+          stock: number;
+          reorderLevel: number;
+        }[] = [];
+
+        const PRODUCT_INSERT_CHUNK = 2000;
+        for (let i = 0; i < toInsert.length; i += PRODUCT_INSERT_CHUNK) {
+          const chunk = toInsert.slice(i, i + PRODUCT_INSERT_CHUNK);
+          const insertedRows = await tx
+            .insert(products)
+            .values(chunk.map((c) => c.insertProduct))
+            .returning({ id: products.id, barcode: products.barcode, sku: products.sku });
+
+          for (let j = 0; j < insertedRows.length; j++) {
+            const inserted = insertedRows[j];
+            const orig = chunk[j];
+            if (!inserted || !orig) continue;
+
+            // Keep cache up to date
+            existingById.set(inserted.id, {
+              ...orig.insertProduct,
+              id: inserted.id,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            } as any);
+            if (orig.insertProduct.barcode) {
+              existingByBarcode.set(orig.insertProduct.barcode.trim(), {
+                ...orig.insertProduct,
+                id: inserted.id,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              } as any);
+            }
+
+            for (const bId of validBranchIds) {
+              allStockToInsert.push({
+                productId: inserted.id,
+                branchId: bId,
+                stock: orig.targetStock,
+                reorderLevel: 10,
+              });
+            }
+          }
+        }
+
+        const STOCK_INSERT_CHUNK = 5000;
+        for (let i = 0; i < allStockToInsert.length; i += STOCK_INSERT_CHUNK) {
+          const chunk = allStockToInsert.slice(i, i + STOCK_INSERT_CHUNK);
+          await tx.insert(stockLevels).values(chunk);
+          for (const lvl of chunk) {
+            existingStockLevelsMap.set(`${lvl.productId}_${lvl.branchId}`, {
+              id: "temp",
+              stock: lvl.stock,
+            });
+          }
+        }
+
+        chunkCreated = toInsert.length;
+      }
+
+      // 2. Multi-row UPDATE products and stock levels
+      if (toUpdate.length > 0) {
+        const PRODUCT_UPDATE_CHUNK = 2000;
+        for (let i = 0; i < toUpdate.length; i += PRODUCT_UPDATE_CHUNK) {
+          const chunk = toUpdate.slice(i, i + PRODUCT_UPDATE_CHUNK);
+          const valueClauses = chunk.map(
+            (c) =>
+              sql`(${c.updateProduct.id}::uuid, ${c.updateProduct.name}::text, ${c.updateProduct.salePrice}::numeric, ${c.updateProduct.category}::text, ${c.updateProduct.sku}::text)`,
+          );
+          await tx.execute(sql`
+            UPDATE products AS p
+            SET
+              name = v.name,
+              sale_price = v.sale_price,
+              category = v.category,
+              sku = v.sku,
+              updated_at = NOW()
+            FROM (VALUES ${sql.join(valueClauses, sql`, `)}) AS v(id, name, sale_price, category, sku)
+            WHERE p.id = v.id AND p.tenant_id = ${tenantId}::uuid
+          `);
+        }
+
+        const allStockUpdates = toUpdate.flatMap((u) => u.stockUpdates);
+        const STOCK_UPDATE_CHUNK = 5000;
+        for (let i = 0; i < allStockUpdates.length; i += STOCK_UPDATE_CHUNK) {
+          const chunk = allStockUpdates.slice(i, i + STOCK_UPDATE_CHUNK);
+          const valueClauses = chunk.map((s) => sql`(${s.id}::uuid, ${s.stock}::integer)`);
+          await tx.execute(sql`
+            UPDATE stock_levels AS s
+            SET
+              stock = v.stock,
+              updated_at = NOW()
+            FROM (VALUES ${sql.join(valueClauses, sql`, `)}) AS v(id, stock)
+            WHERE s.id = v.id
+          `);
+        }
+
+        const allStockInserts = toUpdate.flatMap((u) => u.stockInserts);
+        for (let i = 0; i < allStockInserts.length; i += STOCK_UPDATE_CHUNK) {
+          const chunk = allStockInserts.slice(i, i + STOCK_UPDATE_CHUNK);
+          await tx.insert(stockLevels).values(chunk);
+        }
+
+        chunkUpdated = toUpdate.length;
+      }
+
+      return { created: chunkCreated, updated: chunkUpdated, skipped: chunkSkipped };
+    }
+
+    try {
+      // Step 1: Try executing the full batch in a single transaction (fast path)
+      let fullBatchSucceeded = false;
+      try {
+        const fullRes = await db.transaction(async (tx) => {
+          return await executeItemsChunk(data.products, tx);
+        });
+        createdCount = fullRes.created;
+        updatedCount = fullRes.updated;
+        skippedCount = fullRes.skipped;
+        fullBatchSucceeded = true;
+      } catch (batchErr: any) {
+        const realBatchReason = extractRealDbError(batchErr);
+        console.warn(`[bulkImport] Batch failed (${realBatchReason}), retrying in sub-chunks of 500`);
+      }
+
+      // Step 2 & 3: If batch failed, retry in sub-chunks of 500; if a sub-chunk fails, insert rows 1 by 1
+      if (!fullBatchSucceeded) {
+        const SUB_CHUNK_SIZE = 500;
+        for (let i = 0; i < data.products.length; i += SUB_CHUNK_SIZE) {
+          const subChunk = data.products.slice(i, i + SUB_CHUNK_SIZE);
+          try {
+            const subRes = await db.transaction(async (tx) => {
+              return await executeItemsChunk(subChunk, tx);
+            });
+            createdCount += subRes.created;
+            updatedCount += subRes.updated;
+            skippedCount += subRes.skipped;
+          } catch (subErr: any) {
+            const realSubReason = extractRealDbError(subErr);
+            console.warn(
+              `[bulkImport] Sub-chunk ${Math.floor(i / SUB_CHUNK_SIZE) + 1} failed (${realSubReason}), inserting rows one by one`,
+            );
+
+            // Step 3: Insert rows one by one so only bad rows fail and all other rows still import
+            for (const singleItem of subChunk) {
+              if (singleItem.action === "skip") {
+                skippedCount++;
+                continue;
+              }
+              try {
+                const singleRes = await db.transaction(async (tx) => {
+                  return await executeItemsChunk([singleItem], tx);
+                });
+                createdCount += singleRes.created;
+                updatedCount += singleRes.updated;
+                skippedCount += singleRes.skipped;
+              } catch (singleErr: any) {
+                const reason = extractRealDbError(singleErr);
+                failedCount++;
+                failedRows.push({
+                  barcode: singleItem.barcode ? String(singleItem.barcode).trim() : undefined,
+                  name: singleItem.name || "Unknown",
+                  reason,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // Audit log: ONE entry per batch
+      await logAuditAction({
+        action: "Bulk Import Products",
+        entityType: "product",
+        entityId: tenantId,
+        tenantId,
+        userId,
+        afterValue: {
+          created: createdCount,
+          updated: updatedCount,
+          skipped: skippedCount,
+          failed: failedCount,
+          branchCount: validBranchIds.length,
+        },
+      });
+
+      const totalMs = Math.round(performance.now() - tBatchStart);
+      console.log(`[perf] import batch: total ${totalMs}ms (created: ${createdCount}, updated: ${updatedCount}, skipped: ${skippedCount}, failed: ${failedCount})`);
+
+      return {
+        success: true,
+        created: createdCount,
+        updated: updatedCount,
+        skipped: skippedCount,
+        failed: failedCount,
+        failedRows,
+        total: createdCount + updatedCount + skippedCount + failedCount,
+        message: `Import processed: Created ${createdCount}, Updated ${updatedCount}, Skipped ${skippedCount}, Failed ${failedCount}.`,
+      };
+    } catch (err: any) {
+      console.error("Bulk import unexpected failure:", err);
+      return {
+        success: false,
+        error: extractRealDbError(err),
+      };
+    }
+  });
+
+// --- Platform / Sales Channel Pricing Functions ---
+
+export const listSalesChannelsFn = createServerFn({ method: "GET" })
+  .handler(async () => {
+    const session = await getHeadOfficeSession();
+    const channels = await db
+      .select()
+      .from(salesChannels)
+      .where(eq(salesChannels.tenantId, session.tenantId))
+      .orderBy(salesChannels.name);
+
+    return { success: true, channels };
+  });
+
+export const createSalesChannelFn = createServerFn({ method: "POST" })
+  .validator((d: { name: string; markupPercent: number | string }) => d)
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+    const trimmedName = (data.name || "").trim();
+    if (!trimmedName) {
+      return { success: false, error: "Platform name is required" };
+    }
+
+    const markup = Number(data.markupPercent);
+    if (isNaN(markup) || markup < 0 || markup > 500) {
+      return { success: false, error: "Markup percent must be between 0% and 500%" };
+    }
+
+    const key = trimmedName
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "_")
+      .replace(/^_+|_+$/g, "");
+
+    if (!key) {
+      return { success: false, error: "Invalid platform name" };
+    }
+
+    const [existing] = await db
+      .select()
+      .from(salesChannels)
+      .where(and(eq(salesChannels.tenantId, session.tenantId), eq(salesChannels.key, key)));
+
+    if (existing) {
+      return { success: false, error: "A platform with this name or identifier already exists" };
+    }
+
+    const [newChannel] = await db
+      .insert(salesChannels)
+      .values({
+        tenantId: session.tenantId,
+        key,
+        name: trimmedName,
+        markupPercent: markup.toFixed(2),
+        isActive: true,
+      })
+      .returning();
+
+    await logAuditAction({
+      action: "Create Sales Channel",
+      entityType: "sales_channel",
+      entityId: newChannel.id,
+      tenantId: session.tenantId,
+      userId: session.userId,
+      afterValue: newChannel,
+    });
+
+    return { success: true, channel: newChannel };
+  });
+
+export const updateSalesChannelFn = createServerFn({ method: "POST" })
+  .validator(
+    (d: { id: string; name?: string; markupPercent?: number | string; isActive?: boolean }) => d,
+  )
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+
+    const [existing] = await db
+      .select()
+      .from(salesChannels)
+      .where(and(eq(salesChannels.id, data.id), eq(salesChannels.tenantId, session.tenantId)));
+
+    if (!existing) {
+      return { success: false, error: "Platform not found or unauthorized" };
+    }
+
+    const updates: any = { updatedAt: new Date() };
+
+    if (data.name !== undefined) {
+      const trimmed = data.name.trim();
+      if (!trimmed) {
+        return { success: false, error: "Platform name cannot be empty" };
+      }
+      updates.name = trimmed;
+    }
+
+    if (data.markupPercent !== undefined) {
+      const markup = Number(data.markupPercent);
+      if (isNaN(markup) || markup < 0 || markup > 500) {
+        return { success: false, error: "Markup percent must be between 0% and 500%" };
+      }
+      updates.markupPercent = markup.toFixed(2);
+    }
+
+    if (data.isActive !== undefined) {
+      updates.isActive = data.isActive;
+    }
+
+    const [updated] = await db
+      .update(salesChannels)
+      .set(updates)
+      .where(and(eq(salesChannels.id, data.id), eq(salesChannels.tenantId, session.tenantId)))
+      .returning();
+
+    await logAuditAction({
+      action: "Update Sales Channel",
+      entityType: "sales_channel",
+      entityId: data.id,
+      tenantId: session.tenantId,
+      userId: session.userId,
+      afterValue: updated,
+    });
+
+    return { success: true, channel: updated };
+  });
+
+export const getProductChannelPricesFn = createServerFn({ method: "GET" })
+  .validator((d: { productId: string }) => d)
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+
+    const [product] = await db
+      .select()
+      .from(products)
+      .where(and(eq(products.id, data.productId), eq(products.tenantId, session.tenantId)));
+
+    if (!product) {
+      return { success: false, error: "Product not found", channels: [] };
+    }
+
+    const [channels, overrides] = await Promise.all([
+      db
+        .select()
+        .from(salesChannels)
+        .where(and(eq(salesChannels.tenantId, session.tenantId), eq(salesChannels.isActive, true)))
+        .orderBy(salesChannels.name),
+      db
+        .select()
+        .from(productChannelPriceOverrides)
+        .where(
+          and(
+            eq(productChannelPriceOverrides.tenantId, session.tenantId),
+            eq(productChannelPriceOverrides.productId, data.productId),
+          ),
+        ),
+    ]);
+
+    const overrideMap = new Map<string, number>();
+    for (const o of overrides) {
+      overrideMap.set(o.channelKey, Number(o.price));
+    }
+
+    const basePrice = Number(product.salePrice) || 0;
+
+    const result = channels.map((sc) => {
+      const markupNum = Number(sc.markupPercent) || 0;
+      const overrideVal = overrideMap.has(sc.key) ? overrideMap.get(sc.key)! : null;
+      const calculatedPrice = resolveChannelPrice(basePrice, markupNum, null);
+      const finalPrice = resolveChannelPrice(basePrice, markupNum, overrideVal);
+
+      return {
+        channelKey: sc.key,
+        name: sc.name,
+        markupPercent: markupNum,
+        calculatedPrice,
+        overridePrice: overrideVal,
+        finalPrice,
+      };
+    });
+
+    return { success: true, channels: result };
+  });
+
+export const saveProductChannelOverridesFn = createServerFn({ method: "POST" })
+  .validator(
+    (d: {
+      productId: string;
+      overrides: { channelKey: string; price: number | string | null }[];
+    }) => d,
+  )
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+
+    // Verify product belongs to tenant
+    const [product] = await db
+      .select({ id: products.id })
+      .from(products)
+      .where(and(eq(products.id, data.productId), eq(products.tenantId, session.tenantId)));
+
+    if (!product) {
+      return { success: false, error: "Product not found or unauthorized" };
+    }
+
+    await db.transaction(async (tx) => {
+      for (const item of data.overrides) {
+        const cleanKey = (item.channelKey || "").trim();
+        if (!cleanKey) continue;
+
+        const rawPrice = item.price;
+        if (
+          rawPrice === null ||
+          rawPrice === undefined ||
+          rawPrice === "" ||
+          isNaN(Number(rawPrice)) ||
+          Number(rawPrice) <= 0
+        ) {
+          // Delete override if empty, null, or <= 0
+          await tx
+            .delete(productChannelPriceOverrides)
+            .where(
+              and(
+                eq(productChannelPriceOverrides.tenantId, session.tenantId),
+                eq(productChannelPriceOverrides.productId, data.productId),
+                eq(productChannelPriceOverrides.channelKey, cleanKey),
+              ),
+            );
+        } else {
+          const numPrice = Number(rawPrice).toFixed(2);
+          await tx
+            .insert(productChannelPriceOverrides)
+            .values({
+              tenantId: session.tenantId,
+              productId: data.productId,
+              channelKey: cleanKey,
+              price: numPrice,
+              updatedAt: new Date(),
+            })
+            .onConflictDoUpdate({
+              target: [
+                productChannelPriceOverrides.tenantId,
+                productChannelPriceOverrides.productId,
+                productChannelPriceOverrides.channelKey,
+              ],
+              set: {
+                price: numPrice,
+                updatedAt: new Date(),
+              },
+            });
+        }
+      }
+    });
+
+    return { success: true };
+  });
+
+export const getCatalogChannelPricesFn = createServerFn({ method: "POST" })
+  .validator((d: { productIds: string[] }) => d)
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+    const rawIds = Array.isArray(data?.productIds) ? data.productIds : [];
+    const productIds = rawIds.filter((id) => typeof id === "string" && id.trim()).slice(0, 200);
+
+    const channels = await db
+      .select({
+        key: salesChannels.key,
+        name: salesChannels.name,
+        markupPercent: salesChannels.markupPercent,
+      })
+      .from(salesChannels)
+      .where(and(eq(salesChannels.tenantId, session.tenantId), eq(salesChannels.isActive, true)))
+      .orderBy(salesChannels.name);
+
+    const overridesMap: Record<string, Record<string, number>> = {};
+
+    if (productIds.length > 0) {
+      const dbOverrides = await db
+        .select({
+          productId: productChannelPriceOverrides.productId,
+          channelKey: productChannelPriceOverrides.channelKey,
+          price: productChannelPriceOverrides.price,
+        })
+        .from(productChannelPriceOverrides)
+        .where(
+          and(
+            eq(productChannelPriceOverrides.tenantId, session.tenantId),
+            inArray(productChannelPriceOverrides.productId, productIds),
+          ),
+        );
+
+      for (const row of dbOverrides) {
+        if (!overridesMap[row.productId]) {
+          overridesMap[row.productId] = {};
+        }
+        overridesMap[row.productId][row.channelKey] = Number(row.price);
+      }
+    }
+
+    return {
+      success: true,
+      channels: channels.map((c) => ({
+        key: c.key,
+        name: c.name,
+        markupPercent: Number(c.markupPercent) || 0,
+      })),
+      overrides: overridesMap,
+    };
+  });
+
+export const deleteSalesChannelFn = createServerFn({ method: "POST" })
+  .validator((d: { id: string }) => d)
+  .handler(async ({ data }) => {
+    const session = await getHeadOfficeSession();
+
+    const [existing] = await db
+      .select()
+      .from(salesChannels)
+      .where(and(eq(salesChannels.id, data.id), eq(salesChannels.tenantId, session.tenantId)));
+
+    if (!existing) {
+      return { success: false, error: "Platform not found or unauthorized" };
+    }
+
+    if (existing.key === "talabat") {
+      return {
+        success: false,
+        error: "Talabat is a core platform and cannot be deleted. You can deactivate it instead.",
+      };
+    }
+
+    const channelKeyLower = (existing.key || "").toLowerCase();
+    const existingConn: any[] = await db.execute(
+      sql`SELECT id FROM aggregator_connections WHERE tenant_id = ${session.tenantId}::uuid AND LOWER(aggregator_name) = ${channelKeyLower} LIMIT 1;`,
+    );
+
+    if (Array.isArray(existingConn) && existingConn.length > 0) {
+      return {
+        success: false,
+        error: "This platform has an active integration connection and cannot be deleted.",
+      };
+    }
+
+    let deletedOverridesCount = 0;
+
+    await db.transaction(async (tx) => {
+      const deletedOverrides = await tx
+        .delete(productChannelPriceOverrides)
+        .where(
+          and(
+            eq(productChannelPriceOverrides.tenantId, session.tenantId),
+            eq(productChannelPriceOverrides.channelKey, existing.key),
+          ),
+        )
+        .returning();
+
+      deletedOverridesCount = deletedOverrides.length;
+
+      await tx
+        .delete(salesChannels)
+        .where(
+          and(
+            eq(salesChannels.id, data.id),
+            eq(salesChannels.tenantId, session.tenantId),
+          ),
+        );
+    });
+
+    await logAuditAction({
+      action: "Delete Sales Channel",
+      entityType: "sales_channel",
+      entityId: data.id,
+      tenantId: session.tenantId,
+      userId: session.userId,
+      beforeValue: existing,
+    });
+
+    return { success: true, deletedOverrides: deletedOverridesCount };
+  });
+
+
+
+
+
 
 

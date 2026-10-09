@@ -40,6 +40,10 @@ export interface Vendor {
   name: string;
   email: string;
   trn: string;
+  contact?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  status?: string;
 }
 
 export interface RoleConfig {
@@ -177,6 +181,40 @@ interface HeadOfficeContextProps {
   updateVatSettings: (settings: { vatRate: string; vatInclusive: boolean; taxRegistrationNumber?: string | null }) => Promise<any>;
   fetchSalesSummary: (startDate: string, endDate: string, branchId?: string) => Promise<any>;
   fetchVatSummary: (startDate: string, endDate: string, branchId?: string) => Promise<any>;
+  getExecutiveSummary: (startDate?: string, endDate?: string, branchId?: string) => Promise<any>;
+  getSalesMargin: (startDate?: string, endDate?: string, branchId?: string) => Promise<any>;
+  getApAging: (branchId?: string) => Promise<any>;
+  getInventoryValuation: (branchId?: string) => Promise<any>;
+  getVatReturn: (startDate?: string, endDate?: string, branchId?: string) => Promise<any>;
+  getSalaryProfiles: (branchId?: string, search?: string) => Promise<any>;
+  saveSalaryProfile: (data: any) => Promise<any>;
+  // Attendance
+  getAttendance: (date?: string, branchId?: string) => Promise<any>;
+  markAttendance: (data: { staffUserId: string; date: string; status: string; hoursWorked?: number; notes?: string }) => Promise<any>;
+  bulkMarkPresent: (date: string, branchId?: string) => Promise<any>;
+  // Leave Management
+  submitLeave: (data: { leaveType: string; startDate: string; endDate: string; reason?: string }) => Promise<any>;
+  getMyLeaves: (page?: number, limit?: number) => Promise<any>;
+  getPendingLeaves: (status?: string, branchId?: string, page?: number, limit?: number) => Promise<any>;
+  reviewLeave: (id: string, status: 'approved' | 'rejected', notes?: string) => Promise<any>;
+  updateLeave: (id: string, data: { leaveType?: string; startDate?: string; endDate?: string; reason?: string }) => Promise<any>;
+  deleteLeave: (id: string) => Promise<any>;
+  // Payroll Runs
+  generateRun: (month: string, branchId?: string) => Promise<any>;
+  getRuns: (branchId?: string) => Promise<any>;
+  getRunDetail: (id: string) => Promise<any>;
+  regenerateRun: (id: string) => Promise<any>;
+  approveRun: (id: string) => Promise<any>;
+  markRunPaid: (id: string) => Promise<any>;
+  deleteRun: (id: string) => Promise<any>;
+  // Payslips (Admin)
+  getPayslip: (runId: string, staffUserId: string) => Promise<any>;
+  // Subscription & Billing (Tenant Self-View)
+  getMyBilling: () => Promise<any>;
+  // Branch Reports (Head Office view)
+  getAllBranchReports: (params?: { branchId?: string; status?: string }) => Promise<any>;
+  approveBranchReport: (id: string) => Promise<any>;
+  returnBranchReport: (id: string, message: string) => Promise<any>;
 }
 
 const HeadOfficeContext = createContext<HeadOfficeContextProps | null>(null);
@@ -778,6 +816,234 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
     return response;
   };
 
+  const getExecutiveSummary = async (startDate?: string, endDate?: string, branchId?: string) => {
+    let url = '/financial/executive-summary';
+    const params: string[] = [];
+    if (startDate) params.push(`startDate=${encodeURIComponent(startDate)}`);
+    if (endDate) params.push(`endDate=${encodeURIComponent(endDate)}`);
+    if (branchId && branchId !== 'all') params.push(`branchId=${encodeURIComponent(branchId)}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+    const response = await apiClient.get<any>(url);
+    return response;
+  };
+
+  const getSalesMargin = async (startDate?: string, endDate?: string, branchId?: string) => {
+    let url = '/financial/sales-margin';
+    const params: string[] = [];
+    if (startDate) params.push(`startDate=${encodeURIComponent(startDate)}`);
+    if (endDate) params.push(`endDate=${encodeURIComponent(endDate)}`);
+    if (branchId && branchId !== 'all') params.push(`branchId=${encodeURIComponent(branchId)}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+    const response = await apiClient.get<any>(url);
+    return response;
+  };
+
+  const getApAging = async (branchId?: string) => {
+    let url = '/financial/ap-aging';
+    if (branchId && branchId !== 'all') {
+      url += `?branchId=${encodeURIComponent(branchId)}`;
+    }
+    const response = await apiClient.get<any>(url);
+    return response;
+  };
+
+  const getInventoryValuation = async (branchId?: string) => {
+    let url = '/financial/inventory-valuation';
+    if (branchId && branchId !== 'all') {
+      url += `?branchId=${encodeURIComponent(branchId)}`;
+    }
+    const response = await apiClient.get<any>(url);
+    return response;
+  };
+
+  const getVatReturn = async (startDate?: string, endDate?: string, branchId?: string) => {
+    let url = '/financial/vat-return';
+    const params: string[] = [];
+    if (startDate) params.push(`startDate=${encodeURIComponent(startDate)}`);
+    if (endDate) params.push(`endDate=${encodeURIComponent(endDate)}`);
+    if (branchId && branchId !== 'all') params.push(`branchId=${encodeURIComponent(branchId)}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+    const response = await apiClient.get<any>(url);
+    return response;
+  };
+
+  const getSalaryProfiles = async (branchId?: string, search?: string) => {
+    let url = '/payroll/salary-profiles';
+    const params: string[] = [];
+    if (branchId && branchId !== 'all') params.push(`branchId=${encodeURIComponent(branchId)}`);
+    if (search) params.push(`search=${encodeURIComponent(search)}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+    const response = await apiClient.get<any>(url);
+    return response;
+  };
+
+  const saveSalaryProfile = async (data: {
+    staffUserId: string;
+    basicSalary: number | string;
+    housingAllowance?: number | string;
+    transportAllowance?: number | string;
+    otherAllowances?: number | string;
+    standardDeductions?: number | string;
+    paymentFrequency?: string;
+    currency?: string;
+    bankName?: string | null;
+    iban?: string | null;
+    joinDate?: string | null;
+  }) => {
+    const response = await apiClient.post<any>('/payroll/salary-profiles', data);
+    return response;
+  };
+
+  const getAttendance = async (date?: string, branchId?: string) => {
+    let url = '/payroll/attendance';
+    const params: string[] = [];
+    if (date) params.push(`date=${encodeURIComponent(date)}`);
+    if (branchId && branchId !== 'all') params.push(`branchId=${encodeURIComponent(branchId)}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+    const response = await apiClient.get<any>(url);
+    return response;
+  };
+
+  const markAttendance = async (data: {
+    staffUserId: string;
+    date: string;
+    status: string;
+    hoursWorked?: number;
+    notes?: string;
+  }) => {
+    const response = await apiClient.post<any>('/payroll/attendance', data);
+    return response;
+  };
+
+  const bulkMarkPresent = async (date: string, branchId?: string) => {
+    const response = await apiClient.post<any>('/payroll/attendance/bulk-present', {
+      date,
+      branchId: branchId && branchId !== 'all' ? branchId : undefined,
+    });
+    return response;
+  };
+
+  const submitLeave = async (data: {
+    leaveType: string;
+    startDate: string;
+    endDate: string;
+    reason?: string;
+  }) => {
+    const response = await apiClient.post<any>('/payroll/leaves', data);
+    return response;
+  };
+
+  const getMyLeaves = async (page = 1, limit = 20) => {
+    const response = await apiClient.get<any>(`/payroll/leaves/mine?page=${page}&limit=${limit}`);
+    return response;
+  };
+
+  const getPendingLeaves = async (status?: string, branchId?: string, page = 1, limit = 20) => {
+    let url = `/payroll/leaves/pending?page=${page}&limit=${limit}`;
+    if (status && status !== 'all') url += `&status=${encodeURIComponent(status)}`;
+    if (branchId && branchId !== 'all') url += `&branchId=${encodeURIComponent(branchId)}`;
+    const response = await apiClient.get<any>(url);
+    return response;
+  };
+
+  const reviewLeave = async (id: string, status: 'approved' | 'rejected', notes?: string) => {
+    const response = await apiClient.post<any>(`/payroll/leaves/${id}/review`, { status, notes });
+    return response;
+  };
+
+  const updateLeave = async (id: string, data: {
+    leaveType?: string;
+    startDate?: string;
+    endDate?: string;
+    reason?: string;
+  }) => {
+    const response = await apiClient.patch<any>(`/payroll/leaves/${id}`, data);
+    return response;
+  };
+
+  const deleteLeave = async (id: string) => {
+    const response = await apiClient.delete<any>(`/payroll/leaves/${id}`);
+    return response;
+  };
+
+  const generateRun = async (month: string, branchId?: string) => {
+    const response = await apiClient.post<any>('/payroll/runs/generate', {
+      month,
+      branchId: branchId && branchId !== 'all' ? branchId : undefined,
+    });
+    return response;
+  };
+
+  const getRuns = async (branchId?: string) => {
+    let url = '/payroll/runs';
+    if (branchId && branchId !== 'all') {
+      url += `?branchId=${encodeURIComponent(branchId)}`;
+    }
+    const response = await apiClient.get<any>(url);
+    return response;
+  };
+
+  const getRunDetail = async (id: string) => {
+    const response = await apiClient.get<any>(`/payroll/runs/${id}`);
+    return response;
+  };
+
+  const regenerateRun = async (id: string) => {
+    const response = await apiClient.post<any>(`/payroll/runs/${id}/regenerate`, {});
+    return response;
+  };
+
+  const approveRun = async (id: string) => {
+    const response = await apiClient.post<any>(`/payroll/runs/${id}/approve`, {});
+    return response;
+  };
+
+  const markRunPaid = async (id: string) => {
+    const response = await apiClient.post<any>(`/payroll/runs/${id}/mark-paid`, {});
+    return response;
+  };
+
+  const deleteRun = async (id: string) => {
+    const response = await apiClient.delete<any>(`/payroll/runs/${id}`);
+    return response;
+  };
+
+  const getPayslip = async (runId: string, staffUserId: string) => {
+    const response = await apiClient.get<any>(`/payroll/payslips/${runId}/${staffUserId}`);
+    return response;
+  };
+
+  const getMyBilling = async () => {
+    const response = await apiClient.get<any>('/tenants/my-billing');
+    return response;
+  };
+
+  const getAllBranchReports = async (params?: { branchId?: string; status?: string }) => {
+    let url = '/branch-reports/all';
+    const queryParams: string[] = [];
+    if (params?.branchId && params.branchId !== 'all') {
+      queryParams.push(`branchId=${encodeURIComponent(params.branchId)}`);
+    }
+    if (params?.status && params.status !== 'all') {
+      queryParams.push(`status=${encodeURIComponent(params.status)}`);
+    }
+    if (queryParams.length > 0) {
+      url += `?${queryParams.join('&')}`;
+    }
+    const response = await apiClient.get<any>(url);
+    return response;
+  };
+
+  const approveBranchReport = async (id: string) => {
+    const response = await apiClient.post<any>(`/branch-reports/${id}/approve`, {});
+    return response;
+  };
+
+  const returnBranchReport = async (id: string, message: string) => {
+    const response = await apiClient.post<any>(`/branch-reports/${id}/return`, { message });
+    return response;
+  };
+
   const contextValue = useMemo(
     () => ({
       branches,
@@ -846,6 +1112,34 @@ export function HeadOfficeProvider({ children }: { children: ReactNode }) {
       updateVatSettings,
       fetchSalesSummary,
       fetchVatSummary,
+      getExecutiveSummary,
+      getSalesMargin,
+      getApAging,
+      getInventoryValuation,
+      getVatReturn,
+      getSalaryProfiles,
+      saveSalaryProfile,
+      getAttendance,
+      markAttendance,
+      bulkMarkPresent,
+      submitLeave,
+      getMyLeaves,
+      getPendingLeaves,
+      reviewLeave,
+      updateLeave,
+      deleteLeave,
+      generateRun,
+      getRuns,
+      getRunDetail,
+      regenerateRun,
+      approveRun,
+      markRunPaid,
+      deleteRun,
+      getPayslip,
+      getMyBilling,
+      getAllBranchReports,
+      approveBranchReport,
+      returnBranchReport,
     }),
     [branches, products, batches, purchases, vendors, roles, loyaltyPolicies, customers, promotions, priceRequests, auditLogsList, staffUsers]
   );

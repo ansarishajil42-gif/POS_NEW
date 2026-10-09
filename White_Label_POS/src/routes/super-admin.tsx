@@ -1,5 +1,5 @@
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { getSessionServerFn, roleRoutes, type Role } from "@/lib/auth";
 import {
     Activity,
@@ -33,6 +33,9 @@ import {
     Loader2,
     ExternalLink,
     LifeBuoy,
+    Send,
+    BellRing,
+    Wallet,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import {
@@ -52,6 +55,7 @@ import {
 import { DemoShell, StatCard } from "@/components/demo/DemoShell";
 import { ReportsTab } from "@/components/reports/ReportsTab";
 import { SuperAdminSupportTicketsTab } from "@/components/support/SuperAdminSupportTicketsTab";
+import { SuperAdminPlatformExpensesTab } from "@/components/expenses/SuperAdminPlatformExpensesTab";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -78,6 +82,7 @@ import {
     getBranchesServerFn,
     createTenantServerFn,
     updateTenantStatusServerFn,
+    updateTenantPlanAndLimitsServerFn,
     upgradeTenantPlanServerFn,
     downgradeTenantPlanServerFn,
     createBranchServerFn,
@@ -101,6 +106,8 @@ import {
     createManualTenantInvoiceServerFn,
     updateTenantInvoiceServerFn,
     deleteTenantInvoiceServerFn,
+    sendTenantInvoiceToClientServerFn,
+    sendTenantInvoiceReminderServerFn,
     calculateNextDueDate
 } from "@/lib/super-admin-server";
 
@@ -115,23 +122,15 @@ export const Route = createFileRoute("/super-admin")({
         if (role !== "Super Admin") throw redirect({ to: roleRoutes[role] });
     },
     loader: async () => {
-        const [tenantsRes, branchesRes, taxRes, analyticsRes, platformRes, billingRes, invoicesRes] = await Promise.all([
+        const [tenantsRes, branchesRes, platformRes] = await Promise.all([
             getTenantsServerFn(),
             getBranchesServerFn(),
-            getGlobalTaxSettingsServerFn(),
-            getAnalyticsServerFn(),
             getPlatformSettingsServerFn(),
-            getBillingOverviewServerFn(),
-            getTenantInvoicesServerFn()
         ]);
         return {
             initialTenants: tenantsRes.success ? tenantsRes.tenants : [],
             initialBranches: branchesRes.success ? branchesRes.branches : [],
-            taxSettings: taxRes.success ? taxRes : { vatRate: "0", inclusive: false },
-            analytics: analyticsRes.success ? analyticsRes : { totalGmv: 0, systemLogs: [], platformSeries: [] },
             platformSettings: platformRes.success && platformRes.data ? platformRes.data : { currency: "AED", timezone: "Asia/Dubai", dateFormat: "DD/MM/YYYY" },
-            billingData: billingRes.success ? billingRes : { overview: { totalTenants: 0, totalRevenueCollected: 0, overdueCount: 0, dueSoonCount: 0, totalOverdueAmount: 0 }, tenants: [] },
-            initialInvoices: invoicesRes.success && invoicesRes.invoices ? invoicesRes.invoices : []
         };
     },
 
@@ -163,13 +162,25 @@ function SuperAdmin() {
     const [activeNavSection, setActiveNavSection] = useState<string>("tenants");
     const [selectedReportTenantId, setSelectedReportTenantId] = useState("all");
     const [tenants, setTenants] = useState<any[]>(loaderData.initialTenants);
-    const [invoices, setInvoices] = useState<any[]>(loaderData.initialInvoices || []);
+    const [invoices, setInvoices] = useState<any[]>([]);
+    const [invoicesLoaded, setInvoicesLoaded] = useState(false);
+    const [invoicesLoading, setInvoicesLoading] = useState(false);
+
+    const [billingData, setBillingData] = useState<any>({
+        overview: { totalTenants: 0, totalRevenueCollected: 0, overdueCount: 0, dueSoonCount: 0, totalOverdueAmount: 0 },
+        tenants: []
+    });
+    const [billingLoaded, setBillingLoaded] = useState(false);
+    const [billingLoading, setBillingLoading] = useState(false);
+
     const [billingSubTab, setBillingSubTab] = useState<"subscriptions" | "invoices">("subscriptions");
     const [invoiceSearch, setInvoiceSearch] = useState("");
     const [invoiceStatusFilter, setInvoiceStatusFilter] = useState("all");
     const [invoicePlanFilter, setInvoicePlanFilter] = useState("all");
     const [invoicePage, setInvoicePage] = useState(1);
     const [generatingLinkInvoiceId, setGeneratingLinkInvoiceId] = useState<string | null>(null);
+    const [sendingInvoiceId, setSendingInvoiceId] = useState<string | null>(null);
+    const [sendingReminderId, setSendingReminderId] = useState<string | null>(null);
     const invoicePageSize = 10;
 
 
@@ -220,7 +231,7 @@ function SuperAdmin() {
         billingCycle: "monthly",
         customDays: 30,
         customAmount: "499.00",
-        periodStart: new Date().toISOString().split("T")[0]
+        periodStart: new Date().toISOString().split("T")[0] || ""
     });
     const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
 
@@ -253,7 +264,7 @@ function SuperAdmin() {
         try {
             const start = createInvoiceForm.periodStart ? new Date(createInvoiceForm.periodStart) : new Date();
             const end = calculateNextDueDate(start, createInvoiceForm.billingCycle, createInvoiceForm.customDays);
-            return end.toISOString().split("T")[0];
+            return end.toISOString().split("T")[0] || "-";
         } catch {
             return "-";
         }
@@ -272,7 +283,7 @@ function SuperAdmin() {
                 billingCycle: "monthly",
                 customDays: 30,
                 customAmount: pricing.subtotal.toFixed(2),
-                periodStart: new Date().toISOString().split("T")[0]
+                periodStart: new Date().toISOString().split("T")[0] || ""
             });
         } else {
             setCreateInvoiceForm({
@@ -282,7 +293,7 @@ function SuperAdmin() {
                 billingCycle: "monthly",
                 customDays: 30,
                 customAmount: "499.00",
-                periodStart: new Date().toISOString().split("T")[0]
+                periodStart: new Date().toISOString().split("T")[0] || ""
             });
         }
         setCreateInvoiceOpen(true);
@@ -303,7 +314,7 @@ function SuperAdmin() {
             billingCycle: cycle,
             customDays: 30,
             customAmount: subtotal.toFixed(2),
-            periodStart: inv.periodStart ? new Date(inv.periodStart).toISOString().split("T")[0] : new Date().toISOString().split("T")[0]
+            periodStart: inv.periodStart ? (new Date(inv.periodStart).toISOString().split("T")[0] || "") : (new Date().toISOString().split("T")[0] || "")
         });
         setCreateInvoiceOpen(true);
     };
@@ -398,24 +409,114 @@ function SuperAdmin() {
         name: "", subdomain: "", plan: "Starter", billingCycle: "monthly", customDays: 30, trn: "", outlets: 1, tills: 3,
         adminName: "", adminEmail: "", adminPhone: "", adminAddress: "", adminPassword: ""
     });
-    const [vatRate, setVatRate] = useState(loaderData.taxSettings.vatRate);
-    const [inclusive, setInclusive] = useState(loaderData.taxSettings.inclusive);
+    // Tax Settings (Lazy-loaded when "settings" tab is opened)
+    const [vatRate, setVatRate] = useState("5.00");
+    const [inclusive, setInclusive] = useState(true);
+    const [taxLoaded, setTaxLoaded] = useState(false);
+    const [taxLoading, setTaxLoading] = useState(false);
+
     const [currency, setCurrency] = useState(loaderData.platformSettings.currency);
     const [timezone, setTimezone] = useState(loaderData.platformSettings.timezone);
     const [dateFormat, setDateFormat] = useState(loaderData.platformSettings.dateFormat);
     
-    const { platformSeries, systemLogs, totalGmv } = loaderData.analytics;
+    // Analytics (Lazy-loaded when "analytics" tab is opened)
+    const [analyticsData, setAnalyticsData] = useState<any>({
+        totalGmv: 0,
+        systemLogs: [],
+        platformSeries: []
+    });
+    const [analyticsLoaded, setAnalyticsLoaded] = useState(false);
+    const [analyticsLoading, setAnalyticsLoading] = useState(false);
+
+    const { platformSeries, systemLogs, totalGmv } = analyticsData;
 
     type Branch = { id: string; tenantId: string; name: string; address: string | null; tillCount: number | null; status: string; createdAt: string | Date };
     
     const [branches, setBranches] = useState<Branch[]>(loaderData.initialBranches);
 
-    // Sync state if loader data changes (after router.invalidate)
+    const fetchBillingAndInvoices = useCallback(async () => {
+        setBillingLoading(true);
+        setInvoicesLoading(true);
+        try {
+            const [bRes, iRes] = await Promise.all([
+                getBillingOverviewServerFn(),
+                getTenantInvoicesServerFn(),
+            ]);
+            let newBilling = billingData;
+            if (bRes.success) {
+                newBilling = bRes;
+                setBillingData(bRes);
+            }
+            if (iRes.success && iRes.invoices) {
+                setInvoices(iRes.invoices);
+            }
+            return {
+                billingData: newBilling,
+                invoices: iRes.success && iRes.invoices ? iRes.invoices : invoices,
+            };
+        } catch (err) {
+            console.error("Failed to load billing or invoices:", err);
+            return { billingData, invoices };
+        } finally {
+            setBillingLoading(false);
+            setBillingLoaded(true);
+            setInvoicesLoading(false);
+            setInvoicesLoaded(true);
+        }
+    }, [billingData, invoices]);
+
+    const fetchAnalytics = useCallback(async () => {
+        setAnalyticsLoading(true);
+        try {
+            const aRes = await getAnalyticsServerFn();
+            if (aRes.success) setAnalyticsData(aRes);
+        } catch (err) {
+            console.error("Failed to load analytics:", err);
+        } finally {
+            setAnalyticsLoading(false);
+            setAnalyticsLoaded(true);
+        }
+    }, []);
+
+    const fetchTaxSettings = useCallback(async () => {
+        setTaxLoading(true);
+        try {
+            const tRes = await getGlobalTaxSettingsServerFn();
+            if (tRes.success) {
+                if (tRes.vatRate !== undefined) setVatRate(tRes.vatRate);
+                if (tRes.inclusive !== undefined) setInclusive(tRes.inclusive);
+            }
+        } catch (err) {
+            console.error("Failed to load tax settings:", err);
+        } finally {
+            setTaxLoading(false);
+            setTaxLoaded(true);
+        }
+    }, []);
+
+    // Trigger lazy load on tab open
     useEffect(() => {
-        setTenants(loaderData.initialTenants);
-        setBranches(loaderData.initialBranches);
-        setInvoices(loaderData.initialInvoices || []);
-    }, [loaderData]);
+        if (activeNavSection === "billing" && !billingLoaded && !billingLoading) {
+            fetchBillingAndInvoices();
+        } else if (activeNavSection === "analytics" && !analyticsLoaded && !analyticsLoading) {
+            fetchAnalytics();
+        } else if (activeNavSection === "settings" && !taxLoaded && !taxLoading) {
+            fetchTaxSettings();
+        }
+    }, [activeNavSection, billingLoaded, billingLoading, analyticsLoaded, analyticsLoading, taxLoaded, taxLoading, fetchBillingAndInvoices, fetchAnalytics, fetchTaxSettings]);
+
+    // Sync state if loader data changes (after router.invalidate)
+    const prevLoaderDataRef = useRef(loaderData);
+    useEffect(() => {
+        if (prevLoaderDataRef.current !== loaderData) {
+            prevLoaderDataRef.current = loaderData;
+            setTenants(loaderData.initialTenants);
+            setBranches(loaderData.initialBranches);
+            if (invoicesLoaded || billingLoaded) {
+                fetchBillingAndInvoices();
+            }
+        }
+    }, [loaderData, invoicesLoaded, billingLoaded, fetchBillingAndInvoices]);
 
     
     // Manage Branches dialog state
@@ -642,16 +743,24 @@ function SuperAdmin() {
     const superAdminSubNav = [
         { id: "tenants", label: "Tenants", icon: Building2, active: activeNavSection === "tenants", onClick: () => setActiveNavSection("tenants") },
         { id: "billing", label: "Billing & Revenue", icon: CreditCard, active: activeNavSection === "billing", onClick: () => setActiveNavSection("billing") },
+        { id: "expenses", label: "Platform Expenses", icon: Wallet, active: activeNavSection === "expenses", onClick: () => setActiveNavSection("expenses") },
         { id: "reports", label: "Reports", icon: FileText, active: activeNavSection === "reports", onClick: () => setActiveNavSection("reports") },
         { id: "tickets", label: "Support Tickets", icon: LifeBuoy, active: activeNavSection === "tickets", onClick: () => setActiveNavSection("tickets") },
         { id: "analytics", label: "Platform Analytics", icon: Activity, active: activeNavSection === "analytics", onClick: () => setActiveNavSection("analytics") },
         { id: "settings", label: "Tax & Currency", icon: Coins, active: activeNavSection === "settings", onClick: () => setActiveNavSection("settings") },
     ];
 
-    const handleExportBusinessReportCsv = () => {
+    const handleExportBusinessReportCsv = async () => {
         try {
-            const overview = loaderData.billingData.overview;
-            const tenantsList = loaderData.billingData.tenants || [];
+            let currentBillingData = billingData;
+            if (!billingLoaded) {
+                const fresh = await fetchBillingAndInvoices();
+                if (fresh?.billingData) {
+                    currentBillingData = fresh.billingData;
+                }
+            }
+            const overview = currentBillingData.overview;
+            const tenantsList = currentBillingData.tenants || [];
 
             let csv = "SUPER ADMIN SUBSCRIPTION REVENUE & BUSINESS REPORT\n";
             csv += `Generated At,${new Date().toLocaleString()}\n`;
@@ -690,10 +799,17 @@ function SuperAdmin() {
         }
     };
 
-    const handleExportBusinessReportPdf = () => {
+    const handleExportBusinessReportPdf = async () => {
         try {
-            const overview = loaderData.billingData.overview;
-            const tenantsList = loaderData.billingData.tenants || [];
+            let currentBillingData = billingData;
+            if (!billingLoaded) {
+                const fresh = await fetchBillingAndInvoices();
+                if (fresh?.billingData) {
+                    currentBillingData = fresh.billingData;
+                }
+            }
+            const overview = currentBillingData.overview;
+            const tenantsList = currentBillingData.tenants || [];
             const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
 
             doc.setFillColor(30, 41, 59);
@@ -840,23 +956,64 @@ function SuperAdmin() {
         }
     };
 
-    const upgrade = async (id: string) => {
-        const res = await upgradeTenantPlanServerFn({ data: { id } });
-        if (res.success) {
-            router.invalidate();
-            toast.success(`Plan upgraded to ${res.newPlan}`);
-        } else {
-            toast.error("Failed to upgrade plan");
-        }
+    // Plan Upgrade / Downgrade & Commercial Limits State & Handlers
+    const [planEditTenant, setPlanEditTenant] = useState<any | null>(null);
+    const [planEditForm, setPlanEditForm] = useState({ plan: "Growth", outletLimit: 10, tillLimit: 10 });
+    const [isSavingPlanLimits, setIsSavingPlanLimits] = useState(false);
+
+    const handleOpenPlanEdit = (t: any, targetPlan?: string) => {
+        const selectedPlan = targetPlan || t.plan || "Starter";
+        const defaults = getPlan(selectedPlan).entitlements;
+        setPlanEditTenant(t);
+        setPlanEditForm({
+            plan: selectedPlan,
+            outletLimit: targetPlan && targetPlan !== t.plan ? defaults.outletLimit : (t.outletLimit || defaults.outletLimit),
+            tillLimit: targetPlan && targetPlan !== t.plan ? defaults.tillLimit : (t.tillLimit || defaults.tillLimit),
+        });
     };
 
-    const downgrade = async (id: string) => {
-        const res = await downgradeTenantPlanServerFn({ data: { id } });
-        if (res.success) {
-            router.invalidate();
-            toast.success(`Plan downgraded to ${res.newPlan}`);
-        } else {
-            toast.error("Failed to downgrade plan");
+    const handleSavePlanLimits = async () => {
+        if (!planEditTenant) return;
+        const oLimit = Math.floor(Number(planEditForm.outletLimit));
+        const tLimit = Math.floor(Number(planEditForm.tillLimit));
+        if (isNaN(oLimit) || oLimit < 1) {
+            toast.error("Outlets limit must be an integer ≥ 1");
+            return;
+        }
+        if (isNaN(tLimit) || tLimit < 1) {
+            toast.error("Tills limit must be an integer ≥ 1");
+            return;
+        }
+        if (oLimit < (planEditTenant.outlets || 0)) {
+            toast.error(`Outlets limit (${oLimit}) cannot be below current branch count (${planEditTenant.outlets || 0})`);
+            return;
+        }
+        if (tLimit < (planEditTenant.tills || 0)) {
+            toast.error(`Tills limit (${tLimit}) cannot be below current till count (${planEditTenant.tills || 0})`);
+            return;
+        }
+
+        setIsSavingPlanLimits(true);
+        try {
+            const res = await updateTenantPlanAndLimitsServerFn({
+                data: {
+                    id: planEditTenant.id,
+                    plan: planEditForm.plan,
+                    outletLimit: oLimit,
+                    tillLimit: tLimit,
+                }
+            });
+            if (res.success) {
+                toast.success("Tenant plan and commercial limits updated successfully");
+                setPlanEditTenant(null);
+                router.invalidate();
+            } else {
+                toast.error((res as any).error || "Failed to update plan and limits");
+            }
+        } catch (err: any) {
+            toast.error(err.message || "An unexpected error occurred");
+        } finally {
+            setIsSavingPlanLimits(false);
         }
     };
 
@@ -869,9 +1026,10 @@ function SuperAdmin() {
     const addBranch = async () => {
         if (!manageTenant) return;
         const currentBranches = branches.filter(b => b.tenantId === manageTenant.id);
+        const limit = manageTenant.outletLimit || (manageTenant.plan === "Enterprise" ? 999 : 10);
         
-        if (currentBranches.length >= (manageTenant.plan === "Enterprise" ? 999 : 10)) {
-            toast.error("Outlet limit reached â€” upgrade plan to add more branches");
+        if (currentBranches.length >= limit) {
+            toast.error(`Branch limit reached (${currentBranches.length} of ${limit}). Ask the platform admin to increase your outlet limit.`);
             return;
         }
 
@@ -1180,8 +1338,16 @@ function SuperAdmin() {
                                         {t.status}
                                     </span>
                                 </TableCell>
-                                <TableCell className="p-5 text-center text-sm font-extrabold tabular-nums text-ink">{t.outlets}</TableCell>
-                                <TableCell className="p-5 text-center text-sm font-extrabold tabular-nums text-ink">{t.tills}</TableCell>
+                                <TableCell className="p-5 text-center text-sm font-extrabold tabular-nums text-ink">
+                                    <span title={`Branches: ${t.outlets} / ${t.outletLimit || 5}`}>
+                                        {t.outlets} / {t.outletLimit || 5}
+                                    </span>
+                                </TableCell>
+                                <TableCell className="p-5 text-center text-sm font-extrabold tabular-nums text-ink">
+                                    <span title={`Tills: ${t.tills} / ${t.tillLimit || 10}`}>
+                                        {t.tills} / {t.tillLimit || 10}
+                                    </span>
+                                </TableCell>
                                 <TableCell className="p-5 text-center">
                                     <div className="inline-block rounded-xl bg-primary/10 px-3 py-1 text-sm font-extrabold tabular-nums text-primary shadow-sm">
                                         {t.monthlyOrders.toLocaleString("en-AE")}
@@ -1193,7 +1359,7 @@ function SuperAdmin() {
                                             size="sm"
                                             variant="default"
                                             className="rounded-xl font-bold shadow-md hover:shadow-lg transition-all hover:-translate-y-0.5 px-3 h-8 text-xs"
-                                            onClick={() => upgrade(t.id)}
+                                            onClick={() => handleOpenPlanEdit(t, t.plan === "Starter" ? "Growth" : "Enterprise")}
                                             disabled={t.plan === "Enterprise"}
                                         >
                                             <ArrowUpCircle className="mr-1.5 h-3.5 w-3.5" /> Upgrade
@@ -1206,13 +1372,27 @@ function SuperAdmin() {
                                                         size="icon"
                                                         variant="outline"
                                                         className="h-8 w-8 rounded-xl hover:bg-primary/10 hover:text-primary border-primary/20 transition-colors"
-                                                        onClick={() => downgrade(t.id)}
+                                                        onClick={() => handleOpenPlanEdit(t, t.plan === "Enterprise" ? "Growth" : "Starter")}
                                                         disabled={t.plan === "Starter"}
                                                     >
                                                         <ArrowDownCircle className="h-4 w-4" />
                                                     </Button>
                                                 </TooltipTrigger>
                                                 <TooltipContent>Downgrade</TooltipContent>
+                                            </UITooltip>
+
+                                            <UITooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        size="icon"
+                                                        variant="outline"
+                                                        className="h-8 w-8 rounded-xl hover:bg-primary/10 hover:text-primary border-primary/20 transition-colors"
+                                                        onClick={() => handleOpenPlanEdit(t)}
+                                                    >
+                                                        <Pencil className="h-4 w-4" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>Edit Plan & Limits</TooltipContent>
                                             </UITooltip>
 
                                             <UITooltip>
@@ -1295,27 +1475,33 @@ function SuperAdmin() {
             </TabsContent>
 
                 <TabsContent value="billing" className="mt-8">
+                    {billingLoading && !billingLoaded ? (
+                        <div className="flex items-center justify-center p-16 text-sm text-muted-foreground">
+                            <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading billing overview & invoices...
+                        </div>
+                    ) : (
+                    <>
                     {/* Billing Overview KPI Cards */}
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-8">
                         <StatCard
                             label="Onboarded clients"
-                            value={String(loaderData.billingData.overview.totalTenants)}
+                            value={String(billingData.overview.totalTenants)}
                             icon={Building2}
                         />
                         <StatCard
                             label="Total revenue collected"
-                            value={`AED ${Number(loaderData.billingData.overview.totalRevenueCollected || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                            value={`AED ${Number(billingData.overview.totalRevenueCollected || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                             icon={Coins}
                             tone="success"
                         />
                         <StatCard
                             label="Overdue clients"
-                            value={String(loaderData.billingData.overview.overdueCount)}
+                            value={String(billingData.overview.overdueCount)}
                             icon={AlertTriangle}
                         />
                         <StatCard
                             label="Due soon (within 7 days)"
-                            value={String(loaderData.billingData.overview.dueSoonCount || 0)}
+                            value={String(billingData.overview.dueSoonCount || 0)}
                             icon={Calendar}
                             tone="accent"
                         />
@@ -1329,7 +1515,7 @@ function SuperAdmin() {
                             onClick={() => setBillingSubTab("subscriptions")}
                             className="rounded-xl font-bold text-xs shadow-sm"
                         >
-                            <Building2 className="mr-1.5 h-3.5 w-3.5" /> Client Subscriptions ({loaderData.billingData.tenants.length})
+                            <Building2 className="mr-1.5 h-3.5 w-3.5" /> Client Subscriptions ({billingData.tenants.length})
                         </Button>
                         <Button
                             variant={billingSubTab === "invoices" ? "default" : "outline"}
@@ -1373,14 +1559,14 @@ function SuperAdmin() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {loaderData.billingData.tenants.length === 0 ? (
+                                    {billingData.tenants.length === 0 ? (
                                         <TableRow>
                                             <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                                                 No tenant billing records found.
                                             </TableCell>
                                         </TableRow>
                                     ) : (
-                                        loaderData.billingData.tenants.map((t: any) => {
+                                        billingData.tenants.map((t: any) => {
                                             const isOverdue = t.status === "overdue";
                                             const isDueSoon = t.status === "due_soon";
                                             const isActive = t.status === "active";
@@ -1674,6 +1860,18 @@ function SuperAdmin() {
                                                                     Overdue
                                                                 </span>
                                                             )}
+                                                            {inv.sentToClientAt && (
+                                                                <div className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
+                                                                    <Send className="h-3 w-3 text-primary" />
+                                                                    <span>Sent {formatDateString(inv.sentToClientAt)}</span>
+                                                                </div>
+                                                            )}
+                                                            {inv.reminderSentAt && !isPaid && (
+                                                                <div className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold mt-0.5 flex items-center gap-1">
+                                                                    <BellRing className="h-3 w-3" />
+                                                                    <span>Reminded {formatDateString(inv.reminderSentAt)}</span>
+                                                                </div>
+                                                            )}
                                                         </TableCell>
                                                         <TableCell className="whitespace-nowrap text-xs font-semibold text-muted-foreground">
                                                             {inv.mamoPaymentUrl ? (
@@ -1688,6 +1886,74 @@ function SuperAdmin() {
                                                         </TableCell>
                                                         <TableCell className="whitespace-nowrap text-right pr-4">
                                                             <div className="flex items-center justify-end gap-2">
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    disabled={sendingInvoiceId === inv.id}
+                                                                    className="rounded-xl h-8 text-xs font-semibold hover:bg-primary/10 hover:text-primary transition-all shadow-sm"
+                                                                    title="Send official tax invoice in-app to client"
+                                                                    onClick={async () => {
+                                                                        setSendingInvoiceId(inv.id);
+                                                                        try {
+                                                                            const res = await sendTenantInvoiceToClientServerFn({
+                                                                                data: { invoiceId: inv.id }
+                                                                            });
+                                                                            if (res.success) {
+                                                                                toast.success("Invoice sent to client in-app!");
+                                                                                router.invalidate();
+                                                                            } else {
+                                                                                toast.error(res.error || "Failed to send invoice");
+                                                                            }
+                                                                        } catch (e: any) {
+                                                                            toast.error("Failed to send invoice: " + e.message);
+                                                                        } finally {
+                                                                            setSendingInvoiceId(null);
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    {sendingInvoiceId === inv.id ? (
+                                                                        <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+                                                                    ) : (
+                                                                        <Send className="h-3.5 w-3.5 mr-1 text-primary" />
+                                                                    )}
+                                                                    {inv.sentToClientAt ? "Resend" : "Send to Client"}
+                                                                </Button>
+
+                                                                {!isPaid && (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        disabled={sendingReminderId === inv.id}
+                                                                        className="rounded-xl h-8 text-xs font-semibold text-amber-700 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/10 transition-all shadow-sm"
+                                                                        title="Send in-app payment reminder to client"
+                                                                        onClick={async () => {
+                                                                            setSendingReminderId(inv.id);
+                                                                            try {
+                                                                                const res = await sendTenantInvoiceReminderServerFn({
+                                                                                    data: { invoiceId: inv.id }
+                                                                                });
+                                                                                if (res.success) {
+                                                                                    toast.success("Payment reminder sent to client!");
+                                                                                    router.invalidate();
+                                                                                } else {
+                                                                                    toast.error(res.error || "Failed to send reminder");
+                                                                                }
+                                                                            } catch (e: any) {
+                                                                                toast.error("Failed to send reminder: " + e.message);
+                                                                            } finally {
+                                                                                setSendingReminderId(null);
+                                                                            }
+                                                                        }}
+                                                                    >
+                                                                        {sendingReminderId === inv.id ? (
+                                                                            <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+                                                                        ) : (
+                                                                            <BellRing className="h-3.5 w-3.5 mr-1" />
+                                                                        )}
+                                                                        Send Reminder
+                                                                    </Button>
+                                                                )}
+
                                                                 {!isPaid && (
                                                                     <Button
                                                                         size="sm"
@@ -1820,10 +2086,16 @@ function SuperAdmin() {
                             </div>
                         </div>
                     )}
-
+                    </>
+                    )}
                 </TabsContent>
 
                 <TabsContent value="analytics" className="mt-5">
+                    {analyticsLoading && !analyticsLoaded ? (
+                        <div className="flex items-center justify-center p-16 text-sm text-muted-foreground">
+                            <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading platform analytics...
+                        </div>
+                    ) : (
                     <div className="grid gap-5 lg:grid-cols-2">
                         <div className="panel p-6 lg:col-span-2">
                             <h2 className="text-sm font-bold text-ink">Network sales volume (AED 000s)</h2>
@@ -1852,7 +2124,7 @@ function SuperAdmin() {
                             <ul className="mt-4 space-y-2 font-mono text-xs">
                                 {systemLogs.length === 0 ? (
                                     <li className="text-muted-foreground">No recent activity</li>
-                                ) : systemLogs.map(([time, lvl, msg], index) => (
+                                ) : systemLogs.map(([time, lvl, msg]: any[], index: number) => (
                                     <li key={`${index}-${String(msg)}`} className="flex gap-3 rounded-lg bg-surface-2 px-3 py-2">
                                         <span className="text-muted-foreground">{time}</span>
                                         <span className={lvl === "WARN" ? "font-bold text-warning-foreground" : "font-bold text-primary"}>
@@ -1864,6 +2136,7 @@ function SuperAdmin() {
                             </ul>
                         </div>
                     </div>
+                    )}
                 </TabsContent>
 
                 <TabsContent value="reports" className="mt-8 space-y-6">
@@ -1884,9 +2157,9 @@ function SuperAdmin() {
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="all" className="font-bold text-primary">All Tenants (Platform-Wide)</SelectItem>
-                                    {(loaderData.billingData?.tenants || []).map((t: any) => (
-                                        <SelectItem key={t.tenantId} value={t.tenantId}>
-                                            {t.tenantName} ({t.subdomain})
+                                    {((billingData?.tenants && billingData.tenants.length > 0) ? billingData.tenants : tenants).map((t: any) => (
+                                        <SelectItem key={t.tenantId || t.id} value={t.tenantId || t.id}>
+                                            {t.tenantName || t.name} ({t.subdomain})
                                         </SelectItem>
                                     ))}
                                 </SelectContent>
@@ -1905,6 +2178,11 @@ function SuperAdmin() {
                     <div className="grid gap-5 lg:grid-cols-2">
                         <div className="panel p-6">
                             <h2 className="text-sm font-bold text-ink">Global tax templates</h2>
+                            {taxLoading && !taxLoaded ? (
+                                <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
+                                    <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading tax settings...
+                                </div>
+                            ) : (
                             <div className="mt-5 space-y-5">
                                 <div className="space-y-1.5">
                                     <Label htmlFor="vat">Standard VAT rate (%)</Label>
@@ -1921,6 +2199,7 @@ function SuperAdmin() {
                                     Save template
                                 </Button>
                             </div>
+                            )}
                         </div>
                         <div className="panel p-6">
                             <h2 className="text-sm font-bold text-ink">Regional & currency settings</h2>
@@ -1971,6 +2250,10 @@ function SuperAdmin() {
                             </div>
                         </div>
                     </div>
+                </TabsContent>
+
+                <TabsContent value="expenses" className="mt-8">
+                    <SuperAdminPlatformExpensesTab />
                 </TabsContent>
             </Tabs>
 
@@ -2170,10 +2453,10 @@ function SuperAdmin() {
                             }
                             const t = tenants.find(t => t.id === globalNewBranchForm.tenantId);
                             if (t) {
-                                const limit = t.plan === "Enterprise" ? 999 : 10;
+                                const limit = t.outletLimit || (t.plan === "Enterprise" ? 999 : 10);
                                 const currentBranches = branches.filter(b => b.tenantId === t.id);
                                 if (currentBranches.length >= limit) {
-                                    toast.error("Outlet limit reached — upgrade plan to add more branches");
+                                    toast.error(`Branch limit reached (${currentBranches.length} of ${limit}). Ask the platform admin to increase your outlet limit.`);
                                     return;
                                 }
 
@@ -3026,6 +3309,111 @@ function SuperAdmin() {
                             className="rounded-xl"
                         >
                             {isDeletingInvoice ? "Deleting..." : "Delete Invoice"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Plan Upgrade / Downgrade & Commercial Limits Dialog */}
+            <Dialog open={!!planEditTenant} onOpenChange={(o) => !o && setPlanEditTenant(null)}>
+                <DialogContent className="sm:max-w-md w-[95vw]">
+                    <DialogHeader>
+                        <DialogTitle>Update Plan & Commercial Limits</DialogTitle>
+                        <DialogDescription>
+                            Configure subscription tier and commercial outlet/till limits for <span className="font-bold text-ink">{planEditTenant?.name}</span>.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="grid gap-4 py-3">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="edit-tenant-plan">Subscription Plan</Label>
+                            <Select
+                                value={planEditForm.plan}
+                                onValueChange={(val) => {
+                                    const defaults = getPlan(val).entitlements;
+                                    setPlanEditForm({
+                                        plan: val,
+                                        outletLimit: defaults.outletLimit,
+                                        tillLimit: defaults.tillLimit,
+                                    });
+                                }}
+                            >
+                                <SelectTrigger id="edit-tenant-plan" className="w-full">
+                                    <SelectValue placeholder="Select Plan" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="Starter">Starter (AED 400/mo)</SelectItem>
+                                    <SelectItem value="Growth">Growth (AED 1,200/mo)</SelectItem>
+                                    <SelectItem value="Enterprise">Enterprise (Custom)</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                                <Label htmlFor="edit-outlet-limit">Outlets (branches) limit</Label>
+                                <Input
+                                    id="edit-outlet-limit"
+                                    type="number"
+                                    min={1}
+                                    value={planEditForm.outletLimit}
+                                    onChange={(e) => setPlanEditForm({ ...planEditForm, outletLimit: Number(e.target.value) })}
+                                />
+                                <span className="text-[11px] text-muted-foreground">
+                                    Current branches: <strong className="text-ink">{planEditTenant?.outlets || 0}</strong>
+                                </span>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label htmlFor="edit-till-limit">Tills limit</Label>
+                                <Input
+                                    id="edit-till-limit"
+                                    type="number"
+                                    min={1}
+                                    value={planEditForm.tillLimit}
+                                    onChange={(e) => setPlanEditForm({ ...planEditForm, tillLimit: Number(e.target.value) })}
+                                />
+                                <span className="text-[11px] text-muted-foreground">
+                                    Current tills: <strong className="text-ink">{planEditTenant?.tills || 0}</strong>
+                                </span>
+                            </div>
+                        </div>
+
+                        {planEditTenant && (
+                            <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs space-y-1">
+                                <div className="flex justify-between font-bold text-ink">
+                                    <span>Plan: {planEditForm.plan}</span>
+                                    <span>Limits: {planEditForm.outletLimit} Outlets / {planEditForm.tillLimit} Tills</span>
+                                </div>
+                                <p className="text-muted-foreground">
+                                    Commercial limits cannot be set below the tenant's current usage ({planEditTenant.outlets || 0} branches, {planEditTenant.tills || 0} tills).
+                                </p>
+                            </div>
+                        )}
+                    </div>
+
+                    <DialogFooter className="gap-2 sm:gap-0">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            className="rounded-xl"
+                            onClick={() => setPlanEditTenant(null)}
+                            disabled={isSavingPlanLimits}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            type="button"
+                            className="rounded-xl font-semibold"
+                            onClick={handleSavePlanLimits}
+                            disabled={isSavingPlanLimits}
+                        >
+                            {isSavingPlanLimits ? (
+                                <>
+                                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Saving...
+                                </>
+                            ) : (
+                                "Save Plan & Limits"
+                            )}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

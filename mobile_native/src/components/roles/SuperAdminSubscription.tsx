@@ -67,8 +67,8 @@ function toISODateInput(d: Date): string {
 
 // Plan entitlements and standard base pricing
 const PLAN_PRICING: Record<string, { monthlyPrice: number; annualPricePerMonth: number }> = {
-  Starter: { monthlyPrice: 899, annualPricePerMonth: 764 },
-  Growth: { monthlyPrice: 1690, annualPricePerMonth: 1437 },
+  Starter: { monthlyPrice: 400, annualPricePerMonth: 340 },
+  Growth: { monthlyPrice: 1200, annualPricePerMonth: 1020 },
   Enterprise: { monthlyPrice: 4999, annualPricePerMonth: 4249 },
   Custom: { monthlyPrice: 0, annualPricePerMonth: 0 },
 };

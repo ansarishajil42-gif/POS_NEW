@@ -4,8 +4,14 @@ import { staffUsers } from "../db/schema.js";
 import { eq, and } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { requireAuth } from "../middleware/auth.js";
+import { getMeHandler, updateMeHandler, changePasswordHandler } from "./me.js";
 
 const router = Router();
+
+// Self-profile management endpoints (session-derived, IDOR safe)
+router.get("/me", requireAuth, getMeHandler);
+router.patch("/me", requireAuth, updateMeHandler);
+router.post("/change-password", requireAuth, changePasswordHandler);
 
 // Get users (filtered by tenantId, branchId)
 router.get("/", async (req, res) => {

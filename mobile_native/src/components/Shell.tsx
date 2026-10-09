@@ -12,6 +12,7 @@ import {
 import { useAuth } from '../lib/auth';
 import { Logo } from './Logo';
 import { Sheet, Button } from './ui/Primitives';
+import { ProfileModal } from './ProfileModal';
 import {
   Home,
   Building2,
@@ -35,7 +36,8 @@ import {
   List,
   File,
   DollarSign,
-  ChevronLeft
+  ChevronLeft,
+  BookOpen,
 } from 'lucide-react-native';
 
 const tabIconMap: Record<string, React.ComponentType<any>> = {
@@ -59,6 +61,7 @@ const tabIconMap: Record<string, React.ComponentType<any>> = {
   'credit-card': CreditCard,
   'shopping-bag': ShoppingBag,
   'dollar-sign': DollarSign,
+  'book-open': BookOpen,
   list: List,
   file: File,
 };
@@ -159,51 +162,13 @@ export function AppHeader({
         )}
       </View>
 
-      {/* User Profile Sheet Modal */}
-      <Sheet
-        open={profileOpen}
+      {/* Real Interactive User Profile & Security Modal */}
+      <ProfileModal
+        visible={profileOpen}
         onClose={() => setProfileOpen(false)}
-        title="User Profile"
-        footer={
-          <Button
-            variant="danger"
-            full
-            onClick={() => {
-              setProfileOpen(false);
-              signOut();
-            }}
-          >
-            Sign Out (Logout)
-          </Button>
-        }
-      >
-        <View style={styles.profileSheetBody}>
-          <View style={styles.profileSheetHeader}>
-            <View style={styles.profileSheetCircle}>
-              <Text style={styles.profileSheetCircleText}>{roleLabel.charAt(0)}</Text>
-            </View>
-            <View>
-              <Text style={styles.profileSheetRoleName}>{roleLabel}</Text>
-              <Text style={styles.profileSheetRoleSub}>{branch || 'Active Session'}</Text>
-            </View>
-          </View>
-
-          <View style={styles.profileSheetDetails}>
-            <View style={styles.profileDetailRow}>
-              <Text style={styles.profileDetailLabel}>Terminal Duty Role:</Text>
-              <Text style={styles.profileDetailValue}>{roleLabel}</Text>
-            </View>
-            <View style={styles.profileDetailRow}>
-              <Text style={styles.profileDetailLabel}>Active Location:</Text>
-              <Text style={styles.profileDetailValue}>{branch || 'All Outlets'}</Text>
-            </View>
-            <View style={styles.profileDetailRow}>
-              <Text style={styles.profileDetailLabel}>Connection:</Text>
-              <Text style={[styles.profileDetailValue, { color: '#39ff14' }]}>Online & Secured</Text>
-            </View>
-          </View>
-        </View>
-      </Sheet>
+        roleLabel={roleLabel}
+        branch={branch}
+      />
     </>
   );
 }

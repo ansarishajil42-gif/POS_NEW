@@ -22,6 +22,8 @@ import {
   SuperAdminBillingStatus,
 } from './src/components/roles/SuperAdmin';
 import { SuperAdminSubscription } from './src/components/roles/SuperAdminSubscription';
+import { SuperAdminBlog } from './src/components/roles/SuperAdminBlog';
+import { SuperAdminMore } from './src/components/roles/SuperAdminMore';
 import {
   HeadOfficeHome,
   HeadOfficeOutlets,
@@ -40,7 +42,12 @@ import {
   PriceRequestsScreen,
   AuditLogsScreen,
 } from './src/components/roles/HeadOffice';
+import { HeadOfficeFinancialReports } from './src/components/roles/HeadOfficeFinancialReports';
+import { HeadOfficeReportsVat } from './src/components/roles/HeadOfficeReportsVat';
+import { HeadOfficePayroll } from './src/components/roles/HeadOfficePayroll';
+import { HeadOfficeBillingScreen } from './src/components/roles/HeadOfficeBilling';
 import { AggregatorScreen } from './src/components/roles/Aggregator';
+import { ProfileModal } from './src/components/ProfileModal';
 import {
   StoreManagerHome,
   StoreManagerStaff,
@@ -66,10 +73,9 @@ const roleTabs: Record<string, Tab[]> = {
   'super-admin': [
     { key: 'home', label: 'Home', icon: 'home' },
     { key: 'tenants', label: 'Tenants', icon: 'building' },
-    { key: 'billing-status', label: 'Billing Status', icon: 'dollar-sign' },
+    { key: 'billing-status', label: 'Billing', icon: 'dollar-sign' },
     { key: 'subscription', label: 'Subscription', icon: 'credit-card' },
-    { key: 'analytics', label: 'Analytics', icon: 'chart' },
-    { key: 'settings', label: 'Tax & Currency', icon: 'wallet' },
+    { key: 'more', label: 'More', icon: 'menu' },
   ],
   'head-office': [
     { key: 'home', label: 'Home', icon: 'home' },
@@ -128,8 +134,7 @@ function RoleRouter({ role }: { role: string }) {
         case 'tenants': return <SuperAdminTenants onOpen={(id) => push('tenant', id)} />;
         case 'billing-status': return <SuperAdminBillingStatus />;
         case 'subscription': return <SuperAdminSubscription />;
-        case 'analytics': return <SuperAdminAnalytics />;
-        case 'settings': return <SuperAdminSettings />;
+        case 'more': return <SuperAdminMore onOpen={(key) => push(key)} />;
       }
     }
     if (role === 'head-office') {
@@ -203,7 +208,16 @@ function RoleRouter({ role }: { role: string }) {
       case 'promotions': return <PromotionsScreen onBack={back} />;
       case 'price-requests': return <PriceRequestsScreen onBack={back} />;
       case 'audit-logs': return <AuditLogsScreen onBack={back} />;
+      case 'financial-reports': return <HeadOfficeFinancialReports onBack={back} />;
+      case 'reports-vat': return <HeadOfficeReportsVat onBack={back} />;
+      case 'my-profile': return <ProfileModal visible={true} onClose={back} roleLabel={role?.toUpperCase() || 'HO'} />;
+      case 'vendors': return <HeadOfficePurchasing stepOverride="vendors" onBack={back} />;
+      case 'payroll': return <HeadOfficePayroll onBack={back} />;
+      case 'billing': return <HeadOfficeBillingScreen onBack={back} />;
       case 'aggregator': return <AggregatorScreen onBack={back} />;
+      case 'sa-blog': return <SuperAdminBlog onBack={back} />;
+      case 'sa-settings': return <SuperAdminSettings onBack={back} />;
+      case 'sa-analytics': return <SuperAdminAnalytics onBack={back} />;
       default: return null;
     }
   };

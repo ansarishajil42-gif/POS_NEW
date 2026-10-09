@@ -1,7 +1,7 @@
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { jsPDF } from "jspdf";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { useAuth, getSessionServerFn, roleRoutes, type Role } from "@/lib/auth";
 import {
   AlertTriangle,
@@ -33,6 +33,10 @@ import {
   ChevronsUpDown,
   Check,
   LifeBuoy,
+  UploadCloud,
+  Percent,
+  RefreshCw,
+  ExternalLink,
 } from "lucide-react";
 import {
   Bar,
@@ -93,6 +97,7 @@ import { FinancialReportsTab } from "@/components/reports/FinancialReportsTab";
 import { PayrollTab } from "@/components/payroll/PayrollTab";
 import { TenantSubscriptionBillingTab } from "@/components/subscription/TenantSubscriptionBillingTab";
 import { TenantSupportTab } from "@/components/support/TenantSupportTab";
+import { HeadOfficeExpensesTab } from "@/components/expenses/HeadOfficeExpensesTab";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -111,6 +116,7 @@ import {
   createProductFn,
   updateProductFn,
   deleteProductFn,
+  bulkDeleteProductsFn,
   adjustStockServerFn,
   createBatchServerFn,
   createStaffFn,
@@ -128,7 +134,19 @@ import {
   getProductRecipesServerFn,
   saveProductRecipeServerFn,
   deleteProductRecipeServerFn,
+  bulkImportProductsFn,
+  getExistingProductIdentifiersFn,
+  listSalesChannelsFn,
+  createSalesChannelFn,
+  updateSalesChannelFn,
+  deleteSalesChannelFn,
+  getProductChannelPricesFn,
+  saveProductChannelOverridesFn,
+  getCatalogChannelPricesFn,
+  markTenantInvoicesSeenFn,
 } from "@/lib/head-office-server";
+import { resolveChannelPrice } from "@/lib/channel-pricing";
+import { Checkbox } from "@/components/ui/checkbox";
 import { getAuditLogsServerFn } from "@/lib/super-admin-server";
 import { stockTransferServerFn } from "@/lib/inventory-manager-server";
 import {
@@ -201,6 +219,15 @@ function HeadOffice() {
   );
   const [isSavingLoyalty, setIsSavingLoyalty] = useState(false);
 
+  // Unseen Subscription Invoices Count (Badge)
+  const [unseenInvoicesCount, setUnseenInvoicesCount] = useState<number>(data?.unseenInvoicesCount || 0);
+
+  useEffect(() => {
+    if (data?.unseenInvoicesCount !== undefined) {
+      setUnseenInvoicesCount(data.unseenInvoicesCount);
+    }
+  }, [data?.unseenInvoicesCount]);
+
   // Campaign States
   const [isCreateCampaignOpen, setIsCreateCampaignOpen] = useState(false);
   const [isSavingCampaign, setIsSavingCampaign] = useState(false);
@@ -247,6 +274,13 @@ function HeadOffice() {
   const [catalogProductsList, setCatalogProductsList] = useState<any[]>(data?.products || []);
   const [catalogStockList, setCatalogStockList] = useState<any[]>(data?.stock || []);
   const [isCatalogLoading, setIsCatalogLoading] = useState(false);
+
+  // Catalog Bulk Selection & Delete States
+  const [catalogSelectedProductIds, setCatalogSelectedProductIds] = useState<Set<string>>(new Set());
+  const [isAllMatchingSelected, setIsAllMatchingSelected] = useState(false);
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [bulkDeleteConfirmText, setBulkDeleteConfirmText] = useState("");
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   useEffect(() => {
     if (data?.products) {
@@ -323,6 +357,109 @@ function HeadOffice() {
       };
     });
   }, [catalogProductsList, catalogStockList, selectedCatalogBranch]);
+
+  const currentPageProductIds = useMemo(
+    () => mappedProducts.map((p: any) => p.id),
+    [mappedProducts],
+  );
+
+  const isAllOnPageSelected = useMemo(() => {
+    if (currentPageProductIds.length === 0) return false;
+    if (isAllMatchingSelected) return true;
+    return currentPageProductIds.every((id: string) => catalogSelectedProductIds.has(id));
+  }, [currentPageProductIds, catalogSelectedProductIds, isAllMatchingSelected]);
+
+  const isSomeOnPageSelected = useMemo(() => {
+    if (isAllMatchingSelected) return true;
+    return currentPageProductIds.some((id: string) => catalogSelectedProductIds.has(id));
+  }, [currentPageProductIds, catalogSelectedProductIds, isAllMatchingSelected]);
+
+  const handleToggleSelectAllOnPage = () => {
+    if (isAllOnPageSelected) {
+      setIsAllMatchingSelected(false);
+      setCatalogSelectedProductIds((prev) => {
+        const next = new Set(prev);
+        currentPageProductIds.forEach((id: string) => next.delete(id));
+        return next;
+      });
+    } else {
+      setCatalogSelectedProductIds((prev) => {
+        const next = new Set(prev);
+        currentPageProductIds.forEach((id: string) => next.add(id));
+        return next;
+      });
+    }
+  };
+
+  const handleToggleSelectProduct = (id: string) => {
+    if (isAllMatchingSelected) {
+      setIsAllMatchingSelected(false);
+      setCatalogSelectedProductIds((prev) => {
+        const next = new Set(prev);
+        currentPageProductIds.forEach((pid) => next.add(pid));
+        next.delete(id);
+        return next;
+      });
+    } else {
+      setCatalogSelectedProductIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) {
+          next.delete(id);
+        } else {
+          next.add(id);
+        }
+        return next;
+      });
+    }
+  };
+
+  const hasCatalogSelection = catalogSelectedProductIds.size > 0 || isAllMatchingSelected;
+  const totalCatalogSelectedCount = isAllMatchingSelected ? catalogTotal : catalogSelectedProductIds.size;
+
+  const handleBulkDeleteConfirm = async () => {
+    setIsBulkDeleting(true);
+    try {
+      const payload = isAllMatchingSelected
+        ? {
+            allMatching: {
+              search: catalogSearch || undefined,
+              branchId: selectedCatalogBranch !== "all" ? selectedCatalogBranch : undefined,
+            },
+          }
+        : {
+            productIds: Array.from(catalogSelectedProductIds),
+          };
+
+      const res = await bulkDeleteProductsFn({ data: payload });
+
+      if (res) {
+        const { deleted, skipped, skippedRows } = res;
+        if (skipped > 0) {
+          const uniqueReasons = Array.from(new Set((skippedRows || []).map((r) => r.reason)));
+          const reasonText = uniqueReasons.length > 0 ? uniqueReasons.join(", ") : "referenced in history";
+          if (deleted > 0) {
+            toast.info(`${deleted} deleted, ${skipped} skipped (${reasonText})`);
+          } else {
+            toast.error(`${deleted} deleted, ${skipped} skipped (${reasonText})`);
+          }
+        } else {
+          toast.success(`${deleted} deleted, 0 skipped`);
+        }
+
+        setBulkDeleteDialogOpen(false);
+        setBulkDeleteConfirmText("");
+        setCatalogSelectedProductIds(new Set());
+        setIsAllMatchingSelected(false);
+
+        await handleFetchCatalog(catalogPage, catalogSearch);
+        router.invalidate();
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete products");
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
 
   const mappedBatches = useMemo(() => {
     return (data?.batches || []).map((b: any) => {
@@ -475,6 +612,1017 @@ function HeadOffice() {
   const [deleteProductContext, setDeleteProductContext] = useState<any>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Bulk Product Import States
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importFileName, setImportFileName] = useState("");
+  const [importBranches, setImportBranches] = useState<string[]>([]);
+  const [importAllBranches, setImportAllBranches] = useState(false);
+  const [updateExistingProducts, setUpdateExistingProducts] = useState(true);
+  const [rowUpdateChoices, setRowUpdateChoices] = useState<Record<number, boolean>>({});
+  const [rowStocks, setRowStocks] = useState<Record<number, string>>({});
+  const [bulkStockInput, setBulkStockInput] = useState("");
+  const [isParsing, setIsParsing] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [rawFileRows, setRawFileRows] = useState<any[]>([]);
+  const [cachedExistingProds, setCachedExistingProds] = useState<any[]>([]);
+  const [parsedRows, setParsedRows] = useState<any[]>([]);
+  const [sheetStats, setSheetStats] = useState<
+    { name: string; total: number; valid: number; invalid: number }[]
+  >([]);
+  const [importPreviewPage, setImportPreviewPage] = useState(1);
+  const importPreviewPageSize = 50;
+  const [previewFilter, setPreviewFilter] = useState<
+    "all" | "new" | "add_to_branch" | "exists_update" | "exists_skip" | "invalid"
+  >("all");
+
+  // Platform Pricing States
+  const [platformPricingOpen, setPlatformPricingOpen] = useState(false);
+  const [salesChannelsList, setSalesChannelsList] = useState<any[]>([]);
+  const [isSalesChannelsLoading, setIsSalesChannelsLoading] = useState(false);
+  const [newPlatformName, setNewPlatformName] = useState("");
+  const [newPlatformMarkup, setNewPlatformMarkup] = useState("");
+  const [isAddingPlatform, setIsAddingPlatform] = useState(false);
+  const [deletePlatformContext, setDeletePlatformContext] = useState<any>(null);
+  const [deletePlatformDialogOpen, setDeletePlatformDialogOpen] = useState(false);
+  const [isDeletingPlatform, setIsDeletingPlatform] = useState(false);
+
+  // Product Platform Pricing Overrides States
+  const [activeChannelsForProduct, setActiveChannelsForProduct] = useState<any[]>([]);
+  const [productChannelOverrides, setProductChannelOverrides] = useState<Record<string, string>>({});
+  const [isLoadingProductChannels, setIsLoadingProductChannels] = useState(false);
+
+  // Catalog Table Platform Pricing States
+  const [catalogChannels, setCatalogChannels] = useState<{ key: string; name: string; markupPercent: number }[]>([]);
+  const [catalogChannelOverrides, setCatalogChannelOverrides] = useState<Record<string, Record<string, number>>>({});
+
+  // Catalog Table Drag-to-Scroll
+  const catalogTableRef = useRef<HTMLDivElement>(null);
+  const [isCatalogDragging, setIsCatalogDragging] = useState(false);
+  const catalogDragState = useRef({
+    isDown: false,
+    startX: 0,
+    scrollLeft: 0,
+    hasDragged: false,
+  });
+
+  const handleCatalogMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return; // Left button only
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("button, input, a, select, textarea, [role='button']")) {
+      return;
+    }
+    const container = catalogTableRef.current;
+    if (!container) return;
+
+    catalogDragState.current = {
+      isDown: true,
+      startX: e.clientX,
+      scrollLeft: container.scrollLeft,
+      hasDragged: false,
+    };
+    setIsCatalogDragging(true);
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!catalogDragState.current.isDown) return;
+      const container = catalogTableRef.current;
+      if (!container) return;
+
+      const dx = e.clientX - catalogDragState.current.startX;
+      if (Math.abs(dx) > 5) {
+        catalogDragState.current.hasDragged = true;
+      }
+      container.scrollLeft = catalogDragState.current.scrollLeft - dx;
+    };
+
+    const handleMouseUp = () => {
+      if (catalogDragState.current.isDown) {
+        catalogDragState.current.isDown = false;
+        setIsCatalogDragging(false);
+        setTimeout(() => {
+          catalogDragState.current.hasDragged = false;
+        }, 0);
+      }
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
+  const handleCatalogClickCapture = (e: React.MouseEvent) => {
+    if (catalogDragState.current.hasDragged) {
+      e.stopPropagation();
+      e.preventDefault();
+      catalogDragState.current.hasDragged = false;
+    }
+  };
+
+  const fetchCatalogChannelPrices = async (productIds: string[]) => {
+    if (!productIds || productIds.length === 0) {
+      setCatalogChannels([]);
+      setCatalogChannelOverrides({});
+      return;
+    }
+    try {
+      const res = await getCatalogChannelPricesFn({ data: { productIds } });
+      if (res && res.success) {
+        setCatalogChannels(res.channels || []);
+        setCatalogChannelOverrides(res.overrides || {});
+      }
+    } catch (err) {
+      console.error("Failed to fetch catalog channel prices:", err);
+    }
+  };
+
+  useEffect(() => {
+    const ids = (catalogProductsList || []).map((p: any) => p.id).filter(Boolean);
+    if (ids.length > 0) {
+      fetchCatalogChannelPrices(ids);
+    } else {
+      setCatalogChannels([]);
+      setCatalogChannelOverrides({});
+    }
+  }, [catalogProductsList]);
+
+  const fetchSalesChannels = async () => {
+    try {
+      setIsSalesChannelsLoading(true);
+      const res = await listSalesChannelsFn();
+      if (res?.channels) {
+        setSalesChannelsList(res.channels);
+      }
+    } catch (err: any) {
+      toast.error("Failed to load platform pricing channels");
+    } finally {
+      setIsSalesChannelsLoading(false);
+    }
+  };
+
+  const handleOpenAddProduct = async () => {
+    setProductForm({
+      name: "",
+      barcode: "",
+      category: "",
+      unit: "",
+      costPrice: "",
+      salePrice: "",
+      isBatchTracked: false,
+    });
+    setProductChannelOverrides({});
+    setIsEditingProduct(false);
+    setProductFormOpen(true);
+
+    try {
+      setIsLoadingProductChannels(true);
+      const res = await listSalesChannelsFn();
+      if (res?.channels) {
+        const active = res.channels.filter((c: any) => c.isActive);
+        setActiveChannelsForProduct(active);
+      }
+    } catch (e) {
+    } finally {
+      setIsLoadingProductChannels(false);
+    }
+  };
+
+  const handleOpenEditProduct = async (p: any) => {
+    setProductForm({
+      id: p.id,
+      name: p.name,
+      barcode: p.barcode ?? "",
+      category: p.category,
+      unit: p.unit,
+      costPrice: p.costPriceRaw,
+      salePrice: p.salePriceRaw,
+      isBatchTracked: p.isBatchTracked,
+    });
+    setIsEditingProduct(true);
+    setProductFormOpen(true);
+    setProductChannelOverrides({});
+
+    try {
+      setIsLoadingProductChannels(true);
+      const res = await getProductChannelPricesFn({ data: { productId: p.id } });
+      if (res?.channels) {
+        setActiveChannelsForProduct(res.channels);
+        const initialOverrides: Record<string, string> = {};
+        res.channels.forEach((c: any) => {
+          initialOverrides[c.channelKey] = c.overridePrice != null ? String(c.overridePrice) : "";
+        });
+        setProductChannelOverrides(initialOverrides);
+      }
+    } catch (e) {
+    } finally {
+      setIsLoadingProductChannels(false);
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const XLSX = await import("xlsx");
+      const headers = [
+        "sku",
+        "name",
+        "price",
+        "active",
+        "maximumSalesQuantity",
+        "isWeighted",
+        "baseWeight",
+        "baseWeightUnit",
+        "pricePerBaseUnit",
+        "barcode 1",
+        "barcode 2",
+        "barcode 3",
+        "barcode 4",
+        "barcode 5",
+        "barcode 6",
+        "barcode 7",
+        "category 1",
+        "category 2",
+        "category 3",
+        "category 4",
+        "category 5",
+      ];
+      const sampleRows = [
+        {
+          sku: "SKU-MILK-01",
+          name: "Fresh Milk 1L",
+          price: "6.000",
+          active: "TRUE",
+          maximumSalesQuantity: "10",
+          isWeighted: "FALSE",
+          baseWeight: "1",
+          baseWeightUnit: "L",
+          pricePerBaseUnit: "6.000",
+          "barcode 1": "629104820101",
+          "barcode 2": "629104820102",
+          "barcode 3": "",
+          "barcode 4": "",
+          "barcode 5": "",
+          "barcode 6": "",
+          "barcode 7": "",
+          "category 1": "Dairy",
+          "category 2": "Milk",
+          "category 3": "",
+          "category 4": "",
+          "category 5": "",
+        },
+        {
+          sku: "SKU-APPLES-01",
+          name: "Royal Gala Apples",
+          price: "8.500",
+          active: "TRUE",
+          maximumSalesQuantity: "50",
+          isWeighted: "TRUE",
+          baseWeight: "1",
+          baseWeightUnit: "KG",
+          pricePerBaseUnit: "8.500",
+          "barcode 1": "8901058014723",
+          "barcode 2": "",
+          "barcode 3": "",
+          "barcode 4": "",
+          "barcode 5": "",
+          "barcode 6": "",
+          "barcode 7": "",
+          "category 1": "Produce",
+          "category 2": "Fruits",
+          "category 3": "",
+          "category 4": "",
+          "category 5": "",
+        },
+      ];
+
+      const ws = XLSX.utils.json_to_sheet(sampleRows, { header: headers });
+      ws["!cols"] = headers.map((h) => ({ wch: Math.max(h.length + 4, 14) }));
+
+      // Format Barcode & SKU columns as text
+      const range = XLSX.utils.decode_range(ws["!ref"] || "A1:U3");
+      for (let R = 1; R <= range.e.r; ++R) {
+        for (let C = 0; C <= range.e.c; ++C) {
+          const headerName = (headers[C] || "").toLowerCase();
+          if (headerName === "sku" || headerName.startsWith("barcode")) {
+            const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+            if (cell) {
+              cell.t = "s";
+              cell.z = "@";
+            }
+          }
+        }
+      }
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "In Stock");
+      XLSX.writeFile(wb, "product_import_template.xlsx");
+      toast.success("Excel template downloaded successfully.");
+    } catch (err: any) {
+      toast.error("Failed to generate template: " + err.message);
+    }
+  };
+
+  const isRowUpdating = (rowNum: number) => {
+    if (rowUpdateChoices[rowNum] !== undefined) {
+      return rowUpdateChoices[rowNum];
+    }
+    return updateExistingProducts;
+  };
+
+  const importExistsCount = parsedRows.filter(
+    (r) => r.isValid && (r.classification === "exists" || r.classification === "exists_update" || r.classification === "exists_skip" || r.isExisting),
+  ).length;
+  const showExistingProductsCard = parsedRows.length > 0 && importExistsCount > 0;
+
+  const reclassifyRows = (
+    rawRows: any[],
+    existingProds: any[] = [],
+    selectedBranchIds: string[] = [],
+    branchList: any[] = [],
+    globalUpdateChoice: boolean = true,
+    rowChoices: Record<number, boolean> = {},
+  ) => {
+    const branchNameMap = new Map<string, string>();
+    for (const b of branchList || []) {
+      if (b && b.id) branchNameMap.set(b.id, b.name || "Branch");
+    }
+
+    const primaryBarcodeMap = new Map<string, any>();
+    for (const p of existingProds || []) {
+      if (p && p.barcode) {
+        const bStr = String(p.barcode).trim().toLowerCase();
+        if (bStr) primaryBarcodeMap.set(bStr, p);
+      }
+    }
+
+    const safeBranchIds = Array.isArray(selectedBranchIds) ? selectedBranchIds : [];
+    const safeBranchIdsSet = new Set(safeBranchIds);
+    const selectedBranchNamesStr = safeBranchIds
+      .map((bId) => branchNameMap.get(bId) || "Selected branch")
+      .join(", ");
+
+    return (rawRows || []).map((r) => {
+      if (!r.isValid) {
+        return {
+          ...r,
+          classification: "invalid" as const,
+          isExisting: false,
+          existingProductId: null,
+          note: Array.isArray(r.errors) ? r.errors.join(", ") : "Invalid row",
+        };
+      }
+
+      const cleanBarcode = r.barcode ? String(r.barcode).trim().toLowerCase() : "";
+      const matched = cleanBarcode ? primaryBarcodeMap.get(cleanBarcode) : null;
+
+      if (matched) {
+        const existingInSelectedBranches = (matched.existingBranchIds || []).filter((bId: string) =>
+          safeBranchIdsSet.has(bId),
+        );
+
+        const updating = rowChoices[r.rowNumber] !== undefined ? rowChoices[r.rowNumber] : globalUpdateChoice;
+        const classification = updating ? ("exists_update" as const) : ("exists_skip" as const);
+
+        if (existingInSelectedBranches.length > 0) {
+          const branchNames = existingInSelectedBranches
+            .map((bId: string) => branchNameMap.get(bId) || "branch")
+            .join(", ");
+          return {
+            ...r,
+            classification,
+            isExisting: true,
+            existingProductId: matched.id,
+            matchedExistingName: matched.name,
+            note: updating
+              ? `Barcode ${r.barcode} already exists in ${branchNames} — will update`
+              : `Barcode ${r.barcode} already exists in ${branchNames} — will skip`,
+          };
+        } else {
+          // Exists in tenant but in NONE of the selected branches
+          return {
+            ...r,
+            classification,
+            isExisting: true,
+            existingProductId: matched.id,
+            matchedExistingName: matched.name,
+            note: updating
+              ? `Barcode ${r.barcode} exists in other branch — will be added to ${selectedBranchNamesStr || "selected branches"} — will update`
+              : `Barcode ${r.barcode} exists on website — will skip`,
+          };
+        }
+      } else {
+        // Not in tenant
+        return {
+          ...r,
+          classification: "new" as const,
+          isExisting: false,
+          existingProductId: null,
+          matchedExistingName: null,
+          note: "Ready to create",
+        };
+      }
+    });
+  };
+
+  const fetchExistingProductsByBarcodes = async (branchIds: string[], barcodes: string[]) => {
+    const CHUNK_SIZE = 5000;
+    const chunks: string[][] = [];
+    for (let i = 0; i < barcodes.length; i += CHUNK_SIZE) {
+      chunks.push(barcodes.slice(i, i + CHUNK_SIZE));
+    }
+    if (chunks.length === 0) return [];
+
+    const results = await Promise.all(
+      chunks.map((chunk) =>
+        getExistingProductIdentifiersFn({
+          data: { branchIds, barcodes: chunk },
+        }).catch(() => null)
+      )
+    );
+
+    const combined: {
+      id: string;
+      name: string;
+      barcode: string | null;
+      sku: string | null;
+      existingBranchIds: string[];
+    }[] = [];
+    for (const res of results) {
+      if (res?.existingProducts) {
+        combined.push(...res.existingProducts);
+      }
+    }
+    return combined;
+  };
+
+  const handleBulkUpdateChoice = (enable: boolean) => {
+    setUpdateExistingProducts(enable);
+    const next: Record<number, boolean> = {};
+    let existingCount = 0;
+    parsedRows.forEach((r) => {
+      if (
+        r.isExisting ||
+        r.classification === "exists" ||
+        r.classification === "exists_update" ||
+        r.classification === "exists_skip"
+      ) {
+        existingCount++;
+        next[r.rowNumber] = enable;
+      }
+    });
+    setRowUpdateChoices(next);
+    if (rawFileRows.length > 0) {
+      setParsedRows(
+        reclassifyRows(
+          rawFileRows,
+          cachedExistingProds,
+          importBranches,
+          data?.branches || [],
+          enable,
+          next,
+        ),
+      );
+    } else {
+      setParsedRows((prev) =>
+        prev.map((r) => {
+          if (
+            r.isExisting ||
+            r.classification === "exists" ||
+            r.classification === "exists_update" ||
+            r.classification === "exists_skip"
+          ) {
+            return {
+              ...r,
+              classification: enable ? ("exists_update" as const) : ("exists_skip" as const),
+              note: enable
+                ? (r.note || "").replace(" — will skip", " — will update")
+                : (r.note || "").replace(" — will update", " — will skip"),
+            };
+          }
+          return r;
+        })
+      );
+    }
+
+    if (existingCount === 0) {
+      toast("No existing products in this file");
+    } else if (enable) {
+      toast(`Existing products will be updated (${existingCount} products)`);
+    } else {
+      toast(`Existing products will be skipped (${existingCount} products)`);
+    }
+  };
+
+  const handleApplyBulkStock = () => {
+    const val = bulkStockInput.trim();
+    if (val !== "" && (isNaN(Number(val)) || Number(val) < 0)) {
+      toast.error("Stock must be an integer >= 0");
+      return;
+    }
+    const next: Record<number, string> = {};
+    parsedRows.forEach((r) => {
+      next[r.rowNumber] = val;
+    });
+    setRowStocks(next);
+    toast.success(val === "" ? "Cleared stock for all rows" : `Set stock to ${val} for all rows`);
+  };
+
+  const handleFileSelect = async (file: File) => {
+    if (!file) return;
+    if (importBranches.length === 0) {
+      toast.error("Please select at least one branch first");
+      return;
+    }
+
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".xls") && !lowerName.endsWith(".csv")) {
+      toast.error("Unsupported file type. Please select an .xlsx, .xls, or .csv file.");
+      return;
+    }
+
+    if (file.size > 25 * 1024 * 1024) {
+      toast.error("File exceeds maximum allowed size of 25 MB.");
+      return;
+    }
+
+    setImportFile(file);
+    setImportFileName(file.name);
+    setIsParsing(true);
+
+    try {
+      const tParseStart = performance.now();
+      const buffer = await file.arrayBuffer();
+
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(buffer, {
+        type: "array",
+        raw: true,
+      });
+
+      if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+        toast.error("Spreadsheet has no sheets.");
+        setIsParsing(false);
+        return;
+      }
+
+      const cleanKeyName = (key: string) => String(key || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+      const findRawValue = (row: any, candidates: string[]) => {
+        const cleanedCandidates = candidates.map(cleanKeyName);
+        for (const k of Object.keys(row)) {
+          const cleanK = cleanKeyName(k);
+          if (cleanedCandidates.includes(cleanK)) {
+            if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== "") {
+              return row[k];
+            }
+          }
+        }
+        for (const k of Object.keys(row)) {
+          const cleanK = cleanKeyName(k);
+          for (const c of cleanedCandidates) {
+            if (cleanK === c || cleanK.startsWith(c) || cleanK.includes(c)) {
+              if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== "") {
+                return row[k];
+              }
+            }
+          }
+        }
+        return undefined;
+      };
+
+      const formatRawCell = (val: any): string => {
+        if (val === undefined || val === null) return "";
+        if (typeof val === "number") {
+          if (Number.isFinite(val)) {
+            if (Number.isInteger(val)) {
+              return BigInt(Math.round(val)).toString();
+            }
+            return String(val);
+          }
+          return String(val);
+        }
+        return String(val).replace(/^'+/, "").trim();
+      };
+
+      const cleanPrice = (val: any): number => {
+        if (val === undefined || val === null || val === "") return NaN;
+        if (typeof val === "number") return val;
+        const str = String(val).trim();
+        const cleaned = str.replace(/AED/gi, "").replace(/,/g, "").replace(/\s/g, "").trim();
+        const num = Number(cleaned);
+        if (!isNaN(num)) return num;
+        const numericOnly = str.replace(/[^\d\.]/g, "").trim();
+        return Number(numericOnly);
+      };
+
+      const allRawRows: any[] = [];
+      const statsList: { name: string; total: number; valid: number; invalid: number }[] = [];
+      const seenFileBarcodes = new Map<string, { row: number; sheet: string }>();
+      const seenFileSkus = new Map<string, { row: number; sheet: string }>();
+      const initialRowStocks: Record<number, string> = {};
+      let globalRowIndex = 0;
+
+      for (const sheetName of workbook.SheetNames) {
+        const worksheet = workbook.Sheets[sheetName];
+        if (!worksheet) continue;
+
+        const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet, {
+          defval: "",
+          raw: true,
+        });
+
+        if (!rawRows || rawRows.length === 0) continue;
+
+        let sheetValid = 0;
+        let sheetInvalid = 0;
+
+        const isSheetOutOfStock = sheetName.toLowerCase().includes("out of stock");
+
+        rawRows.forEach((row, idx) => {
+          globalRowIndex++;
+          const rowNum = idx + 1;
+
+          const rawNameVal = findRawValue(row, ["name", "productname", "itemname", "product", "item"]);
+          const name = formatRawCell(rawNameVal);
+
+          // ONLY "barcode 1" is used. Completely ignore barcode 2-7.
+          const rawBarcode1Val = findRawValue(row, ["barcode 1", "barcode1", "barcode", "bar_code", "upc", "ean"]);
+          const cleanBarcode1 = formatRawCell(rawBarcode1Val);
+
+          // SKU
+          const rawSkuVal = findRawValue(row, ["sku", "itemcode", "code", "item_code"]);
+          const cleanSku = formatRawCell(rawSkuVal);
+
+          // Category: use "category 1" EXACTLY as written in the file. Only if empty -> "Uncategorized"
+          const rawCatVal = findRawValue(row, ["category 1", "category1", "category"]);
+          const category = formatRawCell(rawCatVal) || "Uncategorized";
+
+          // Weighted / Unit: "PCS" / "KG" (uppercase)
+          const rawWeightedVal = findRawValue(row, ["isweighted", "is_weighted", "weighted"]);
+          const isWeighted =
+            rawWeightedVal === true ||
+            String(rawWeightedVal).toLowerCase() === "true" ||
+            String(rawWeightedVal) === "1" ||
+            String(rawWeightedVal).toLowerCase() === "yes";
+
+          const rawUnitVal = findRawValue(row, ["unit", "uom", "unitofmeasure", "baseWeightUnit", "baseweightunit"]);
+          const rawUnitStr = formatRawCell(rawUnitVal).toUpperCase();
+          const unit = isWeighted || rawUnitStr === "KG" ? "KG" : "PCS";
+
+          // Active status: Sheet "In Stock" -> TRUE, "Out of Stock" -> FALSE, or explicit "active" column
+          const rawActiveVal = findRawValue(row, ["active", "isactive", "is_active"]);
+          let isActive = !isSheetOutOfStock;
+          if (rawActiveVal !== undefined && rawActiveVal !== "") {
+            if (
+              rawActiveVal === true ||
+              String(rawActiveVal).toLowerCase() === "true" ||
+              String(rawActiveVal) === "1" ||
+              String(rawActiveVal).toLowerCase() === "yes"
+            ) {
+              isActive = true;
+            } else if (
+              rawActiveVal === false ||
+              String(rawActiveVal).toLowerCase() === "false" ||
+              String(rawActiveVal) === "0" ||
+              String(rawActiveVal).toLowerCase() === "no"
+            ) {
+              isActive = false;
+            }
+          }
+
+          // Stock prefill from file if provided
+          const rawStockVal = findRawValue(row, ["stock", "quantity", "qty", "stockqty", "inventory", "balance", "initialstock"]);
+          if (rawStockVal !== undefined && rawStockVal !== "" && !isNaN(Number(rawStockVal)) && Number(rawStockVal) >= 0) {
+            initialRowStocks[globalRowIndex] = String(Math.floor(Number(rawStockVal)));
+          }
+
+          // Price & Cost
+          const rawPriceVal = findRawValue(row, ["price", "saleprice", "retailprice", "retail", "rsp", "sale_price", "retail_price", "priceperbaseunit", "sellingprice", "unitprice", "itemprice"]);
+          const rawCostVal = findRawValue(row, ["costprice", "cost", "unitcost", "buyprice", "cost_price", "priceperbaseunit"]);
+
+          const retailPriceNum = cleanPrice(rawPriceVal);
+          let costPriceNum = 0;
+          if (rawCostVal !== undefined && rawCostVal !== "") {
+            costPriceNum = cleanPrice(rawCostVal);
+          }
+
+          const errors: string[] = [];
+
+          if (!name) errors.push("Missing Name");
+
+          if (isNaN(retailPriceNum) || retailPriceNum <= 0) {
+            errors.push("Price must be > 0");
+          }
+
+          // File-level duplicate check for barcode & SKU
+          if (cleanBarcode1) {
+            const lowerBar = cleanBarcode1.toLowerCase();
+            if (seenFileBarcodes.has(lowerBar)) {
+              const prev = seenFileBarcodes.get(lowerBar)!;
+              errors.push(`Invalid – duplicate in file (row ${prev.row})`);
+            } else {
+              seenFileBarcodes.set(lowerBar, { row: globalRowIndex, sheet: sheetName });
+            }
+          }
+
+          if (cleanSku) {
+            const lowerSku = cleanSku.toLowerCase();
+            if (seenFileSkus.has(lowerSku)) {
+              const prev = seenFileSkus.get(lowerSku)!;
+              const dupMsg = `Invalid – duplicate in file (row ${prev.row})`;
+              if (!errors.includes(dupMsg)) {
+                errors.push(dupMsg);
+              }
+            } else {
+              seenFileSkus.set(lowerSku, { row: globalRowIndex, sheet: sheetName });
+            }
+          }
+
+          const isValid = errors.length === 0;
+
+          if (isValid) {
+            sheetValid++;
+          } else {
+            sheetInvalid++;
+          }
+
+          // Exact sale price with up to 3 decimals
+          let salePriceExact = "0.000";
+          if (!isNaN(retailPriceNum) && retailPriceNum > 0) {
+            const parts = String(rawPriceVal).trim().split(".");
+            if (parts.length === 2 && parts[1].length <= 3) {
+              salePriceExact = String(retailPriceNum);
+            } else {
+              salePriceExact = Number(retailPriceNum.toFixed(3)).toString();
+            }
+          }
+
+          allRawRows.push({
+            rowNumber: globalRowIndex,
+            sheetRowNumber: rowNum,
+            sheetName,
+            name,
+            barcode: cleanBarcode1 || null,
+            sku: cleanSku || null,
+            category,
+            unit,
+            costPrice: isNaN(costPriceNum) ? "0.000" : Number(costPriceNum.toFixed(3)).toString(),
+            salePrice: salePriceExact,
+            active: isActive,
+            isBatchTracked: false,
+            isValid,
+            errors,
+          });
+        });
+
+        statsList.push({
+          name: sheetName,
+          total: rawRows.length,
+          valid: sheetValid,
+          invalid: sheetInvalid,
+        });
+      }
+
+      const tParseEnd = performance.now();
+      const parseTime = tParseEnd - tParseStart;
+
+      if (allRawRows.length === 0) {
+        toast.error("No data rows found in spreadsheet.");
+        setRawFileRows([]);
+        setParsedRows([]);
+        setSheetStats([]);
+        setRowStocks({});
+        setRowUpdateChoices({});
+        setIsParsing(false);
+        return;
+      }
+
+      const fileBarcodes = Array.from(
+        new Set(
+          allRawRows
+            .map((r) => (r.barcode ? String(r.barcode).trim() : ""))
+            .filter(Boolean)
+        )
+      );
+
+      const tExistsStart = performance.now();
+      const existingProds = await fetchExistingProductsByBarcodes(importBranches, fileBarcodes);
+      const tExistsEnd = performance.now();
+      const existsCheckTime = tExistsEnd - tExistsStart;
+
+      setCachedExistingProds(existingProds);
+
+      const tClassifyStart = performance.now();
+      setRawFileRows(allRawRows);
+      const classified = reclassifyRows(
+        allRawRows,
+        existingProds,
+        importBranches,
+        data?.branches || [],
+        updateExistingProducts,
+        {},
+      );
+      setParsedRows(classified);
+      const tClassifyEnd = performance.now();
+      const classifyTime = tClassifyEnd - tClassifyStart;
+
+      console.log(
+        `[perf] parse ${Math.round(parseTime)}ms, exists-check ${Math.round(existsCheckTime)}ms, classify ${Math.round(classifyTime)}ms`
+      );
+
+      setSheetStats(statsList);
+      setRowStocks(initialRowStocks);
+      setRowUpdateChoices({});
+      setImportPreviewPage(1);
+
+      const totalValid = allRawRows.filter((r) => r.isValid).length;
+      const totalInvalid = allRawRows.length - totalValid;
+
+      toast.info(
+        `Parsed ${allRawRows.length} rows across ${statsList.length} sheet(s) (${totalValid} valid, ${totalInvalid} invalid)`
+      );
+    } catch (err: any) {
+      toast.error("Failed to parse spreadsheet: " + err.message);
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const cleanErrorMessage = (msg: string): string => {
+    if (!msg) return "Import failed";
+    const stripped = msg.replace(/^Database transaction failed:\s*/i, "").trim();
+    if (stripped.includes("Failed query:") || stripped.includes("insert into") || stripped.includes("UPDATE ")) {
+      const skuMatch = stripped.match(/sku\)=\([^,]+,\s*([^)]+)\)/i) || stripped.match(/sku\)=\(([^)]+)\)/i);
+      if (skuMatch) return `Duplicate SKU ${skuMatch[1].trim()}`;
+      const barcodeMatch = stripped.match(/barcode\)=\([^,]+,\s*([^)]+)\)/i) || stripped.match(/barcode\)=\(([^)]+)\)/i);
+      if (barcodeMatch) return `Duplicate barcode ${barcodeMatch[1].trim()}`;
+      return "Database query failed";
+    }
+    return stripped.length > 80 ? stripped.slice(0, 80) + "..." : stripped;
+  };
+
+  const handleExecuteImport = async () => {
+    const validRows = parsedRows.filter((r) => r.isValid);
+    if (validRows.length === 0) {
+      toast.error("No valid product rows to import.");
+      return;
+    }
+
+    if (importBranches.length === 0) {
+      toast.error("Please select at least one branch for stock allocation.");
+      return;
+    }
+
+    setIsImporting(true);
+    const importStartTime = performance.now();
+    const CHUNK_SIZE = 5000;
+    const totalChunks = Math.ceil(validRows.length / CHUNK_SIZE);
+    let totalCreated = 0;
+    let totalUpdated = 0;
+    let totalSkipped = 0;
+    let totalFailed = 0;
+    const failedChunks: { chunk: number; error: string }[] = [];
+    const allFailedRowDetails: { barcode?: string; name?: string; reason: string }[] = [];
+
+    const loadToast = toast.loading(
+      `Importing ${validRows.length} products in ${totalChunks} batch${totalChunks > 1 ? "es" : ""}...`
+    );
+
+    try {
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, validRows.length);
+        const chunkRows = validRows.slice(start, end);
+
+        toast.loading(
+          `Importing products... Batch ${i + 1}/${totalChunks} (${start + 1} - ${end} of ${validRows.length}) | Created: ${totalCreated}, Updated: ${totalUpdated}`,
+          { id: loadToast }
+        );
+
+        const chunkProducts = chunkRows.map((r) => {
+          const willUpdate = isRowUpdating(r.rowNumber);
+          let action: "create" | "update" | "skip" = "create";
+          if (
+            r.classification === "exists" ||
+            r.classification === "exists_update" ||
+            r.classification === "exists_skip" ||
+            r.classification === "add_to_branch" ||
+            r.isExisting
+          ) {
+            action = willUpdate ? "update" : "skip";
+          } else {
+            action = "create";
+          }
+
+          const rawStock = rowStocks[r.rowNumber];
+          const parsedStock =
+            rawStock !== undefined && rawStock !== "" && !isNaN(Number(rawStock))
+              ? Math.max(0, Math.floor(Number(rawStock)))
+              : null;
+
+          return {
+            action,
+            existingProductId: r.existingProductId || null,
+            name: r.name,
+            barcode: r.barcode,
+            sku: r.sku,
+            category: r.category,
+            unit: r.unit,
+            costPrice: r.costPrice,
+            salePrice: r.salePrice,
+            stock: parsedStock,
+            isBatchTracked: r.isBatchTracked,
+          };
+        });
+
+        try {
+          const requestPromise = (bulkImportProductsFn as any)({
+            data: {
+              products: chunkProducts,
+              branchIds: importBranches,
+            },
+          });
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Batch request timed out after 120 seconds")), 120000)
+          );
+
+          const res: any = await Promise.race([requestPromise, timeoutPromise]);
+
+          if (res && res.success) {
+            totalCreated += res.created || 0;
+            totalUpdated += res.updated || 0;
+            totalSkipped += res.skipped || 0;
+            totalFailed += res.failed || 0;
+            if (Array.isArray(res.failedRows) && res.failedRows.length > 0) {
+              allFailedRowDetails.push(...res.failedRows);
+            }
+          } else {
+            totalFailed += chunkRows.length;
+            const errMsg = cleanErrorMessage(res?.error || `Batch ${i + 1} failed`);
+            failedChunks.push({
+              chunk: i + 1,
+              error: errMsg,
+            });
+            // Stop import loop on batch failure to preserve counts done so far
+            break;
+          }
+        } catch (chunkErr: any) {
+          totalFailed += chunkRows.length;
+          const errMsg = cleanErrorMessage(chunkErr.message || `Batch ${i + 1} encountered an error`);
+          failedChunks.push({
+            chunk: i + 1,
+            error: errMsg,
+          });
+          // Stop import loop on batch error to preserve counts done so far
+          break;
+        }
+      }
+
+      toast.dismiss(loadToast);
+
+      const elapsedSec = ((performance.now() - importStartTime) / 1000).toFixed(1);
+      const summaryMsg = `Created ${totalCreated}, Updated ${totalUpdated}, Skipped ${totalSkipped}, Failed ${totalFailed}`;
+
+      if (totalFailed === 0 && failedChunks.length === 0) {
+        toast.success(`Import complete in ${elapsedSec}s: ${summaryMsg}`);
+        setImportModalOpen(false);
+        setRawFileRows([]);
+        setParsedRows([]);
+        setSheetStats([]);
+        setRowStocks({});
+        setRowUpdateChoices({});
+        setImportFile(null);
+        setImportFileName("");
+        await handleFetchCatalog(1, catalogSearch);
+        router.invalidate();
+      } else if (totalCreated > 0 || totalUpdated > 0) {
+        const failureNote =
+          allFailedRowDetails.length > 0
+            ? allFailedRowDetails.slice(0, 3).map((f) => `${f.name || f.barcode || "Product"}: ${cleanErrorMessage(f.reason)}`).join("; ")
+            : failedChunks.map((f) => `Batch ${f.chunk}: ${cleanErrorMessage(f.error)}`).join("; ");
+        toast.warning(
+          `Import partially completed in ${elapsedSec}s: ${summaryMsg}. (${failureNote})`
+        );
+        await handleFetchCatalog(1, catalogSearch);
+        router.invalidate();
+      } else {
+        const failureNote =
+          allFailedRowDetails.length > 0
+            ? allFailedRowDetails.slice(0, 3).map((f) => `${f.name || f.barcode || "Product"}: ${cleanErrorMessage(f.reason)}`).join("; ")
+            : failedChunks.map((f) => `Batch ${f.chunk}: ${cleanErrorMessage(f.error)}`).join("; ");
+        toast.error(`Import failed after ${elapsedSec}s: ${summaryMsg}. (${failureNote})`);
+      }
+    } catch (err: any) {
+      toast.dismiss(loadToast);
+      toast.error(cleanErrorMessage(err.message || "Bulk import failed"));
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   const [branchAddOpen, setBranchAddOpen] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
@@ -1034,6 +2182,10 @@ function HeadOffice() {
         onValueChange={(val) => {
           setActiveTab(val);
           setIsMobileMenuOpen(false);
+          if (val === "subscription_billing") {
+            setUnseenInvoicesCount(0);
+            markTenantInvoicesSeenFn().catch(() => {});
+          }
         }} 
         className="mt-6 flex flex-col md:flex-row gap-8"
       >
@@ -1144,8 +2296,25 @@ function HeadOffice() {
             <TabsTrigger
               value="subscription_billing"
               className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+              onClick={() => {
+                setUnseenInvoicesCount(0);
+                markTenantInvoicesSeenFn().catch(() => {});
+              }}
             >
-              Subscription & Billing
+              <div className="flex items-center justify-between w-full">
+                <span>Subscription & Billing</span>
+                {unseenInvoicesCount > 0 && (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-lime-500 text-[10px] font-black text-slate-950 shadow-sm">
+                    {unseenInvoicesCount}
+                  </span>
+                )}
+              </div>
+            </TabsTrigger>
+            <TabsTrigger
+              value="expenses"
+              className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+            >
+              Expenses
             </TabsTrigger>
             <TabsTrigger
               value="support"
@@ -1165,6 +2334,46 @@ function HeadOffice() {
 
         <main className="min-w-0 flex-1">
           <TabsContent value="dashboard" className="mt-0 space-y-5">
+            {data?.reminderInvoices && data.reminderInvoices.length > 0 && data.reminderInvoices[0] && (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-2xl border border-amber-500/40 bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-transparent p-4 shadow-sm text-ink mb-2">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-slate-950 font-bold shadow-sm">
+                    <AlertTriangle className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <div className="text-sm font-extrabold text-amber-900 dark:text-amber-300">
+                      Payment due: AED {Number(data.reminderInvoices[0].totalAmount || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, due {new Date(data.reminderInvoices[0].periodEnd).toLocaleDateString("en-AE", { day: "numeric", month: "short", year: "numeric" })} — Pay Now
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      Invoice ref: <span className="font-mono font-semibold">{data.reminderInvoices[0].invoiceNumber}</span> ({data.reminderInvoices[0].planName} plan)
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {data.reminderInvoices[0].mamoPaymentUrl ? (
+                    <Button
+                      size="sm"
+                      className="rounded-xl font-bold bg-lime-500 hover:bg-lime-600 text-slate-950 shadow-sm transition-all hover:-translate-y-0.5"
+                      asChild
+                    >
+                      <a href={data.reminderInvoices[0].mamoPaymentUrl} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink className="mr-1.5 h-3.5 w-3.5" /> Pay Now
+                      </a>
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="rounded-xl font-bold border-amber-500/40 text-amber-800 dark:text-amber-300 hover:bg-amber-500/10"
+                      onClick={() => toast.info("Please contact Cloudynation support at support@cloudynationpos.com or raise a ticket in Support tab.")}
+                    >
+                      Contact support
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <StatCard
                 label="Network sales today"
@@ -1507,8 +2716,9 @@ function HeadOffice() {
 
           <TabsContent value="catalog" className="mt-0 space-y-4">
             {/* Catalog Toolbar */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1 max-w-2xl">
+            <div className="flex flex-col gap-3">
+              {/* Row 1: Search & Branch Filter */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full">
                 <div className="relative flex-1">
                   <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -1545,14 +2755,12 @@ function HeadOffice() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
 
-              <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
                   onClick={() => handleFetchCatalog(1, catalogSearch)}
                   disabled={isCatalogLoading}
-                  className="rounded-xl h-10 px-4 text-xs font-semibold"
+                  className="rounded-xl h-10 px-4 text-xs font-semibold shrink-0 justify-center"
                 >
                   {isCatalogLoading ? (
                     <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
@@ -1561,38 +2769,144 @@ function HeadOffice() {
                   )}
                   Search
                 </Button>
+              </div>
 
-                <Button
-                  onClick={() => {
-                    setProductForm({
-                      name: "",
-                      barcode: "",
-                      category: "",
-                      unit: "",
-                      costPrice: "",
-                      salePrice: "",
-                      isBatchTracked: false,
-                    });
-                    setIsEditingProduct(false);
-                    setProductFormOpen(true);
-                  }}
-                  className="rounded-xl h-10 px-4 font-semibold shrink-0"
-                >
-                  <Plus className="h-4 w-4 mr-1.5" /> Add Product
-                </Button>
+              {/* Row 2: Actions & Selection */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 w-full">
+                <div>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (isAllMatchingSelected) {
+                        setIsAllMatchingSelected(false);
+                        setCatalogSelectedProductIds(new Set());
+                      } else {
+                        setIsAllMatchingSelected(true);
+                      }
+                    }}
+                    className={`group rounded-xl h-10 px-3 sm:px-4 font-semibold text-xs sm:text-sm w-full sm:w-auto transition-all duration-200 shadow-sm cursor-pointer ${
+                      isAllMatchingSelected
+                        ? "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive hover:text-white hover:border-destructive hover:shadow-md hover:shadow-destructive/20"
+                        : "border-border/80 bg-surface/90 text-ink hover:bg-primary hover:border-primary hover:text-black hover:shadow-md hover:shadow-primary/20"
+                    }`}
+                  >
+                    {isAllMatchingSelected ? (
+                      <>
+                        <X className="h-4 w-4 mr-1.5 transition-transform duration-200 group-hover:rotate-90 group-hover:scale-110" /> Clear Selection
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="h-4 w-4 mr-1.5 text-emerald-600 dark:text-primary transition-all duration-200 group-hover:text-black group-hover:scale-110" /> Select All Products ({catalogTotal.toLocaleString()})
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setImportBranches([]);
+                      setImportAllBranches(false);
+                      setImportModalOpen(true);
+                    }}
+                    className="rounded-xl h-10 px-3 sm:px-4 font-semibold justify-center text-xs sm:text-sm"
+                  >
+                    <UploadCloud className="h-4 w-4 mr-1.5" /> Import Excel/CSV
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      setPlatformPricingOpen(true);
+                      await fetchSalesChannels();
+                    }}
+                    className="rounded-xl h-10 px-3 sm:px-4 font-semibold justify-center text-xs sm:text-sm"
+                  >
+                    <Percent className="h-4 w-4 mr-1.5" /> Platform Pricing
+                  </Button>
+
+                  <Button
+                    onClick={handleOpenAddProduct}
+                    className="rounded-xl h-10 px-3 sm:px-4 font-semibold justify-center text-xs sm:text-sm"
+                  >
+                    <Plus className="h-4 w-4 mr-1.5" /> Add Product
+                  </Button>
+                </div>
               </div>
             </div>
 
-            {/* Catalog Table Container */}
+            {/* Catalog Table & Mobile Cards Container */}
             <div className="rounded-2xl border border-border/50 bg-surface/50 shadow-sm backdrop-blur-xl overflow-hidden">
-              <div className="relative w-full overflow-x-auto">
-                <table className="w-full caption-bottom text-sm min-w-[780px]">
-                  <thead className="bg-surface-2/90 [&_tr]:border-b-0">
+              {/* Bulk Selection Bar */}
+              {hasCatalogSelection && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 bg-primary/10 border-b border-primary/20 text-xs sm:text-sm text-ink animate-in fade-in slide-in-from-top-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold text-primary">
+                      {isAllMatchingSelected
+                        ? `All ${catalogTotal.toLocaleString()} matching products selected`
+                        : `${catalogSelectedProductIds.size.toLocaleString()} selected`}
+                    </span>
+                    {!isAllMatchingSelected && catalogTotal > catalogSelectedProductIds.size && (
+                      <>
+                        <span className="text-muted-foreground">•</span>
+                        <button
+                          type="button"
+                          onClick={() => setIsAllMatchingSelected(true)}
+                          className="text-primary hover:underline font-semibold cursor-pointer"
+                        >
+                          Select all {catalogTotal.toLocaleString()} matching products
+                        </button>
+                      </>
+                    )}
+                    <span className="text-muted-foreground">•</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCatalogSelectedProductIds(new Set());
+                        setIsAllMatchingSelected(false);
+                      }}
+                      className="text-muted-foreground hover:text-ink hover:underline font-medium cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => {
+                      setBulkDeleteConfirmText("");
+                      setBulkDeleteDialogOpen(true);
+                    }}
+                    className="rounded-xl h-8 px-3 text-xs font-semibold shadow-sm w-full sm:w-auto"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                    Delete Selected
+                  </Button>
+                </div>
+              )}
+
+              {/* Desktop Table View (md and up) */}
+              <div
+                ref={catalogTableRef}
+                onMouseDown={handleCatalogMouseDown}
+                onClickCapture={handleCatalogClickCapture}
+                className={`hidden md:block w-full overflow-x-auto ${isCatalogDragging ? "cursor-grabbing select-none" : "cursor-grab"}`}
+              >
+                <table className="w-full caption-bottom text-sm min-w-max">
+                  <thead className="bg-surface-2 [&_tr]:border-b-0">
                     <tr className="border-b border-border/50">
+                      <th className="h-11 w-10 px-3 py-3 text-center align-middle whitespace-nowrap">
+                        <Checkbox
+                          checked={isAllOnPageSelected ? true : isSomeOnPageSelected ? "indeterminate" : false}
+                          onCheckedChange={handleToggleSelectAllOnPage}
+                          aria-label="Select all on this page"
+                        />
+                      </th>
                       <th className="h-11 px-3 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
                         SKU
                       </th>
-                      <th className="h-11 px-3 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground min-w-[160px]">
+                      <th className="h-11 px-3 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground min-w-[200px] max-w-[260px] sticky left-0 bg-surface-2 z-20 shadow-[4px_0_12px_rgba(0,0,0,0.06)]">
                         Product
                       </th>
                       <th className="h-11 px-3 py-3 text-left align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
@@ -1610,10 +2924,21 @@ function HeadOffice() {
                       <th className="h-11 px-2.5 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
                         Retail
                       </th>
+                      {catalogChannels.map((ch) => {
+                        const markupDisplay = ch.markupPercent > 0 ? `(+${ch.markupPercent}%)` : `(${ch.markupPercent}%)`;
+                        return (
+                          <th
+                            key={ch.key}
+                            className="h-11 px-2.5 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap"
+                          >
+                            {ch.name} {markupDisplay}
+                          </th>
+                        );
+                      })}
                       <th className="h-11 px-2.5 py-3 text-right align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
                         Stock
                       </th>
-                      <th className="h-11 px-4 py-3 text-center align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap sticky right-0 bg-surface-2/95 backdrop-blur-md shadow-[-4px_0_12px_rgba(0,0,0,0.06)] min-w-[120px] z-10">
+                      <th className="h-11 px-4 py-3 text-center align-middle text-[11px] font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap sticky right-0 bg-surface-2 z-20 shadow-[-4px_0_12px_rgba(0,0,0,0.06)] min-w-[120px]">
                         Actions
                       </th>
                     </tr>
@@ -1622,13 +2947,25 @@ function HeadOffice() {
                     {mappedProducts.map((p: any) => (
                       <tr
                         key={p.id}
-                        className="group border-b border-border/50 transition-all duration-200 hover:bg-primary/[0.03]"
+                        className={cn(
+                          "group border-b border-border/50 transition-all duration-200 hover:bg-primary/[0.03]",
+                          (isAllMatchingSelected || catalogSelectedProductIds.has(p.id)) && "bg-primary/[0.04]"
+                        )}
                       >
+                        <td className="w-10 px-3 py-3 align-middle text-center whitespace-nowrap">
+                          <Checkbox
+                            checked={isAllMatchingSelected || catalogSelectedProductIds.has(p.id)}
+                            onCheckedChange={() => handleToggleSelectProduct(p.id)}
+                            aria-label={`Select ${p.name}`}
+                          />
+                        </td>
                         <td className="px-3 py-3 align-middle font-mono text-xs text-muted-foreground whitespace-nowrap">
                           {p.sku}
                         </td>
-                        <td className="px-3 py-3 align-middle font-semibold text-ink">
-                          {p.name}
+                        <td className="px-3 py-3 align-middle font-semibold text-ink sticky left-0 bg-surface group-hover:bg-surface shadow-[4px_0_12px_rgba(0,0,0,0.06)] z-10">
+                          <div className="max-w-[220px] line-clamp-2 break-words" title={p.name}>
+                            {p.name}
+                          </div>
                         </td>
                         <td className="px-3 py-3 align-middle font-mono text-xs whitespace-nowrap">
                           {p.barcode || "—"}
@@ -1645,29 +2982,41 @@ function HeadOffice() {
                         <td className="px-2.5 py-3 align-middle text-right font-semibold tabular-nums text-ink whitespace-nowrap">
                           {p.price.toFixed(2)}
                         </td>
+                        {catalogChannels.map((ch) => {
+                          const overrideVal = catalogChannelOverrides[p.id]?.[ch.key] ?? null;
+                          const channelPrice = resolveChannelPrice(p.price, ch.markupPercent, overrideVal);
+                          const hasOverride = overrideVal !== null && overrideVal !== undefined;
+
+                          return (
+                            <td
+                              key={ch.key}
+                              className="px-2.5 py-3 align-middle text-right tabular-nums whitespace-nowrap"
+                            >
+                              <div className="inline-flex items-center justify-end gap-1 font-medium">
+                                <span>{channelPrice.toFixed(2)}</span>
+                                {hasOverride && (
+                                  <span
+                                    title="Manual price"
+                                    className="inline-flex items-center text-[10px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold cursor-help"
+                                  >
+                                    <Pencil className="h-2.5 w-2.5 mr-0.5" />
+                                    manual
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        })}
                         <td className="px-2.5 py-3 align-middle text-right tabular-nums font-medium whitespace-nowrap">
                           {p.stock}
                         </td>
-                        <td className="px-4 py-3 align-middle text-center whitespace-nowrap sticky right-0 bg-surface/95 backdrop-blur-md group-hover:bg-surface shadow-[-4px_0_12px_rgba(0,0,0,0.06)] z-10">
+                        <td className="px-4 py-3 align-middle text-center whitespace-nowrap sticky right-0 bg-surface group-hover:bg-surface shadow-[-4px_0_12px_rgba(0,0,0,0.06)] z-10">
                           <div className="flex items-center justify-center gap-1.5">
                             <Button
                               size="icon"
                               variant="outline"
                               className="h-7 w-7 rounded-lg"
-                              onClick={() => {
-                                setProductForm({
-                                  id: p.id,
-                                  name: p.name,
-                                  barcode: p.barcode ?? "",
-                                  category: p.category,
-                                  unit: p.unit,
-                                  costPrice: p.costPriceRaw,
-                                  salePrice: p.salePriceRaw,
-                                  isBatchTracked: p.isBatchTracked,
-                                });
-                                setIsEditingProduct(true);
-                                setProductFormOpen(true);
-                              }}
+                              onClick={() => handleOpenEditProduct(p)}
                               title="Edit product"
                             >
                               <Pencil className="h-3.5 w-3.5" />
@@ -1716,7 +3065,7 @@ function HeadOffice() {
                     {mappedProducts.length === 0 && (
                       <tr>
                         <td
-                          colSpan={9}
+                          colSpan={10 + catalogChannels.length}
                           className="p-8 text-center text-sm text-muted-foreground"
                         >
                           {isCatalogLoading ? (
@@ -1734,8 +3083,156 @@ function HeadOffice() {
                 </table>
               </div>
 
+              {/* Mobile Card List View (below md) */}
+              <div className="md:hidden divide-y divide-border/50">
+                {mappedProducts.length > 0 && (
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-surface-2/60 border-b border-border/50 text-xs text-muted-foreground">
+                    <label className="flex items-center gap-2 cursor-pointer font-medium text-ink">
+                      <Checkbox
+                        checked={isAllOnPageSelected ? true : isSomeOnPageSelected ? "indeterminate" : false}
+                        onCheckedChange={handleToggleSelectAllOnPage}
+                      />
+                      <span>Select all on page ({currentPageProductIds.length})</span>
+                    </label>
+                  </div>
+                )}
+                {mappedProducts.map((p: any) => (
+                  <div
+                    key={p.id}
+                    className={cn(
+                      "p-4 space-y-3 bg-surface/30 transition-colors",
+                      (isAllMatchingSelected || catalogSelectedProductIds.has(p.id)) && "bg-primary/[0.06]"
+                    )}
+                  >
+                    {/* Top row: Checkbox + Name + Category & Unit */}
+                    <div className="flex items-start justify-between gap-2.5">
+                      <div className="pt-0.5 shrink-0">
+                        <Checkbox
+                          checked={isAllMatchingSelected || catalogSelectedProductIds.has(p.id)}
+                          onCheckedChange={() => handleToggleSelectProduct(p.id)}
+                          aria-label={`Select ${p.name}`}
+                        />
+                      </div>
+                      <div className="space-y-0.5 flex-1 min-w-0">
+                        <div className="font-bold text-sm text-ink break-words">{p.name}</div>
+                        <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
+                          {p.sku && <span className="font-mono text-[11px]">{p.sku}</span>}
+                          {p.sku && p.barcode && <span>•</span>}
+                          {p.barcode && <span className="font-mono text-[11px]">{p.barcode}</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-primary/10 text-primary">
+                          {p.category}
+                        </span>
+                        <span className="text-xs text-muted-foreground font-medium px-1.5 py-0.5 rounded bg-surface-2 border border-border/50">
+                          {p.unit}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Pricing & Stock Details Card */}
+                    <div className="p-2.5 rounded-xl bg-surface-2/60 border border-border/40 space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Store:</span>
+                        <span className="font-semibold text-ink tabular-nums">{p.price.toFixed(2)}</span>
+                      </div>
+                      {catalogChannels.map((ch) => {
+                        const overrideVal = catalogChannelOverrides[p.id]?.[ch.key] ?? null;
+                        const channelPrice = resolveChannelPrice(p.price, ch.markupPercent, overrideVal);
+                        const hasOverride = overrideVal !== null && overrideVal !== undefined;
+                        const markupDisplay = ch.markupPercent > 0 ? `(+${ch.markupPercent}%)` : `(${ch.markupPercent}%)`;
+
+                        return (
+                          <div key={ch.key} className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">
+                              {ch.name} {markupDisplay}:
+                            </span>
+                            <div className="inline-flex items-center gap-1 font-medium tabular-nums">
+                              <span className="text-ink font-semibold">{channelPrice.toFixed(2)}</span>
+                              {hasOverride && (
+                                <span
+                                  title="Manual price"
+                                  className="inline-flex items-center text-[10px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold"
+                                >
+                                  <Pencil className="h-2 w-2 mr-0.5" />
+                                  manual
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div className="flex items-center justify-between pt-1 border-t border-border/40">
+                        <span className="text-muted-foreground">Stock:</span>
+                        <span className="font-medium tabular-nums text-ink">{p.stock}</span>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 px-3 rounded-lg text-xs"
+                        onClick={() => handleOpenEditProduct(p)}
+                      >
+                        <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 px-3 rounded-lg text-xs text-primary hover:bg-primary/10"
+                        onClick={() => {
+                          setProductForm({
+                            id: "",
+                            name: `${p.name} (Copy)`,
+                            barcode: "",
+                            category: p.category,
+                            unit: p.unit,
+                            costPrice: p.costPriceRaw,
+                            salePrice: p.salePriceRaw,
+                            isBatchTracked: p.isBatchTracked,
+                            barcodes: [],
+                            variants: [],
+                            conversions: [],
+                          });
+                          setIsEditingProduct(false);
+                          setProductFormOpen(true);
+                        }}
+                      >
+                        <Copy className="h-3.5 w-3.5 mr-1" /> Duplicate
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 px-3 rounded-lg text-xs text-destructive hover:bg-destructive/10"
+                        onClick={() => {
+                          setDeleteProductContext(p);
+                          setDeleteDialogOpen(true);
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                {mappedProducts.length === 0 && (
+                  <div className="p-8 text-center text-sm text-muted-foreground">
+                    {isCatalogLoading ? (
+                      <div className="flex items-center justify-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                        <span>Loading catalog items...</span>
+                      </div>
+                    ) : (
+                      <span>No products found matching your search.</span>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Clean Pagination Footer */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-3.5 border-t border-border/50 bg-surface-2/40 text-xs text-muted-foreground">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-3.5 border-t border-border/50 bg-surface-2/40 text-xs text-muted-foreground rounded-b-2xl">
                 <div>
                   Showing{" "}
                   <span className="font-semibold text-ink">
@@ -1867,6 +3364,73 @@ function HeadOffice() {
                       checked={productForm.isBatchTracked}
                       onCheckedChange={(c) => setProductForm({ ...productForm, isBatchTracked: c })}
                     />
+                  </div>
+
+                  {/* Platform Prices Section */}
+                  <div className="space-y-2 border-t pt-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-bold text-ink">Platform Prices</Label>
+                      <span className="text-[11px] text-muted-foreground">
+                        Auto-calculated from Retail Price or manual override
+                      </span>
+                    </div>
+                    {isLoadingProductChannels ? (
+                      <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                        <span>Loading platform prices...</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {activeChannelsForProduct.map((ch: any) => {
+                          const retailNum = Number(productForm.salePrice) || 0;
+                          const key = ch.channelKey || ch.key;
+                          const autoPrice = resolveChannelPrice(retailNum, ch.markupPercent, null);
+                          const overrideVal = productChannelOverrides[key] || "";
+                          const markupDisplay =
+                            Number(ch.markupPercent) > 0 ? `+${ch.markupPercent}%` : `${ch.markupPercent}%`;
+
+                          return (
+                            <div
+                              key={key}
+                              className="flex items-center justify-between p-2.5 rounded-xl border border-border/50 bg-surface-2/40 gap-3"
+                            >
+                              <div className="space-y-0.5">
+                                <div className="text-xs font-semibold text-ink">
+                                  {ch.name}{" "}
+                                  <span className="text-[11px] text-muted-foreground font-normal">
+                                    ({markupDisplay})
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-muted-foreground">
+                                  {autoPrice.toFixed(2)} auto
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Label className="text-[11px] text-muted-foreground shrink-0">Override:</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  placeholder="Auto"
+                                  value={overrideVal}
+                                  onChange={(e) => {
+                                    setProductChannelOverrides({
+                                      ...productChannelOverrides,
+                                      [key]: e.target.value,
+                                    });
+                                  }}
+                                  className="w-24 h-8 text-xs rounded-lg border-border/50 bg-surface text-right"
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {activeChannelsForProduct.length === 0 && (
+                          <p className="text-xs text-muted-foreground italic py-1">
+                            No active platforms configured.
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Alternate Barcodes Section */}
@@ -2133,9 +3697,42 @@ function HeadOffice() {
                         : await createProductFn({ data: payload });
 
                       if (res.success) {
+                        try {
+                          const targetProductId = isEditingProduct ? productForm.id : (res as any)?.id;
+
+                          if (targetProductId && Object.keys(productChannelOverrides).length > 0) {
+                            const overrideList = Object.entries(productChannelOverrides).map(
+                              ([channelKey, price]) => ({
+                                channelKey,
+                                price: price === "" ? null : price,
+                              }),
+                            );
+                            const overrideRes = await saveProductChannelOverridesFn({
+                              data: {
+                                productId: targetProductId,
+                                overrides: overrideList,
+                              },
+                            });
+                            if (overrideRes && !overrideRes.success) {
+                              toast.warning(
+                                "Product saved, but platform prices could not be saved — please edit the product to set them",
+                              );
+                            }
+                          }
+                        } catch (overrideErr) {
+                          console.error("Failed to save channel overrides:", overrideErr);
+                          toast.warning(
+                            "Product saved, but platform prices could not be saved — please edit the product to set them",
+                          );
+                        }
+
                         toast.success(isEditingProduct ? "Product updated" : "Product created");
                         setProductFormOpen(false);
                         router.invalidate();
+                        const currentIds = (catalogProductsList || []).map((p: any) => p.id).filter(Boolean);
+                        if (currentIds.length > 0) {
+                          fetchCatalogChannelPrices(currentIds);
+                        }
                       } else {
                         toast.error(res.error || "Operation failed");
                       }
@@ -2161,7 +3758,7 @@ function HeadOffice() {
                   <DialogTitle>Remove product?</DialogTitle>
                   <DialogDescription>
                     Remove <strong>{deleteProductContext?.name}</strong>? If it is used in sales,
-                    purchases, GRNs, batches or stock, removal will be blocked.
+                    purchases, GRNs, batches or transfers, removal will be blocked.
                   </DialogDescription>
                 </DialogHeader>
                 <DialogFooter className="flex justify-end gap-2 mt-4">
@@ -2220,6 +3817,1097 @@ function HeadOffice() {
                   >
                     {isDeleting ? "Removing..." : "Remove"}
                   </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Bulk Delete Products Dialog */}
+            <Dialog
+              open={bulkDeleteDialogOpen}
+              onOpenChange={(open) => {
+                if (!isBulkDeleting) {
+                  setBulkDeleteDialogOpen(open);
+                  if (!open) setBulkDeleteConfirmText("");
+                }
+              }}
+            >
+              <DialogContent className="sm:max-w-md w-[95vw] sm:w-full">
+                <DialogHeader>
+                  <DialogTitle className="text-destructive flex items-center gap-2">
+                    <AlertTriangle className="h-5 w-5" />
+                    Delete {totalCatalogSelectedCount.toLocaleString()} products?
+                  </DialogTitle>
+                  <DialogDescription className="space-y-2 pt-2 text-sm">
+                    <div>
+                      Delete <strong>{totalCatalogSelectedCount.toLocaleString()}</strong> products? This cannot be undone.
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Products used in sales, purchases, GRNs, batches or transfers will be skipped.
+                    </div>
+                    {totalCatalogSelectedCount > 100 && (
+                      <div className="pt-3 space-y-1.5">
+                        <Label htmlFor="bulk-delete-confirm-input" className="text-xs font-bold text-ink">
+                          Type <span className="font-mono text-destructive font-black">DELETE</span> to confirm:
+                        </Label>
+                        <Input
+                          id="bulk-delete-confirm-input"
+                          value={bulkDeleteConfirmText}
+                          onChange={(e) => setBulkDeleteConfirmText(e.target.value)}
+                          placeholder="DELETE"
+                          className="font-mono text-sm"
+                          autoFocus
+                        />
+                      </div>
+                    )}
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter className="flex justify-end gap-2 mt-4">
+                  <Button
+                    variant="outline"
+                    className="rounded-xl"
+                    onClick={() => {
+                      setBulkDeleteDialogOpen(false);
+                      setBulkDeleteConfirmText("");
+                    }}
+                    disabled={isBulkDeleting}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    className="rounded-xl font-semibold"
+                    disabled={
+                      isBulkDeleting ||
+                      (totalCatalogSelectedCount > 100 && bulkDeleteConfirmText !== "DELETE")
+                    }
+                    onClick={handleBulkDeleteConfirm}
+                  >
+                    {isBulkDeleting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> Deleting...
+                      </>
+                    ) : (
+                      `Delete ${totalCatalogSelectedCount.toLocaleString()} products`
+                    )}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Platform Pricing Dialog */}
+            <Dialog open={platformPricingOpen} onOpenChange={setPlatformPricingOpen}>
+              <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto w-[95vw] sm:w-full">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <Percent className="h-5 w-5 text-primary" />
+                    Platform Pricing & Markups
+                  </DialogTitle>
+                  <DialogDescription>
+                    Configure percentage markups for delivery platforms. Store price remains standard.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-4 py-3">
+                  {/* Platforms List */}
+                  <div className="space-y-3">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Platforms
+                    </div>
+                    {isSalesChannelsLoading ? (
+                      <div className="flex items-center justify-center p-6 text-sm text-muted-foreground gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                        <span>Loading platforms...</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5">
+                        {salesChannelsList.map((ch: any) => {
+                          const isTalabat = ch.key === "talabat";
+                          const liveMarkup = Number(ch.markupPercent) || 0;
+                          const examplePrice = resolveChannelPrice(10, liveMarkup, null);
+
+                          return (
+                            <div
+                              key={ch.id}
+                              className="p-3.5 rounded-xl border border-border/50 bg-surface-2/40 space-y-2.5"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex-1 space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      defaultValue={ch.name}
+                                      onBlur={async (e) => {
+                                        const newName = e.target.value.trim();
+                                        if (newName && newName !== ch.name) {
+                                          const res = await updateSalesChannelFn({
+                                            data: { id: ch.id, name: newName },
+                                          });
+                                          if (res.success) {
+                                            toast.success("Platform name updated");
+                                            fetchSalesChannels();
+                                            const currentIds = (catalogProductsList || []).map((p: any) => p.id).filter(Boolean);
+                                            if (currentIds.length > 0) {
+                                              fetchCatalogChannelPrices(currentIds);
+                                            }
+                                          } else {
+                                            toast.error(res.error || "Failed to update");
+                                          }
+                                        }
+                                      }}
+                                      className="h-8 text-sm font-semibold rounded-lg max-w-[180px] bg-surface"
+                                    />
+                                    {isTalabat && (
+                                      <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-normal">
+                                        Core
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground font-mono">
+                                    Store 10.00 → {ch.name} {examplePrice.toFixed(2)}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-3 shrink-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <Label className="text-xs text-muted-foreground">Markup %:</Label>
+                                    <Input
+                                      type="number"
+                                      step="0.5"
+                                      min="0"
+                                      max="500"
+                                      defaultValue={ch.markupPercent}
+                                      onBlur={async (e) => {
+                                        const val = Number(e.target.value);
+                                        if (!isNaN(val) && val >= 0 && val <= 500 && String(val) !== String(ch.markupPercent)) {
+                                          const res = await updateSalesChannelFn({
+                                            data: { id: ch.id, markupPercent: val },
+                                          });
+                                          if (res.success) {
+                                            toast.success(`${ch.name} markup updated to ${val}%`);
+                                            fetchSalesChannels();
+                                            const currentIds = (catalogProductsList || []).map((p: any) => p.id).filter(Boolean);
+                                            if (currentIds.length > 0) {
+                                              fetchCatalogChannelPrices(currentIds);
+                                            }
+                                          } else {
+                                            toast.error(res.error || "Failed to update markup");
+                                          }
+                                        }
+                                      }}
+                                      className="w-20 h-8 text-sm rounded-lg bg-surface text-right"
+                                    />
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5 pl-2 border-l border-border/50">
+                                    <Switch
+                                      checked={Boolean(ch.isActive)}
+                                      onCheckedChange={async (checked) => {
+                                        const res = await updateSalesChannelFn({
+                                          data: { id: ch.id, isActive: checked },
+                                        });
+                                        if (res.success) {
+                                          toast.success(
+                                            `${ch.name} ${checked ? "activated" : "deactivated"}`,
+                                          );
+                                          fetchSalesChannels();
+                                          const currentIds = (catalogProductsList || []).map((p: any) => p.id).filter(Boolean);
+                                          if (currentIds.length > 0) {
+                                            fetchCatalogChannelPrices(currentIds);
+                                          }
+                                        } else {
+                                          toast.error(res.error || "Failed to update status");
+                                        }
+                                      }}
+                                    />
+                                    {!isTalabat && (
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg shrink-0"
+                                        onClick={() => {
+                                          setDeletePlatformContext(ch);
+                                          setDeletePlatformDialogOpen(true);
+                                        }}
+                                        title={`Delete ${ch.name}`}
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Add Platform Section */}
+                  <div className="border-t border-border/50 pt-3 space-y-2.5">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Add Platform
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2.5 items-end">
+                      <div className="flex-1 space-y-1 w-full sm:w-auto">
+                        <Label className="text-xs">Platform Name</Label>
+                        <Input
+                          placeholder="e.g. Deliveroo, Noon"
+                          value={newPlatformName}
+                          onChange={(e) => setNewPlatformName(e.target.value)}
+                          className="h-9 rounded-xl bg-surface-2/60 text-sm"
+                        />
+                      </div>
+                      <div className="w-full sm:w-32 space-y-1">
+                        <Label className="text-xs">Markup %</Label>
+                        <Input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          max="500"
+                          placeholder="e.g. 20"
+                          value={newPlatformMarkup}
+                          onChange={(e) => setNewPlatformMarkup(e.target.value)}
+                          className="h-9 rounded-xl bg-surface-2/60 text-sm"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        disabled={isAddingPlatform || !newPlatformName.trim()}
+                        onClick={async () => {
+                          if (!newPlatformName.trim()) {
+                            toast.error("Platform name is required");
+                            return;
+                          }
+                          const markupVal = Number(newPlatformMarkup || 0);
+                          if (isNaN(markupVal) || markupVal < 0 || markupVal > 500) {
+                            toast.error("Markup percent must be between 0% and 500%");
+                            return;
+                          }
+
+                          setIsAddingPlatform(true);
+                          try {
+                            const res = await createSalesChannelFn({
+                              data: {
+                                name: newPlatformName.trim(),
+                                markupPercent: markupVal,
+                              },
+                            });
+                            if (res.success) {
+                              toast.success(`Platform "${newPlatformName.trim()}" added successfully.`);
+                              setNewPlatformName("");
+                              setNewPlatformMarkup("");
+                              await fetchSalesChannels();
+                              const currentIds = (catalogProductsList || []).map((p: any) => p.id).filter(Boolean);
+                              if (currentIds.length > 0) {
+                                fetchCatalogChannelPrices(currentIds);
+                              }
+                            } else {
+                              toast.error(res.error || "Failed to add platform");
+                            }
+                          } catch (err: any) {
+                            toast.error(err.message || "Failed to add platform");
+                          } finally {
+                            setIsAddingPlatform(false);
+                          }
+                        }}
+                        className="rounded-xl h-9 px-4 shrink-0 font-semibold"
+                      >
+                        {isAddingPlatform ? (
+                          <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                        ) : (
+                          <Plus className="h-4 w-4 mr-1" />
+                        )}
+                        Add Platform
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    className="rounded-xl"
+                    onClick={() => setPlatformPricingOpen(false)}
+                  >
+                    Close
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Delete Platform Confirmation Dialog */}
+            <Dialog
+              open={deletePlatformDialogOpen}
+              onOpenChange={(open) => {
+                if (!isDeletingPlatform) {
+                  setDeletePlatformDialogOpen(open);
+                  if (!open) setDeletePlatformContext(null);
+                }
+              }}
+            >
+              <DialogContent className="sm:max-w-md w-[95vw] sm:w-full">
+                <DialogHeader>
+                  <DialogTitle>Delete {deletePlatformContext?.name}?</DialogTitle>
+                  <DialogDescription>
+                    Delete {deletePlatformContext?.name}? All manual prices set for{" "}
+                    {deletePlatformContext?.name} will also be removed. This cannot be undone.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter className="flex justify-end gap-2 mt-4">
+                  <Button
+                    variant="outline"
+                    className="rounded-xl"
+                    onClick={() => {
+                      setDeletePlatformDialogOpen(false);
+                      setDeletePlatformContext(null);
+                    }}
+                    disabled={isDeletingPlatform}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    className="rounded-xl"
+                    disabled={isDeletingPlatform}
+                    onClick={async () => {
+                      if (!deletePlatformContext) return;
+                      setIsDeletingPlatform(true);
+                      try {
+                        const res = await deleteSalesChannelFn({
+                          data: { id: deletePlatformContext.id },
+                        });
+                        if (res && res.success) {
+                          toast.success(`${deletePlatformContext.name} deleted`);
+                          setDeletePlatformDialogOpen(false);
+                          setDeletePlatformContext(null);
+                          await fetchSalesChannels();
+                          const currentIds = (catalogProductsList || []).map((p: any) => p.id).filter(Boolean);
+                          if (currentIds.length > 0) {
+                            fetchCatalogChannelPrices(currentIds);
+                          }
+                        } else {
+                          toast.error(res?.error || "Failed to delete platform");
+                        }
+                      } catch (err: any) {
+                        toast.error(err.message || "Failed to delete platform");
+                      } finally {
+                        setIsDeletingPlatform(false);
+                      }
+                    }}
+                  >
+                    {isDeletingPlatform ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                    ) : (
+                      <Trash2 className="h-4 w-4 mr-1" />
+                    )}
+                    Delete
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Bulk Product Import Dialog */}
+            <Dialog
+              open={importModalOpen}
+              onOpenChange={(open) => {
+                if (!isImporting) {
+                  setImportModalOpen(open);
+                  if (!open) {
+                    setParsedRows([]);
+                    setImportFile(null);
+                    setImportFileName("");
+                  }
+                }
+              }}
+            >
+              <DialogContent className="w-[95vw] max-w-6xl max-h-[90vh] flex flex-col overflow-hidden p-0 gap-0">
+                <DialogHeader className="p-4 sm:p-6 pb-3 shrink-0 border-b border-border/40 pr-12 text-left">
+                  <DialogTitle className="flex items-center gap-2 text-lg">
+                    <UploadCloud className="h-5 w-5 text-primary" /> Bulk Import Products (Excel / CSV)
+                  </DialogTitle>
+                  <DialogDescription className="text-xs sm:text-sm text-muted-foreground whitespace-normal break-words max-w-full">
+                    Upload client spreadsheet with exact headers. Reads all sheets (In Stock / Out of Stock), raw numeric barcodes with Excel rounding warnings, alternate barcodes 1..7, and allocates stock per branch.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 space-y-5 min-w-0">
+                  {/* Step 1, 2, 3: Template Download, Branch Selection & Initial Stock */}
+                  <div className={`grid grid-cols-1 ${showExistingProductsCard ? "md:grid-cols-3" : "md:grid-cols-2"} gap-3 min-w-0`}>
+                    {/* Template Download Card */}
+                    <div className="rounded-xl border border-border/70 bg-surface-2/40 p-3.5 space-y-2.5 flex flex-col justify-between min-w-0">
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm font-bold text-ink flex items-center gap-1.5">
+                            <FileText className="h-4 w-4 text-primary" /> 1. Template
+                          </Label>
+                          <Badge variant="outline" className="text-[10px] uppercase font-mono">.XLSX</Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Client format with formatted text columns for Barcode 1..7 and SKU.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl font-semibold w-full bg-surface whitespace-normal h-auto py-2 flex-wrap"
+                        onClick={handleDownloadTemplate}
+                      >
+                        <Download className="h-4 w-4 mr-1.5 text-primary" /> Download Excel Template
+                      </Button>
+                    </div>
+
+                    {/* Branch Stock Allocation Multi-Select */}
+                    <div className="rounded-xl border border-border/70 bg-surface-2/40 p-3.5 space-y-2.5 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-bold text-ink flex items-center gap-1.5">
+                          <Building2 className="h-4 w-4 text-primary" /> 2. Target Branches*
+                        </Label>
+                        <Badge
+                          variant={importBranches.length > 0 ? "default" : "destructive"}
+                          className="text-[10px] font-semibold"
+                        >
+                          {importBranches.length} Selected
+                        </Badge>
+                      </div>
+
+                      <div className="space-y-1.5 pt-1 max-h-28 overflow-y-auto border rounded-lg p-2 bg-surface">
+                        <div className="flex items-center space-x-2 pb-1 border-b">
+                          <Checkbox
+                            id="import-all-branches"
+                            checked={importAllBranches}
+                            onCheckedChange={async (checked) => {
+                              const isChecked = Boolean(checked);
+                              setImportAllBranches(isChecked);
+                              const next = isChecked && data?.branches ? (data.branches || []).map((b: any) => b.id) : [];
+                              setImportBranches(next);
+                              if (rawFileRows.length > 0) {
+                                if (next.length > 0) {
+                                  try {
+                                    const fileBarcodes = Array.from(
+                                      new Set(
+                                        rawFileRows
+                                          .map((r) => (r.barcode ? String(r.barcode).trim() : ""))
+                                          .filter(Boolean)
+                                      )
+                                    );
+                                    const prods = await fetchExistingProductsByBarcodes(next, fileBarcodes);
+                                    setCachedExistingProds(prods);
+                                    setParsedRows(reclassifyRows(rawFileRows, prods, next, data?.branches || [], updateExistingProducts, rowUpdateChoices));
+                                  } catch (e) {
+                                    console.error("Reclassify error:", e);
+                                  }
+                                } else {
+                                  setParsedRows(rawFileRows.map((r) => ({
+                                    ...r,
+                                    classification: r.isValid ? "new" : "invalid",
+                                    note: r.isValid ? "Select at least one branch first" : r.errors.join(", "),
+                                  })));
+                                }
+                              }
+                            }}
+                          />
+                          <label
+                            htmlFor="import-all-branches"
+                            className="text-xs font-bold leading-none cursor-pointer text-ink"
+                          >
+                            All Branches ({data?.branches?.length || 0})
+                          </label>
+                        </div>
+
+                        {(data?.branches || []).map((branch: any) => {
+                          const isSelected = importBranches.includes(branch.id);
+                          return (
+                            <div key={branch.id} className="flex items-center space-x-2">
+                              <Checkbox
+                                id={`branch-check-${branch.id}`}
+                                checked={isSelected}
+                                onCheckedChange={async (checked) => {
+                                  const isChecked = Boolean(checked);
+                                  let next: string[];
+                                  if (isChecked) {
+                                    next = [...importBranches, branch.id];
+                                  } else {
+                                    next = importBranches.filter((id) => id !== branch.id);
+                                  }
+                                  setImportBranches(next);
+                                  setImportAllBranches(next.length === (data?.branches?.length || 0));
+                                  if (rawFileRows.length > 0) {
+                                    if (next.length > 0) {
+                                      try {
+                                        const fileBarcodes = Array.from(
+                                          new Set(
+                                            rawFileRows
+                                              .map((r) => (r.barcode ? String(r.barcode).trim() : ""))
+                                              .filter(Boolean)
+                                          )
+                                        );
+                                        const prods = await fetchExistingProductsByBarcodes(next, fileBarcodes);
+                                        setCachedExistingProds(prods);
+                                        setParsedRows(reclassifyRows(rawFileRows, prods, next, data?.branches || [], updateExistingProducts, rowUpdateChoices));
+                                      } catch (e) {
+                                        console.error("Reclassify error:", e);
+                                      }
+                                    } else {
+                                      setParsedRows(rawFileRows.map((r) => ({
+                                        ...r,
+                                        classification: r.isValid ? "new" : "invalid",
+                                        note: r.isValid ? "Select at least one branch first" : r.errors.join(", "),
+                                      })));
+                                    }
+                                  }
+                                }}
+                              />
+                              <label
+                                htmlFor={`branch-check-${branch.id}`}
+                                className="text-xs leading-none cursor-pointer text-slate-700"
+                              >
+                                {branch.name}
+                              </label>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Existing Products Update Configuration */}
+                    {showExistingProductsCard && (
+                      <div className="rounded-xl border border-border/70 bg-surface-2/40 p-3.5 space-y-2 flex flex-col justify-between min-w-0">
+                        <div>
+                          <Label className="text-sm font-bold text-ink flex items-center gap-1.5">
+                            <RefreshCw className="h-4 w-4 text-primary" /> 3. Existing Products
+                          </Label>
+                          <p className="text-[11px] text-muted-foreground mt-1">
+                            Update products that already exist on website (same barcode)?
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 pt-1 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => handleBulkUpdateChoice(true)}
+                            className={`flex-1 min-w-[90px] py-1.5 px-3 rounded-full text-xs font-bold transition-all border text-center cursor-pointer ${
+                              updateExistingProducts
+                                ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                                : "bg-surface text-slate-700 border-border hover:bg-surface-2"
+                            }`}
+                          >
+                            Yes (Update)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleBulkUpdateChoice(false)}
+                            className={`flex-1 min-w-[90px] py-1.5 px-3 rounded-full text-xs font-bold transition-all border text-center cursor-pointer ${
+                              !updateExistingProducts
+                                ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                                : "bg-surface text-slate-700 border-border hover:bg-surface-2"
+                            }`}
+                          >
+                            No (Skip)
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Step 4: File Upload Area */}
+                  <div className="space-y-2 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-bold text-ink">4. Upload Spreadsheet (.xlsx, .xls, .csv)</Label>
+                      {importBranches.length === 0 && (
+                        <span className="text-xs text-destructive font-semibold">
+                          Select at least one branch first
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      className={`border-2 border-dashed transition-colors rounded-xl p-6 text-center relative ${
+                        importBranches.length === 0
+                          ? "border-border/40 bg-surface-2/10 opacity-60 cursor-not-allowed"
+                          : "border-border/80 hover:border-primary/60 bg-surface-2/20 cursor-pointer"
+                      }`}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (importBranches.length === 0) {
+                          toast.error("Select at least one branch first");
+                          return;
+                        }
+                        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                          handleFileSelect(e.dataTransfer.files[0]);
+                        }
+                      }}
+                    >
+                      <input
+                        type="file"
+                        accept=".xlsx, .xls, .csv"
+                        disabled={importBranches.length === 0}
+                        className={`absolute inset-0 w-full h-full opacity-0 ${
+                          importBranches.length === 0 ? "cursor-not-allowed" : "cursor-pointer"
+                        }`}
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files[0]) {
+                            handleFileSelect(e.target.files[0]);
+                          }
+                        }}
+                      />
+                      <div className="flex flex-col items-center justify-center gap-2 pointer-events-none">
+                        {isParsing ? (
+                          <>
+                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                            <p className="text-xs font-semibold text-ink">Reading all sheets and validating spreadsheet...</p>
+                          </>
+                        ) : importBranches.length === 0 ? (
+                          <>
+                            <Ban className="h-8 w-8 text-muted-foreground" />
+                            <p className="text-xs font-bold text-muted-foreground">Select at least one branch first</p>
+                            <p className="text-[11px] text-muted-foreground">Branch selection required before uploading spreadsheet</p>
+                          </>
+                        ) : importFileName ? (
+                          <>
+                            <CheckCircle2 className="h-8 w-8 text-emerald-500" />
+                            <p className="text-xs font-bold text-ink">{importFileName}</p>
+                            <p className="text-[11px] text-muted-foreground">Click or drag another file to replace</p>
+                          </>
+                        ) : (
+                          <>
+                            <UploadCloud className="h-8 w-8 text-muted-foreground" />
+                            <p className="text-xs font-semibold text-ink">
+                              Drag and drop your spreadsheet here, or <span className="text-primary font-bold">browse</span>
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">Supports multi-sheet workbooks up to 25 MB</p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Step 5: Parsing Results, Per-Sheet Breakdown & Preview Table */}
+                  {parsedRows.length > 0 && (
+                    <div className="space-y-3 border-t pt-4 min-w-0">
+                      {/* Per-sheet Breakdown Bar */}
+                      {sheetStats.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2 bg-surface-2/60 p-2.5 rounded-xl border border-border/60 min-w-0">
+                          <span className="text-xs font-bold text-ink">Sheets ({sheetStats.length}):</span>
+                          {sheetStats.map((s) => (
+                            <Badge
+                              key={s.name}
+                              variant="secondary"
+                              className="text-xs font-medium py-1 px-2.5 flex items-center gap-1.5 bg-surface border"
+                            >
+                              <span className="font-bold text-ink">{s.name}</span>: {s.total} rows
+                              <span className="text-emerald-600 font-semibold">({s.valid} valid</span>
+                              {s.invalid > 0 && <span className="text-destructive font-semibold">, {s.invalid} invalid</span>}
+                              <span className="text-emerald-600 font-semibold">)</span>
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Stock Bulk Fill Bar */}
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 bg-surface-2/60 p-3 rounded-xl border border-border/60 min-w-0 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap shrink-0">
+                          <Label className="text-xs font-bold text-ink whitespace-nowrap">Stock:</Label>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="1"
+                            placeholder="e.g. 10"
+                            value={bulkStockInput}
+                            onChange={(e) => setBulkStockInput(e.target.value)}
+                            className="w-24 h-8 text-xs bg-surface"
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            onClick={handleApplyBulkStock}
+                            className="h-8 px-3 text-xs font-bold bg-surface border hover:bg-surface-2"
+                          >
+                            Apply to All
+                          </Button>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground break-words min-w-0">
+                          Fills the Stock box of every row across all sheets. You can also edit any single row below.
+                        </p>
+                      </div>
+
+                      {/* Filter Bar */}
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 min-w-0 flex-wrap">
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
+                          <Badge variant="outline" className="font-semibold text-xs px-2.5 py-1">
+                            Total: {parsedRows.length}
+                          </Badge>
+                          <Badge className="bg-emerald-500/15 text-emerald-700 border-emerald-500/30 font-bold text-xs px-2.5 py-1">
+                            New: {parsedRows.filter((r) => r.isValid && r.classification === "new").length}
+                          </Badge>
+                          <Badge className="bg-purple-500/15 text-purple-800 border-purple-500/30 font-bold text-xs px-2.5 py-1">
+                            Add to branch: {parsedRows.filter((r) => r.isValid && r.classification === "add_to_branch").length}
+                          </Badge>
+                          <Badge className="bg-blue-500/15 text-blue-800 border-blue-500/30 font-bold text-xs px-2.5 py-1">
+                            Exists-update: {parsedRows.filter((r) => r.isValid && (r.classification === "exists" || r.classification === "exists_update" || r.classification === "exists_skip" || r.isExisting) && isRowUpdating(r.rowNumber)).length}
+                          </Badge>
+                          <Badge className="bg-slate-500/15 text-slate-700 border-slate-500/30 font-bold text-xs px-2.5 py-1">
+                            Exists-skip: {parsedRows.filter((r) => r.isValid && (r.classification === "exists" || r.classification === "exists_update" || r.classification === "exists_skip" || r.isExisting) && !isRowUpdating(r.rowNumber)).length}
+                          </Badge>
+                          {parsedRows.some((r) => !r.isValid) && (
+                            <Badge variant="destructive" className="font-bold text-xs px-2.5 py-1">
+                              ✕ {parsedRows.filter((r) => !r.isValid).length} Invalid
+                            </Badge>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5 text-xs min-w-0">
+                          <span className="text-muted-foreground whitespace-nowrap">Filter:</span>
+                          <button
+                            type="button"
+                            onClick={() => { setPreviewFilter("all"); setImportPreviewPage(1); }}
+                            className={`px-2 py-1 rounded-md font-medium text-xs ${previewFilter === "all" ? "bg-primary text-primary-foreground font-bold" : "bg-surface-2 text-slate-700"}`}
+                          >
+                            All ({parsedRows.length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setPreviewFilter("new"); setImportPreviewPage(1); }}
+                            className={`px-2 py-1 rounded-md font-medium text-xs ${previewFilter === "new" ? "bg-emerald-600 text-white font-bold" : "bg-surface-2 text-slate-700"}`}
+                          >
+                            New ({parsedRows.filter((r) => r.isValid && r.classification === "new").length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setPreviewFilter("add_to_branch"); setImportPreviewPage(1); }}
+                            className={`px-2 py-1 rounded-md font-medium text-xs ${previewFilter === "add_to_branch" ? "bg-purple-600 text-white font-bold" : "bg-surface-2 text-slate-700"}`}
+                          >
+                            Add to branch ({parsedRows.filter((r) => r.isValid && r.classification === "add_to_branch").length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setPreviewFilter("exists_update"); setImportPreviewPage(1); }}
+                            className={`px-2 py-1 rounded-md font-medium text-xs ${previewFilter === "exists_update" ? "bg-blue-600 text-white font-bold" : "bg-surface-2 text-slate-700"}`}
+                          >
+                            Exists-update ({parsedRows.filter((r) => r.isValid && (r.classification === "exists" || r.classification === "exists_update" || r.classification === "exists_skip" || r.isExisting) && isRowUpdating(r.rowNumber)).length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setPreviewFilter("exists_skip"); setImportPreviewPage(1); }}
+                            className={`px-2 py-1 rounded-md font-medium text-xs ${previewFilter === "exists_skip" ? "bg-slate-700 text-white font-bold" : "bg-surface-2 text-slate-700"}`}
+                          >
+                            Exists-skip ({parsedRows.filter((r) => r.isValid && (r.classification === "exists" || r.classification === "exists_update" || r.classification === "exists_skip" || r.isExisting) && !isRowUpdating(r.rowNumber)).length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setPreviewFilter("invalid"); setImportPreviewPage(1); }}
+                            className={`px-2 py-1 rounded-md font-medium text-xs ${previewFilter === "invalid" ? "bg-destructive text-destructive-foreground font-bold" : "bg-surface-2 text-slate-700"}`}
+                          >
+                            Invalid ({parsedRows.filter((r) => !r.isValid).length})
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Paginated Preview Table */}
+                      {(() => {
+                        const filtered = parsedRows.filter((r) => {
+                          if (previewFilter === "new") return r.isValid && r.classification === "new";
+                          if (previewFilter === "add_to_branch") return r.isValid && r.classification === "add_to_branch";
+                          if (previewFilter === "exists_update") return r.isValid && (r.classification === "exists" || r.classification === "exists_update" || r.classification === "exists_skip" || r.isExisting) && isRowUpdating(r.rowNumber);
+                          if (previewFilter === "exists_skip") return r.isValid && (r.classification === "exists" || r.classification === "exists_update" || r.classification === "exists_skip" || r.isExisting) && !isRowUpdating(r.rowNumber);
+                          if (previewFilter === "invalid") return !r.isValid;
+                          return true;
+                        });
+
+                        const totalPages = Math.max(1, Math.ceil(filtered.length / importPreviewPageSize));
+                        const page = Math.min(importPreviewPage, totalPages);
+                        const start = (page - 1) * importPreviewPageSize;
+                        const pageRows = filtered.slice(start, start + importPreviewPageSize);
+
+                        return (
+                          <div className="space-y-2 min-w-0">
+                            <div className="w-full overflow-x-auto rounded-xl border border-border/70 max-h-80 min-w-0">
+                              <table className="w-full text-left text-xs min-w-[950px]">
+                                <thead className="bg-surface-2 sticky top-0 border-b text-muted-foreground font-bold uppercase text-[10px]">
+                                  <tr>
+                                    <th className="p-2.5 w-12">#</th>
+                                    <th className="p-2.5">Sheet</th>
+                                    <th className="p-2.5 w-28">Status</th>
+                                    <th className="p-2.5 w-20 text-center">Update?</th>
+                                    <th className="p-2.5 min-w-[140px]">Product Name</th>
+                                    <th className="p-2.5">Barcode 1</th>
+                                    <th className="p-2.5">SKU</th>
+                                    <th className="p-2.5">Category</th>
+                                    <th className="p-2.5">Unit</th>
+                                    <th className="p-2.5 w-16 text-center">Active</th>
+                                    <th className="p-2.5 w-24 text-right">Stock</th>
+                                    <th className="p-2.5 text-right">Sale Price</th>
+                                    <th className="p-2.5 min-w-[180px]">Notes</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border/60">
+                                  {pageRows.map((r) => {
+                                    const updating = isRowUpdating(r.rowNumber);
+                                    return (
+                                      <tr
+                                        key={r.rowNumber}
+                                        className={
+                                          !r.isValid
+                                            ? "bg-destructive/5 hover:bg-destructive/10"
+                                            : (r.classification === "exists" || r.classification === "exists_update" || r.classification === "exists_skip" || r.isExisting)
+                                            ? updating
+                                              ? "bg-blue-500/5 hover:bg-blue-500/10"
+                                              : "bg-slate-500/5 hover:bg-slate-500/10"
+                                            : r.classification === "add_to_branch"
+                                            ? "bg-purple-500/5 hover:bg-purple-500/10"
+                                            : "hover:bg-surface-2/40"
+                                        }
+                                      >
+                                        <td className="p-2.5 font-mono text-muted-foreground font-semibold">{r.rowNumber}</td>
+                                        <td className="p-2.5">
+                                          <Badge variant="outline" className="text-[10px] font-medium whitespace-nowrap">
+                                            {r.sheetName}
+                                          </Badge>
+                                        </td>
+                                        <td className="p-2.5">
+                                          {!r.isValid ? (
+                                            <Badge variant="destructive" className="text-[10px] font-bold">Invalid</Badge>
+                                          ) : r.classification === "add_to_branch" ? (
+                                            <Badge className="bg-purple-500/15 text-purple-800 border-purple-500/30 text-[10px] font-bold whitespace-nowrap">
+                                              Add to branch
+                                            </Badge>
+                                          ) : (r.classification === "exists" || r.classification === "exists_update" || r.classification === "exists_skip" || r.isExisting) ? (
+                                            updating ? (
+                                              <Badge className="bg-blue-500/15 text-blue-800 border-blue-500/30 text-[10px] font-bold whitespace-nowrap">
+                                                Will update
+                                              </Badge>
+                                            ) : (
+                                              <Badge className="bg-slate-500/15 text-slate-700 border-slate-500/30 text-[10px] font-bold whitespace-nowrap">
+                                                Will skip
+                                              </Badge>
+                                            )
+                                          ) : (
+                                            <Badge className="bg-emerald-500/15 text-emerald-700 border-emerald-500/30 text-[10px] font-bold whitespace-nowrap">
+                                              New
+                                            </Badge>
+                                          )}
+                                        </td>
+                                        <td className="p-2.5 text-center">
+                                          {(r.classification === "exists" || r.classification === "exists_update" || r.classification === "exists_skip" || r.isExisting) && r.isValid ? (
+                                            <div className="inline-flex items-center gap-1">
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  const next = { ...rowUpdateChoices, [r.rowNumber]: true };
+                                                  setRowUpdateChoices(next);
+                                                  if (rawFileRows.length > 0) {
+                                                    setParsedRows(reclassifyRows(rawFileRows, cachedExistingProds, importBranches, data?.branches || [], updateExistingProducts, next));
+                                                  } else {
+                                                    setParsedRows((prev) =>
+                                                      prev.map((row) =>
+                                                        row.rowNumber === r.rowNumber
+                                                          ? {
+                                                              ...row,
+                                                              classification: "exists_update" as const,
+                                                              note: (row.note || "").replace(" — will skip", " — will update"),
+                                                            }
+                                                          : row
+                                                      )
+                                                    );
+                                                  }
+                                                }}
+                                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-all ${
+                                                  updating
+                                                    ? "bg-primary text-primary-foreground border-primary"
+                                                    : "bg-surface text-slate-600 border-border hover:bg-surface-2"
+                                                }`}
+                                              >
+                                                Yes
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  const next = { ...rowUpdateChoices, [r.rowNumber]: false };
+                                                  setRowUpdateChoices(next);
+                                                  if (rawFileRows.length > 0) {
+                                                    setParsedRows(reclassifyRows(rawFileRows, cachedExistingProds, importBranches, data?.branches || [], updateExistingProducts, next));
+                                                  } else {
+                                                    setParsedRows((prev) =>
+                                                      prev.map((row) =>
+                                                        row.rowNumber === r.rowNumber
+                                                          ? {
+                                                              ...row,
+                                                              classification: "exists_skip" as const,
+                                                              note: (row.note || "").replace(" — will update", " — will skip"),
+                                                            }
+                                                          : row
+                                                      )
+                                                    );
+                                                  }
+                                                }}
+                                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-all ${
+                                                  !updating
+                                                    ? "bg-slate-800 text-white border-slate-800"
+                                                    : "bg-surface text-slate-600 border-border hover:bg-surface-2"
+                                                }`}
+                                              >
+                                                No
+                                              </button>
+                                            </div>
+                                          ) : r.classification === "add_to_branch" && r.isValid ? (
+                                            <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
+                                              Add
+                                            </span>
+                                          ) : (
+                                            <span className="text-muted-foreground">—</span>
+                                          )}
+                                        </td>
+                                        <td className="p-2.5 font-semibold text-ink">{r.name || <span className="italic text-muted-foreground">Empty</span>}</td>
+                                        <td className="p-2.5 font-mono">{r.barcode || "—"}</td>
+                                        <td className="p-2.5 font-mono">{r.sku || "—"}</td>
+                                        <td className="p-2.5">{r.category}</td>
+                                        <td className="p-2.5">{r.unit}</td>
+                                        <td className="p-2.5 text-center">
+                                          <Badge
+                                            variant="outline"
+                                            className={`text-[10px] font-mono font-bold ${
+                                              r.active ? "text-emerald-700 bg-emerald-500/10 border-emerald-500/20" : "text-muted-foreground bg-surface-2"
+                                            }`}
+                                          >
+                                            {r.active ? "TRUE" : "FALSE"}
+                                          </Badge>
+                                        </td>
+                                        <td className="p-2.5 text-right">
+                                          <Input
+                                            type="number"
+                                            min="0"
+                                            step="1"
+                                            placeholder="—"
+                                            className="w-16 h-7 text-xs text-right tabular-nums font-semibold bg-surface ml-auto"
+                                            value={rowStocks[r.rowNumber] ?? ""}
+                                            onChange={(e) =>
+                                              setRowStocks({
+                                                ...rowStocks,
+                                                [r.rowNumber]: e.target.value,
+                                              })
+                                            }
+                                          />
+                                        </td>
+                                        <td className="p-2.5 text-right tabular-nums font-bold">{r.salePrice}</td>
+                                        <td className="p-2.5 text-[11px]">
+                                          {!r.isValid ? (
+                                            <span className="text-destructive font-medium">{r.errors.join(", ")}</span>
+                                          ) : r.classification === "add_to_branch" ? (
+                                            <span className="text-purple-700 font-medium">{r.note}</span>
+                                          ) : (r.classification === "exists" || r.classification === "exists_update" || r.classification === "exists_skip" || r.isExisting) ? (
+                                            <span className={updating ? "text-blue-700 font-medium" : "text-slate-600 font-medium"}>
+                                              {r.note}
+                                            </span>
+                                          ) : (
+                                            <span className="text-emerald-600 font-medium">
+                                              Ready to create
+                                            </span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                  {pageRows.length === 0 && (
+                                    <tr>
+                                      <td colSpan={13} className="p-6 text-center text-muted-foreground italic">
+                                        No rows match the selected filter.
+                                      </td>
+                                    </tr>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+
+                            {/* Preview Pagination Footer */}
+                            <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
+                              <span>
+                                Showing {filtered.length > 0 ? start + 1 : 0} to {Math.min(start + importPreviewPageSize, filtered.length)} of {filtered.length} rows
+                              </span>
+                              {totalPages > 1 && (
+                                <div className="flex items-center gap-1.5">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 px-2 text-xs rounded-lg"
+                                    disabled={page <= 1}
+                                    onClick={() => setImportPreviewPage((p) => Math.max(1, p - 1))}
+                                  >
+                                    <ChevronLeft className="h-3.5 w-3.5 mr-0.5" /> Prev
+                                  </Button>
+                                  <span className="font-mono font-semibold text-ink px-1">
+                                    Page {page} of {totalPages}
+                                  </span>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 px-2 text-xs rounded-lg"
+                                    disabled={page >= totalPages}
+                                    onClick={() => setImportPreviewPage((p) => Math.min(totalPages, p + 1))}
+                                  >
+                                    Next <ChevronRight className="h-3.5 w-3.5 ml-0.5" />
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+
+                <DialogFooter className="sticky bottom-0 z-10 shrink-0 border-t border-border/70 bg-surface/95 backdrop-blur-md p-4 sm:p-5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 min-w-0 w-full mt-0">
+                  <p className="text-xs text-muted-foreground text-left break-words min-w-0 flex-1">
+                    {importBranches.length === 0 ? (
+                      <span className="text-destructive font-semibold">Please select at least 1 branch.</span>
+                    ) : (
+                      <span>
+                        Target branches: <strong>{importBranches.length}</strong> selected.
+                        {parsedRows.length > 0 && (
+                          <span className="ml-1">
+                            (New: <strong>{parsedRows.filter((r) => r.isValid && r.classification === "new").length}</strong>,
+                            Add to branch: <strong>{parsedRows.filter((r) => r.isValid && r.classification === "add_to_branch").length}</strong>,
+                            Exists-update: <strong>{parsedRows.filter((r) => r.isValid && (r.classification === "exists" || r.classification === "exists_update" || r.classification === "exists_skip" || r.isExisting) && isRowUpdating(r.rowNumber)).length}</strong>,
+                            Exists-skip: <strong>{parsedRows.filter((r) => r.isValid && (r.classification === "exists" || r.classification === "exists_update" || r.classification === "exists_skip" || r.isExisting) && !isRowUpdating(r.rowNumber)).length}</strong>)
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </p>
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto shrink-0">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="rounded-xl w-full sm:w-auto px-4 h-10 font-semibold"
+                      onClick={() => setImportModalOpen(false)}
+                      disabled={isImporting}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      className="rounded-xl w-full sm:w-auto px-4 h-10 font-bold"
+                      onClick={handleExecuteImport}
+                      disabled={
+                        isImporting ||
+                        isParsing ||
+                        parsedRows.filter((r) => r.isValid).length === 0 ||
+                        importBranches.length === 0
+                      }
+                    >
+                      {isImporting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> Importing in 5,000-row batches...
+                        </>
+                      ) : (
+                        `Import ${parsedRows.filter((r) => r.isValid).length} Valid Products`
+                      )}
+                    </Button>
+                  </div>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
@@ -3963,7 +6651,7 @@ function HeadOffice() {
 
                     setIsSubmittingInvoice(true);
                     try {
-                      const res = await createVendorInvoiceServerFn({
+                      const res = await (createVendorInvoiceServerFn as any)({
                         data: {
                           purchaseOrderId: invoiceForm.purchaseOrderId,
                           invoiceNumber: invoiceForm.invoiceNumber,
@@ -4690,7 +7378,11 @@ function HeadOffice() {
           </TabsContent>
 
           <TabsContent value="subscription_billing" className="mt-0 space-y-5">
-            <TenantSubscriptionBillingTab />
+            <TenantSubscriptionBillingTab onSeen={() => setUnseenInvoicesCount(0)} />
+          </TabsContent>
+
+          <TabsContent value="expenses" className="mt-0 space-y-5">
+            <HeadOfficeExpensesTab branches={mappedOutlets} />
           </TabsContent>
 
           <TabsContent value="support" className="mt-0 space-y-5">
@@ -4873,8 +7565,9 @@ function RecipesTabContent({ products }: { products: any[] }) {
           totalCost: 0,
         };
       }
-      map[r.productId].ingredients.push(r);
-      map[r.productId].totalCost += Number(r.totalCost) || 0;
+      const entry = map[r.productId]!;
+      entry.ingredients.push(r);
+      entry.totalCost += Number(r.totalCost) || 0;
     });
     return Object.values(map);
   }, [recipes]);
@@ -4932,7 +7625,7 @@ function RecipesTabContent({ products }: { products: any[] }) {
 
     setSaving(true);
     try {
-      const res = await saveRecipe({
+      const res: any = await saveRecipe({
         data: {
           productId: selectedProductId,
           ingredients: validRows.map((r) => ({
@@ -4960,7 +7653,7 @@ function RecipesTabContent({ products }: { products: any[] }) {
   const handleDeleteRecipe = async (productId: string) => {
     if (!confirm("Are you sure you want to delete this recipe?")) return;
     try {
-      const res = await deleteRecipe({ data: { productId } });
+      const res: any = await deleteRecipe({ data: { productId } });
       if (res.success) {
         toast.success("Recipe deleted successfully");
         loadRecipes();

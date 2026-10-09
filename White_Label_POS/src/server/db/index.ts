@@ -12,6 +12,8 @@ if (!dbUrl && typeof window === "undefined") {
 const safeDbUrl = dbUrl || "postgres://placeholder:placeholder@localhost:5432/placeholder";
 
 const queryClient = postgres(safeDbUrl, {
+  max: 10,
+  idle_timeout: 20,
   prepare: false, // Required for PgBouncer / Connection Pooler in Serverless
   ssl: dbUrl.includes("sslmode=require") || dbUrl.includes("supabase") ? 'require' : false,
 });

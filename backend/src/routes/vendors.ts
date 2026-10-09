@@ -21,8 +21,11 @@ router.get("/", async (req, res) => {
 
 // Create vendor
 router.post("/", async (req, res) => {
-  const tenantId = (req as any).user.tenantId;
-  const { name, email, trn } = req.body;
+  const tenantId = (req as any).user?.tenantId;
+  if (!tenantId) {
+    return res.status(403).json({ error: "Forbidden: No tenant associated with session" });
+  }
+  const { name, email, trn, contact, contactPerson, phone, address, status } = req.body;
   if (!name) {
     return res.status(400).json({ error: "name is required" });
   }
@@ -33,6 +36,10 @@ router.post("/", async (req, res) => {
       name,
       email: email || null,
       trn: trn || null,
+      contact: contact || contactPerson || null,
+      phone: phone || null,
+      address: address || null,
+      status: status || "Active",
     }).returning();
     res.status(201).json(newVendor[0]);
   } catch (error) {
@@ -43,16 +50,24 @@ router.post("/", async (req, res) => {
 
 // Update vendor
 router.patch("/:id", async (req, res) => {
-  const tenantId = (req as any).user.tenantId;
+  const tenantId = (req as any).user?.tenantId;
+  if (!tenantId) {
+    return res.status(403).json({ error: "Forbidden: No tenant associated with session" });
+  }
   const { id } = req.params;
-  const { name, email, trn } = req.body;
+  const { name, email, trn, contact, contactPerson, phone, address, status } = req.body;
 
   try {
     const updated = await db.update(vendors)
       .set({
         ...(name && { name }),
-        ...(email !== undefined && { email }),
-        ...(trn !== undefined && { trn }),
+        ...(email !== undefined && { email: email || null }),
+        ...(trn !== undefined && { trn: trn || null }),
+        ...(contact !== undefined && { contact: contact || null }),
+        ...(contactPerson !== undefined && { contact: contactPerson || null }),
+        ...(phone !== undefined && { phone: phone || null }),
+        ...(address !== undefined && { address: address || null }),
+        ...(status !== undefined && { status }),
       })
       .where(and(eq(vendors.id, id), eq(vendors.tenantId, tenantId)))
       .returning();

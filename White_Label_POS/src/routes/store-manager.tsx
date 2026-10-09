@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MySalaryView } from "@/components/payroll/MySalaryView";
 import { MyLeaveView } from "@/components/payroll/MyLeaveView";
 import { BranchFinancialReportsView } from "@/components/reports/BranchFinancialReportsView";
+import { BranchExpensesTab } from "@/components/expenses/BranchExpensesTab";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,7 +35,11 @@ import {
   Menu,
   ChevronLeft,
   ChevronRight,
+  ChevronsUpDown,
+  Check,
 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 import { aedShort, aed } from "@/lib/demo-data";
 import {
   ResponsiveContainer,
@@ -50,6 +55,7 @@ import {
 import {
   getStoreManagerDataFn,
   getLocalStockPaginatedFn,
+  searchBranchProductsFn,
   requestPriceOverrideFn,
   createOverrideRequestFn,
   createRosterShiftFn,
@@ -64,6 +70,152 @@ import {
 } from "@/lib/store-manager-server";
 import { SearchableProductSelect } from "@/components/ui/searchable-product-select";
 import { useRouter } from "@tanstack/react-router";
+
+function BranchProductPicker({
+  value,
+  onSelect,
+  placeholder = "Search product by name, SKU or barcode...",
+  className,
+}: {
+  value: string;
+  onSelect: (product: any) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<any>(null);
+
+  // 300 ms debounce for typing search
+  useEffect(() => {
+    if (!open) return;
+    const timer = setTimeout(async () => {
+      setIsLoading(true);
+      try {
+        const res: any = await (searchBranchProductsFn as any)({ data: { q: query } });
+        if (res?.success && Array.isArray(res.products)) {
+          setResults(res.products);
+        }
+      } catch (err) {
+        console.error("searchBranchProductsFn error:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [query, open]);
+
+  // Initial load when opened if empty
+  useEffect(() => {
+    if (open && results.length === 0 && !query) {
+      (async () => {
+        setIsLoading(true);
+        try {
+          const res: any = await (searchBranchProductsFn as any)({ data: { q: "" } });
+          if (res?.success && Array.isArray(res.products)) {
+            setResults(res.products);
+          }
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setIsLoading(false);
+        }
+      })();
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!value) {
+      setSelectedProduct(null);
+    }
+  }, [value]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className={cn(
+            "w-full h-9 justify-between text-xs font-normal px-3 border-input bg-background min-w-0",
+            className
+          )}
+        >
+          <span className="truncate flex-1 text-left">
+            {selectedProduct ? (
+              <>
+                <span className="font-medium text-ink">{selectedProduct.name}</span>
+                <span className="text-muted-foreground ml-1.5 text-[11px]">
+                  ({selectedProduct.category || "General"})
+                </span>
+              </>
+            ) : (
+              <span className="text-muted-foreground">{placeholder}</span>
+            )}
+          </span>
+          <ChevronsUpDown className="ml-1 h-3.5 w-3.5 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-[300px] sm:min-w-[350px] p-2 z-50" align="start">
+        <div className="relative mb-2">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Type name, SKU, or barcode..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="h-8 pl-8 text-xs"
+            autoFocus
+          />
+        </div>
+        <div className="max-h-56 overflow-y-auto space-y-0.5">
+          {isLoading ? (
+            <div className="py-4 text-center text-xs text-muted-foreground">
+              Searching products...
+            </div>
+          ) : results.length === 0 ? (
+            <div className="py-4 text-center text-xs text-muted-foreground">
+              No products found.
+            </div>
+          ) : (
+            results.map((p: any) => {
+              const isSelected = value === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedProduct(p);
+                    onSelect(p);
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                  className={cn(
+                    "w-full text-left text-xs flex items-center justify-between py-1.5 px-2.5 rounded-md transition-colors hover:bg-accent hover:text-accent-foreground",
+                    isSelected && "bg-primary/10 font-medium text-primary"
+                  )}
+                >
+                  <div className="flex flex-col min-w-0 flex-1 mr-2">
+                    <span className="truncate font-medium text-ink">{p.name}</span>
+                    <span className="text-[10px] text-muted-foreground truncate">
+                      {p.category || "General"}
+                      {p.barcode ? ` • Barcode: ${p.barcode}` : ""}
+                      {p.sku ? ` • SKU: ${p.sku}` : ""}
+                    </span>
+                  </div>
+                  {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />}
+                </button>
+              );
+            })
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export const Route = createFileRoute("/store-manager")({
   beforeLoad: async () => {
@@ -92,6 +244,7 @@ function StoreManager() {
   // Price override request modal states
   const [overrideModalOpen, setOverrideModalOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState("");
+  const [selectedProductObj, setSelectedProductObj] = useState<any>(null);
   const [requestedPrice, setRequestedPrice] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -345,6 +498,7 @@ function StoreManager() {
         toast.success("Price override request submitted successfully!");
         setOverrideModalOpen(false);
         setSelectedProductId("");
+        setSelectedProductObj(null);
         setRequestedPrice("");
         setOverrideReason("");
         router.invalidate();
@@ -759,6 +913,12 @@ function StoreManager() {
                 className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
               >
                 Financial Reports
+              </TabsTrigger>
+              <TabsTrigger
+                value="expenses"
+                className="justify-start px-4 py-2.5 text-sm font-semibold data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none"
+              >
+                Expenses
               </TabsTrigger>
             </TabsList>
           </aside>
@@ -1302,6 +1462,7 @@ function StoreManager() {
                         setOverrideModalOpen(open);
                         if (!open) {
                           setSelectedProductId("");
+                          setSelectedProductObj(null);
                           setRequestedPrice("");
                           setOverrideReason("");
                           setValidationErrors({});
@@ -1327,11 +1488,11 @@ function StoreManager() {
 
                         <div className="space-y-1.5">
                           <Label htmlFor="product-select">Product</Label>
-                          <SearchableProductSelect
-                            products={selectableProducts}
+                          <BranchProductPicker
                             value={selectedProductId}
                             onSelect={(val) => {
-                              setSelectedProductId(val);
+                              setSelectedProductId(val?.id || "");
+                              setSelectedProductObj(val || null);
                               setValidationErrors((prev) => ({ ...prev, productId: "" }));
                             }}
                             placeholder="Search product by name, SKU or barcode..."
@@ -1352,9 +1513,11 @@ function StoreManager() {
                               readOnly
                               disabled
                               value={
-                                selectedProduct
-                                  ? Number(selectedProduct.basePrice).toFixed(2)
-                                  : "0.00"
+                                selectedProductObj
+                                  ? Number(selectedProductObj.basePrice).toFixed(2)
+                                  : selectedProduct
+                                    ? Number(selectedProduct.basePrice).toFixed(2)
+                                    : "0.00"
                               }
                               className="bg-surface-2 cursor-not-allowed text-muted-foreground font-semibold"
                             />
@@ -1408,6 +1571,7 @@ function StoreManager() {
                             onClick={() => {
                               setOverrideModalOpen(false);
                               setSelectedProductId("");
+                              setSelectedProductObj(null);
                               setRequestedPrice("");
                               setOverrideReason("");
                               setValidationErrors({});
@@ -2213,6 +2377,10 @@ function StoreManager() {
 
             <TabsContent value="reports" className="mt-0">
               <BranchFinancialReportsView />
+            </TabsContent>
+
+            <TabsContent value="expenses" className="mt-0">
+              <BranchExpensesTab />
             </TabsContent>
           </main>
         </Tabs>

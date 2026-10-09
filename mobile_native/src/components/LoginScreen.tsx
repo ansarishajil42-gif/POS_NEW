@@ -23,6 +23,18 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
+function normalizeRole(backendRole?: string): Role {
+  const r = (backendRole || '').toLowerCase().replace(/_/g, '-');
+  if (r === 'super-admin' || r === 'superadmin') return 'super-admin';
+  if (r === 'head-office-admin' || r === 'head-office' || r === 'headoffice' || r === 'admin' || r === 'tenant-admin') return 'head-office';
+  if (r === 'branch-manager' || r === 'store-manager') return 'store-manager';
+  if (r === 'inventory-manager') return 'inventory-manager';
+  if (r === 'purchasing-officer') return 'purchasing-officer';
+  if (r === 'cashier') return 'cashier';
+  if (r === 'vendor') return 'vendor';
+  return 'head-office';
+}
+
 export function LoginScreen({ onBack }: { onBack?: () => void }) {
   const { signIn } = useAuth();
   
@@ -30,10 +42,8 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
   const [loginMethod, setLoginMethod] = useState<'credentials' | 'pin'>('credentials');
 
   // Credentials states
-  const [selected, setSelected] = useState<Role | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   // Cashier email autocomplete states
   const [matchedCashierEmails, setMatchedCashierEmails] = useState<any[]>([]);
@@ -97,88 +107,26 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
     }
   };
 
-  // Chevron rotation animation
-  const rotateAnim = useRef(new Animated.Value(0)).current;
-
-  // Spring-back translateY animation
-  const translateAnim = useRef(new Animated.Value(0)).current;
-
-  // Fetch tenants and branches for PIN login
-  useEffect(() => {
-    const loadTenantsAndBranches = async () => {
-      try {
-        const { apiClient } = require('../lib/apiClient');
-        const res = await apiClient.get('/auth/tenants-branches') as any;
-        setTenantsList(res.tenants || []);
-        setBranchesList(res.branches || []);
-      } catch (err) {
-        console.error('Failed to load tenants/branches:', err);
-      }
-    };
-    loadTenantsAndBranches();
-  }, []);
-
-  const toggleDropdown = () => {
-    const toValue = isDropdownOpen ? 0 : 1;
-
-    // Trigger bounce scale / translateY
-    translateAnim.setValue(0);
-    Animated.sequence([
-      Animated.timing(translateAnim, {
-        toValue: 6,
-        duration: 90,
-        useNativeDriver: true,
-      }),
-      Animated.spring(translateAnim, {
-        toValue: 0,
-        useNativeDriver: true,
-        bounciness: 12,
-        speed: 12,
-      })
-    ]).start();
-
-    // Rotate chevron arrow
-    Animated.timing(rotateAnim, {
-      toValue,
-      duration: 200,
-      useNativeDriver: true,
-    }).start();
-
-    // Smooth layout height expand
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setIsDropdownOpen(!isDropdownOpen);
-  };
-
-  const handleSelectRole = (roleId: Role) => {
-    setSelected(roleId);
-    
-    // Collapse dropdown smoothly
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setIsDropdownOpen(false);
-
-    Animated.timing(rotateAnim, {
-      toValue: 0,
-      duration: 150,
-      useNativeDriver: true,
-    }).start();
-  };
-
   const [isLoading, setIsLoading] = useState(false);
 
   const submit = async () => {
-    if (!selected) return;
+    if (!email.trim() || !password) {
+      alert('Please enter your email and password');
+      return;
+    }
     
     setIsLoading(true);
     try {
       const { apiClient, storage } = require('../lib/apiClient');
-      const res = await apiClient.post('/auth/login', { email, password });
+      const res = await apiClient.post('/auth/login', { email: email.trim(), password });
       if (res.token) {
         await storage.setToken(res.token);
       }
       if (res.user) {
         await storage.setUser(res.user);
       }
-      signIn(selected, res.user);
+      const assignedRole = normalizeRole(res.user?.role);
+      signIn(assignedRole, res.user);
     } catch (err: any) {
       console.error('Login error:', err);
       alert(err.message || 'Login failed');
@@ -217,12 +165,7 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
     }
   };
 
-  const selectedRole = ROLES.find((r) => r.id === selected);
 
-  const rotateValue = rotateAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '180deg'],
-  });
 
   return (
     <ScrollView
@@ -286,7 +229,6 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
                       key={c.id}
                       onPress={() => {
                         setEmail(c.email);
-                        setSelected('cashier'); // Automatically select Cashier role
                         setMatchedCashierEmails([]);
                         Keyboard.dismiss();
                       }}
@@ -311,60 +253,10 @@ export function LoginScreen({ onBack }: { onBack?: () => void }) {
               prefix={<Lock size={16} color="#94a3b8" />}
             />
 
-            <View style={styles.selectGroup}>
-              <Text style={styles.selectLabel}>Select Role</Text>
-              <Animated.View style={{ transform: [{ translateY: translateAnim }] }}>
-                <TouchableOpacity
-                  onPress={toggleDropdown}
-                  activeOpacity={0.9}
-                  style={[
-                    styles.selectTrigger,
-                    isDropdownOpen ? styles.selectTriggerActive : styles.selectTriggerInactive
-                  ]}
-                >
-                  <Text style={[styles.selectValue, selected ? styles.textActive : styles.textPlaceholder]}>
-                    {selectedRole ? selectedRole.label : 'Choose your role…'}
-                  </Text>
-                  <Animated.View style={{ transform: [{ rotate: rotateValue }] }}>
-                    <ChevronDown size={18} color="#94a3b8" />
-                  </Animated.View>
-                </TouchableOpacity>
-              </Animated.View>
-
-              {isDropdownOpen && (
-                <View style={styles.dropdownMenu}>
-                  <ScrollView style={{ maxHeight: 220 }} nestedScrollEnabled={true}>
-                    {ROLES.map((r) => {
-                      const isSelected = selected === r.id;
-                      return (
-                        <TouchableOpacity
-                          key={r.id}
-                          onPress={() => handleSelectRole(r.id)}
-                          style={[
-                            styles.dropdownItem,
-                            isSelected ? styles.dropdownItemActive : styles.dropdownItemInactive
-                          ]}
-                          activeOpacity={0.7}
-                        >
-                          <View style={styles.dropdownItemLeft}>
-                            <Text style={[styles.dropdownItemLabel, isSelected ? styles.dropdownItemLabelActive : styles.dropdownItemLabelInactive]}>
-                              {r.label}
-                            </Text>
-                            <Text style={styles.dropdownItemSub}>{r.subtitle}</Text>
-                          </View>
-                          {isSelected && <Check size={16} color="#39ff14" />}
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
-                </View>
-              )}
-            </View>
-
             <Button
               full
               onClick={submit}
-              disabled={!selected || isLoading}
+              disabled={!email.trim() || !password || isLoading}
               style={styles.submitBtn}
             >
               {isLoading ? 'Signing In...' : 'Sign In'}

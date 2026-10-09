@@ -110,7 +110,7 @@ export const products = pgTable("products", {
   category: text("category").notNull(),
   unit: text("unit").notNull(),
   costPrice: decimal("cost_price", { precision: 10, scale: 2 }).notNull(),
-  salePrice: decimal("sale_price", { precision: 10, scale: 2 }).notNull(),
+  salePrice: decimal("sale_price", { precision: 10, scale: 3 }).notNull(),
   isBatchTracked: boolean("is_batch_tracked").default(true),
   isExpiryTracked: boolean("is_expiry_tracked").default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -978,6 +978,9 @@ export const tenantInvoices = pgTable("tenant_invoices", {
   mamoPaymentUrl: text("mamo_payment_url"),
   periodStart: timestamp("period_start").notNull(),
   periodEnd: timestamp("period_end").notNull(),
+  sentToClientAt: timestamp("sent_to_client_at"),
+  reminderSentAt: timestamp("reminder_sent_at"),
+  clientSeenAt: timestamp("client_seen_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -1268,4 +1271,87 @@ export const supportTicketMessagesRelations = relations(supportTicketMessages, (
   ticket: one(supportTickets, { fields: [supportTicketMessages.ticketId], references: [supportTickets.id] }),
   sender: one(staffUsers, { fields: [supportTicketMessages.senderId], references: [staffUsers.id] }),
 }));
+
+// 34. sales_channels
+export const salesChannels = pgTable(
+  "sales_channels",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    name: text("name").notNull(),
+    markupPercent: decimal("markup_percent", { precision: 6, scale: 2 }).notNull().default("0"),
+    isActive: boolean("is_active").default(true),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (t) => [
+    unique("sales_channels_tenant_key_unique").on(t.tenantId, t.key),
+    index("sales_channels_tenant_idx").on(t.tenantId),
+  ]
+);
+
+export const salesChannelsRelations = relations(salesChannels, ({ one }) => ({
+  tenant: one(tenants, { fields: [salesChannels.tenantId], references: [tenants.id] }),
+}));
+
+// 35. product_channel_price_overrides
+export const productChannelPriceOverrides = pgTable(
+  "product_channel_price_overrides",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    channelKey: text("channel_key").notNull(),
+    price: decimal("price", { precision: 10, scale: 2 }).notNull(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (t) => [
+    unique("product_channel_price_overrides_unique").on(t.tenantId, t.productId, t.channelKey),
+    index("product_channel_price_overrides_tenant_idx").on(t.tenantId),
+    index("product_channel_price_overrides_product_idx").on(t.productId),
+  ]
+);
+
+export const productChannelPriceOverridesRelations = relations(productChannelPriceOverrides, ({ one }) => ({
+  tenant: one(tenants, { fields: [productChannelPriceOverrides.tenantId], references: [tenants.id] }),
+  product: one(products, { fields: [productChannelPriceOverrides.productId], references: [products.id] }),
+}));
+
+// 34. expenses
+export const expenses = pgTable(
+  "expenses",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }),
+    branchId: uuid("branch_id").references(() => branches.id, { onDelete: "cascade" }),
+    category: text("category").notNull(),
+    amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+    expenseDate: date("expense_date").notNull(),
+    notes: text("notes"),
+    receiptUrl: text("receipt_url"),
+    createdBy: uuid("created_by").references(() => staffUsers.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("expenses_tenant_branch_date_idx").on(t.tenantId, t.branchId, t.expenseDate),
+    index("expenses_tenant_idx").on(t.tenantId),
+    index("expenses_branch_idx").on(t.branchId),
+    index("expenses_date_idx").on(t.expenseDate),
+  ]
+);
+
+export const expensesRelations = relations(expenses, ({ one }) => ({
+  tenant: one(tenants, { fields: [expenses.tenantId], references: [tenants.id] }),
+  branch: one(branches, { fields: [expenses.branchId], references: [branches.id] }),
+  creator: one(staffUsers, { fields: [expenses.createdBy], references: [staffUsers.id] }),
+}));
+
 

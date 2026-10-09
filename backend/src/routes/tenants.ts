@@ -1,9 +1,21 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
-import { eq, and, sql, gte, lte } from "drizzle-orm";
-import { tenants, branches, staffUsers, orders, shifts, platformSettings, tenantSettings, purchaseOrders } from "../db/schema.js";
+import { eq, and, sql, gte, lte, desc } from "drizzle-orm";
+import {
+  tenants,
+  branches,
+  staffUsers,
+  orders,
+  shifts,
+  platformSettings,
+  tenantSettings,
+  purchaseOrders,
+  tenantSubscriptions,
+  tenantInvoices,
+  tenantPayments,
+} from "../db/schema.js";
 import bcrypt from "bcryptjs";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -17,10 +29,10 @@ router.get("/", async (req, res) => {
       const tenantBranches = allBranches.filter((b) => b.tenantId === t.id);
       const tills = tenantBranches.reduce((sum, b) => sum + (b.tillCount || 1), 0);
       
-      let mrr = 899;
+      let mrr = 400;
       let outlets = 2; // Starter limit
       if (t.plan === "Growth") {
-        mrr = 1690;
+        mrr = 1200;
         outlets = 10;
       } else if (t.plan === "Enterprise") {
         mrr = 4999; // Custom, placeholder
@@ -438,6 +450,90 @@ router.get("/reports/vat-summary", requireAuth, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/tenants/my-billing
+ * Head Office Admin view of their own tenant subscription, quota, invoices, and payments.
+ * Strictly scoped to session tenantId.
+ * Placed before /:id to avoid route parameter collision/shadowing.
+ */
+router.get("/my-billing", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res.status(403).json({ success: false, error: "Forbidden: No tenant associated with session" });
+    }
+
+    // 1. Fetch Tenant Record
+    const tenantRecord = await db.query.tenants.findFirst({
+      where: eq(tenants.id, tenantId),
+    });
+
+    if (!tenantRecord) {
+      return res.status(404).json({ success: false, error: "Tenant not found" });
+    }
+
+    // Fetch Tenant Settings (for TRN and currency)
+    const settings = await db.query.tenantSettings.findFirst({
+      where: eq(tenantSettings.tenantId, tenantId),
+    });
+
+    const tenant = {
+      ...tenantRecord,
+      trn: settings?.taxRegistrationNumber || null,
+      currency: settings?.currency || "AED",
+    };
+
+    // 2. Fetch Latest Subscription Row
+    const subRows = await db
+      .select()
+      .from(tenantSubscriptions)
+      .where(eq(tenantSubscriptions.tenantId, tenantId))
+      .orderBy(desc(tenantSubscriptions.createdAt))
+      .limit(1);
+
+    const subscription = subRows[0] || null;
+
+    // 3. Count Branches
+    const branchRows = await db
+      .select({ id: branches.id })
+      .from(branches)
+      .where(eq(branches.tenantId, tenantId));
+
+    const branchCount = branchRows.length;
+
+    // 4. Invoices
+    const invoices = await db
+      .select()
+      .from(tenantInvoices)
+      .where(eq(tenantInvoices.tenantId, tenantId))
+      .orderBy(desc(tenantInvoices.createdAt));
+
+    // 5. Payment History
+    const payments = await db
+      .select()
+      .from(tenantPayments)
+      .where(eq(tenantPayments.tenantId, tenantId))
+      .orderBy(desc(tenantPayments.paymentDate));
+
+    res.json({
+      success: true,
+      data: {
+        tenant,
+        subscription,
+        branchCount,
+        invoices,
+        payments,
+      },
+    });
+  } catch (err: any) {
+    console.error("Failed to fetch tenant billing data:", err);
+    res.status(500).json({
+      success: false,
+      error: err.message || "Failed to fetch subscription & billing information",
+    });
+  }
+});
+
 // Get single tenant by ID
 router.get("/:id", async (req, res) => {
   const { id } = req.params;
@@ -452,10 +548,10 @@ router.get("/:id", async (req, res) => {
     const tenantBranches = await db.select().from(branches).where(eq(branches.tenantId, id));
     const tills = tenantBranches.reduce((sum, b) => sum + (b.tillCount || 1), 0);
     
-    let mrr = 899;
+    let mrr = 400;
     let outlets = 2; // Starter limit
     if (tenant.plan === "Growth") {
-      mrr = 1690;
+      mrr = 1200;
       outlets = 10;
     } else if (tenant.plan === "Enterprise") {
       mrr = 4999;

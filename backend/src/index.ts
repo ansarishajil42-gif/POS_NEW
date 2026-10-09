@@ -23,6 +23,11 @@ import posRouter from "./routes/pos.js";
 import { aggregatorSftpRouter } from "./routes/aggregator-sftp.js";
 import webhooksRouter from "./routes/webhooks.js";
 import superAdminRouter from "./routes/super-admin.js";
+import financialReportsRouter from "./routes/financial-reports.js";
+import payrollRouter from "./routes/payroll.js";
+import branchReportsRouter from "./routes/branch-reports.js";
+import operationalReportsRouter from "./routes/operational-reports.js";
+import meRouter from "./routes/me.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -69,6 +74,12 @@ app.use("/api/pos", posRouter);
 app.use("/api/aggregator-sftp", aggregatorSftpRouter);
 app.use("/api/webhooks", webhooksRouter);
 app.use("/api/super-admin", superAdminRouter);
+app.use("/api/financial-reports", financialReportsRouter);
+app.use("/api/financial", financialReportsRouter);
+app.use("/api/payroll", payrollRouter);
+app.use("/api/branch-reports", branchReportsRouter);
+app.use("/api/operational-reports", operationalReportsRouter);
+app.use("/api/me", meRouter);
 
 
 // Error handling middleware

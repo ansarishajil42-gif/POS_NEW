@@ -1,31 +1,35 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 
-type Variant = 'success' | 'warn' | 'error' | 'neutral' | 'info' | 'brand';
+type Variant = 'success' | 'warn' | 'error' | 'neutral' | 'info' | 'brand' | 'destructive';
 
 export function Badge({
   children,
+  label,
   variant = 'neutral',
   dot = false,
   style,
 }: {
-  children: React.ReactNode;
+  children?: React.ReactNode;
+  label?: React.ReactNode;
   variant?: Variant;
   dot?: boolean;
   style?: any;
 }) {
+  const displayContent = children ?? label;
   const variantStyles = {
     success: { bg: '#f0fdf4', text: '#39ff14', border: '#bbf7d0' },
     warn: { bg: '#fffbeb', text: '#d97706', border: '#fef3c7' },
     error: { bg: '#fef2f2', text: '#dc2626', border: '#fee2e2' },
+    destructive: { bg: '#fef2f2', text: '#dc2626', border: '#fee2e2' },
     neutral: { bg: '#f1f5f9', text: '#475569', border: '#cbd5e1' },
     info: { bg: '#f0f9ff', text: '#0284c7', border: '#e0f2fe' },
     brand: { bg: '#f0fdf4', text: '#39ff14', border: '#bbf7d0' },
   }[variant];
 
   // Stringify child text
-  const textContent = typeof children === 'string' || typeof children === 'number'
-    ? String(children)
+  const textContent = typeof displayContent === 'string' || typeof displayContent === 'number'
+    ? String(displayContent)
     : '';
 
   return (
@@ -38,7 +42,7 @@ export function Badge({
         <View style={[styles.dot, { backgroundColor: variantStyles.text }]} />
       )}
       <Text style={[styles.text, { color: variantStyles.text }]}>
-        {textContent || children}
+        {textContent || displayContent}
       </Text>
     </View>
   );

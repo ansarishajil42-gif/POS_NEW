@@ -6,6 +6,7 @@ import { getAdapter, ProductData } from "./aggregator-adapters/index";
 import { createRequire } from "module";
 import crypto from "crypto";
 import postgres from "postgres";
+import { resolveChannelPrice } from "./channel-pricing";
 
 export async function getAggregatorBranchesFromDb(tenantId: string) {
   if (!tenantId) {
@@ -425,6 +426,7 @@ export async function generateDirectCsvPreviewFromDb(
   const filenamePrefix = (conn.filenamePrefix || "").trim();
   const priceFormat = conn.priceFormat || "price_discounted";
   const aggregatorName = conn.aggregatorName || "talabat";
+  const channelKey = aggregatorName.toLowerCase().trim();
 
   // 1. Single Lean SQL JOIN via Dedicated Session Mode Client (Port 5432)
   // Prevents transaction pooler (:6543) proxy socket backpressure on large 61,018-row reads
@@ -453,14 +455,19 @@ export async function generateDirectCsvPreviewFromDb(
           p.sale_price, 
           p.category, 
           COALESCE(sl.stock, 0) as stock, 
-          sl.price_override
+          sl.price_override,
+          sc.markup_percent,
+          o.price as override_price
         FROM products p
         INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+        LEFT JOIN sales_channels sc ON sc.tenant_id = p.tenant_id AND sc.key = ${channelKey} AND sc.is_active = true
+        LEFT JOIN product_channel_price_overrides o ON o.product_id = p.id AND o.tenant_id = p.tenant_id AND o.channel_key = ${channelKey}
         WHERE p.tenant_id = ${tenantId}::uuid
           AND (
             p.created_at >= ${filterDate}::timestamp 
             OR p.updated_at >= ${filterDate}::timestamp 
             OR sl.updated_at >= ${filterDate}::timestamp
+            OR o.updated_at >= ${filterDate}::timestamp
           );
       `;
     } else {
@@ -472,9 +479,13 @@ export async function generateDirectCsvPreviewFromDb(
           p.sale_price, 
           p.category, 
           COALESCE(sl.stock, 0) as stock, 
-          sl.price_override
+          sl.price_override,
+          sc.markup_percent,
+          o.price as override_price
         FROM products p
         INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+        LEFT JOIN sales_channels sc ON sc.tenant_id = p.tenant_id AND sc.key = ${channelKey} AND sc.is_active = true
+        LEFT JOIN product_channel_price_overrides o ON o.product_id = p.id AND o.tenant_id = p.tenant_id AND o.channel_key = ${channelKey}
         WHERE p.tenant_id = ${tenantId}::uuid;
       `;
     }
@@ -529,7 +540,9 @@ export async function generateDirectCsvPreviewFromDb(
 
   const adapterItems: ProductData[] = joinedRows.map((p) => {
     const branchStock = Number(p.stock) || 0;
-    const priceToUse = p.price_override ? String(p.price_override) : p.sale_price || "15.00";
+    const basePrice = p.price_override ? String(p.price_override) : p.sale_price || "15.00";
+    const resolvedPrice = resolveChannelPrice(basePrice, p.markup_percent, p.override_price);
+    const priceToUse = resolvedPrice.toFixed(2);
     const isProductActiveInBranch = branchStock > 0;
 
     const matchingPromo = activePromos.find((promo) => {

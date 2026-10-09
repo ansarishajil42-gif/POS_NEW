@@ -8,6 +8,8 @@ import { useAuth } from '../../lib/auth';
 import { useVendor } from '../../lib/VendorContext';
 import { formatCurrency } from '../../lib/utils';
 import { ShoppingCart, FileText, DollarSign, CheckCircle2, Download, AlertCircle } from 'lucide-react-native';
+import { EmployeeMyLeave } from '../payroll/EmployeeMyLeave';
+import { EmployeeMyPayslips } from '../payroll/EmployeeMyPayslips';
 
 export function VendorHome() {
   const { branch } = useAuth();
@@ -52,6 +54,10 @@ export function VendorHome() {
             <StatCard label="Invoices" value={String(invoices.length)} icon={<FileText size={16} color="#475569" />} accent="ink" />
           </View>
         </View>
+
+        {/* Employee Self-Service: My Leave & My Payslips */}
+        <EmployeeMyLeave />
+        <EmployeeMyPayslips />
       </ScreenBody>
     </View>
   );

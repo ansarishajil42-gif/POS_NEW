@@ -31,6 +31,13 @@ interface StoreManagerContextProps {
   recordCashDrop: (shiftId: string, amount: number, note: string) => Promise<void>;
   closeShift: (shiftId: string, actualCash: number) => Promise<any>;
   adjustStock: (productId: string, quantityChange: number, reason: string, note?: string) => Promise<void>;
+  fetchStockPaginated: (page?: number, limit?: number, search?: string, category?: string) => Promise<{ stock: any[]; total: number; page: number; limit: number; categories: string[]; lowStockCount: number }>;
+  // Branch Reports & Submissions (Branch Manager)
+  getMyBranchReport: (startDate?: string, endDate?: string) => Promise<any>;
+  submitBranchReport: (data: { startDate: string; endDate: string; notes?: string }) => Promise<any>;
+  getMyBranchSubmissions: () => Promise<any>;
+  updateBranchSubmission: (id: string, data: { notes?: string; startDate?: string; endDate?: string }) => Promise<any>;
+  deleteBranchSubmission: (id: string) => Promise<any>;
 }
 
 const StoreManagerContext = createContext<StoreManagerContextProps | null>(null);
@@ -170,6 +177,45 @@ export function StoreManagerProvider({ children }: { children: ReactNode }) {
     await fetchData();
   };
 
+  const fetchStockPaginated = async (page = 1, limit = 50, search = '', category = 'All') => {
+    try {
+      const params: string[] = [`page=${page}`, `limit=${limit}`];
+      if (search) params.push(`search=${encodeURIComponent(search)}`);
+      if (category && category !== 'All') params.push(`category=${encodeURIComponent(category)}`);
+
+      const res = await apiClient.get<any>(`/store-manager/stock?${params.join('&')}`);
+      return res || { stock: [], total: 0, page, limit, categories: ['All'], lowStockCount: 0 };
+    } catch (err) {
+      console.warn('fetchStockPaginated error:', err);
+      return { stock: [], total: 0, page, limit, categories: ['All'], lowStockCount: 0 };
+    }
+  };
+
+  const getMyBranchReport = async (startDate?: string, endDate?: string) => {
+    let url = '/branch-reports/my-branch-report';
+    const params: string[] = [];
+    if (startDate) params.push(`startDate=${encodeURIComponent(startDate)}`);
+    if (endDate) params.push(`endDate=${encodeURIComponent(endDate)}`);
+    if (params.length > 0) url += `?${params.join('&')}`;
+    return await apiClient.get<any>(url);
+  };
+
+  const submitBranchReport = async (data: { startDate: string; endDate: string; notes?: string }) => {
+    return await apiClient.post<any>('/branch-reports/submit', data);
+  };
+
+  const getMyBranchSubmissions = async () => {
+    return await apiClient.get<any>('/branch-reports/mine');
+  };
+
+  const updateBranchSubmission = async (id: string, data: { notes?: string; startDate?: string; endDate?: string }) => {
+    return await apiClient.patch<any>(`/branch-reports/${id}`, data);
+  };
+
+  const deleteBranchSubmission = async (id: string) => {
+    return await apiClient.delete<any>(`/branch-reports/${id}`);
+  };
+
   const contextValue = useMemo(
     () => ({
       loading,
@@ -192,6 +238,12 @@ export function StoreManagerProvider({ children }: { children: ReactNode }) {
       recordCashDrop,
       closeShift,
       adjustStock,
+      fetchStockPaginated,
+      getMyBranchReport,
+      submitBranchReport,
+      getMyBranchSubmissions,
+      updateBranchSubmission,
+      deleteBranchSubmission,
     }),
     [loading, branch, stock, shifts, staff, orders, pricingRequests, tills, adjustHistory]
   );

@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "@supabase/supabase-js";
 import { db } from "@/server/db";
-import { tenants, branches, tenantSettings, orders, platformSettings, staffUsers, auditLogs, inventoryLedger, blogPosts, tenantSubscriptions, tenantPayments, tenantInvoices } from "@/server/db/schema";
+import { tenants, branches, tills, tenantSettings, orders, platformSettings, staffUsers, auditLogs, inventoryLedger, blogPosts, tenantSubscriptions, tenantPayments, tenantInvoices } from "@/server/db/schema";
 import { eq, and, sql, desc, gte, lte, count } from "drizzle-orm";
 import { getSessionServerFn } from "@/lib/auth-server";
 import bcrypt from "bcryptjs";
@@ -46,33 +46,90 @@ async function ensureSuperAdmin() {
 
 export const getTenantsServerFn = createServerFn({ method: "GET" })
     .handler(async () => {
+        const t0 = performance.now();
         await ensureSuperAdmin();
         
-        // Fetch tenants with counts of branches, tills, and orders
-        const rows = await db.select({
-            id: tenants.id,
-            name: tenants.name,
-            subdomain: tenants.subdomain,
-            plan: tenants.plan,
-            status: tenants.status,
-            createdAt: tenants.createdAt,
-            outlets: sql<number>`count(distinct ${branches.id})::int`,
-            tills: sql<number>`coalesce((SELECT sum(till_count) FROM branches WHERE tenant_id = tenants.id), 0)::int`,
-            monthlyOrders: sql<number>`count(distinct ${orders.id})::int`,
-        })
-        .from(tenants)
-        .leftJoin(branches, eq(tenants.id, branches.tenantId))
-        .leftJoin(orders, eq(tenants.id, orders.tenantId))
-        .groupBy(tenants.id)
-        .orderBy(sql`${tenants.createdAt} DESC`);
+        // One grouped query per table run in parallel, merged in JS
+        const [tenantRows, branchCounts, tillCounts, orderCounts] = await Promise.all([
+            db.select({
+                id: tenants.id,
+                name: tenants.name,
+                subdomain: tenants.subdomain,
+                plan: tenants.plan,
+                status: tenants.status,
+                outletLimit: tenants.outletLimit,
+                tillLimit: tenants.tillLimit,
+                monthlyOrderLimit: tenants.monthlyOrderLimit,
+                createdAt: tenants.createdAt,
+            })
+            .from(tenants)
+            .orderBy(sql`${tenants.createdAt} DESC`),
+
+            db.select({
+                tenantId: branches.tenantId,
+                count: sql<number>`count(*)::int`,
+            })
+            .from(branches)
+            .groupBy(branches.tenantId),
+
+            db.select({
+                tenantId: tills.tenantId,
+                count: sql<number>`count(*)::int`,
+            })
+            .from(tills)
+            .groupBy(tills.tenantId),
+
+            db.select({
+                tenantId: orders.tenantId,
+                count: sql<number>`count(*)::int`,
+            })
+            .from(orders)
+            .groupBy(orders.tenantId),
+        ]);
+
+        const branchMap = new Map<string, number>();
+        for (const b of branchCounts) {
+            if (b.tenantId) branchMap.set(b.tenantId, Number(b.count || 0));
+        }
+
+        const tillMap = new Map<string, number>();
+        for (const t of tillCounts) {
+            if (t.tenantId) tillMap.set(t.tenantId, Number(t.count || 0));
+        }
+
+        const orderMap = new Map<string, number>();
+        for (const o of orderCounts) {
+            if (o.tenantId) orderMap.set(o.tenantId, Number(o.count || 0));
+        }
+
+        const rows = tenantRows.map((t) => ({
+            id: t.id,
+            name: t.name,
+            subdomain: t.subdomain,
+            plan: t.plan,
+            status: t.status,
+            outletLimit: t.outletLimit,
+            tillLimit: t.tillLimit,
+            monthlyOrderLimit: t.monthlyOrderLimit,
+            createdAt: t.createdAt,
+            outlets: branchMap.get(t.id) ?? 0,
+            tills: tillMap.get(t.id) ?? 0,
+            monthlyOrders: orderMap.get(t.id) ?? 0,
+        }));
+
+        const elapsed = Math.round(performance.now() - t0);
+        console.log(`[perf] getTenantsServerFn ${elapsed}ms`);
 
         return { success: true, tenants: rows };
     });
 
 export const getBranchesServerFn = createServerFn({ method: "GET" })
     .handler(async () => {
+        const t0 = performance.now();
         await ensureSuperAdmin();
         const rows = await db.select().from(branches).where(eq(branches.status, "Active")).orderBy(sql`${branches.createdAt} DESC`);
+        const elapsed = Math.round(performance.now() - t0);
+        console.log(`[perf] getBranchesServerFn ${elapsed}ms`);
         return { success: true, branches: rows };
     });
 
@@ -453,52 +510,155 @@ export const updateTenantStatusServerFn = createServerFn({ method: "POST" })
         return { success: true };
     });
 
-export const upgradeTenantPlanServerFn = createServerFn({ method: "POST" })
-    .validator((d: { id: string }) => d)
+export const updateTenantPlanAndLimitsServerFn = createServerFn({ method: "POST" })
+    .validator((d: { id: string; plan: string; outletLimit: number; tillLimit: number }) => d)
     .handler(async ({ data }) => {
         await ensureSuperAdmin();
-        let newPlan = "";
-        await db.transaction(async (tx) => {
-            const [tenant] = await tx.select({ plan: tenants.plan }).from(tenants).where(eq(tenants.id, data.id));
-            if (!tenant) throw new Error("Not found");
-            
-            newPlan = tenant.plan === "Starter" ? "Growth" : "Enterprise";
-            await tx.update(tenants).set({ plan: newPlan }).where(eq(tenants.id, data.id));
+        const oLimit = Math.floor(Number(data.outletLimit));
+        const tLimit = Math.floor(Number(data.tillLimit));
+        if (isNaN(oLimit) || oLimit < 1 || isNaN(tLimit) || tLimit < 1) {
+            return { success: false, error: "Outlet and till limits must be integers ≥ 1" };
+        }
+        try {
+            return await db.transaction(async (tx) => {
+                const [current] = await tx.select().from(tenants).where(eq(tenants.id, data.id)).for('update');
+                if (!current) throw new Error("Tenant not found");
 
-            await logAuditAction({
-                action: "Upgrade Tenant Plan",
-                entityType: "tenant",
-                entityId: data.id,
-                tenantId: data.id,
-                beforeValue: { plan: tenant.plan },
-                afterValue: { plan: newPlan }
-            }, tx);
-        });
-        return { success: true, newPlan };
+                // Check outlet limit against current branch count
+                const activeBranches = await tx.select({ count: sql<number>`count(*)::int` }).from(branches).where(eq(branches.tenantId, data.id));
+                if (activeBranches[0].count > oLimit) {
+                    throw new Error(`Outlet limit cannot be set below current branch count (${activeBranches[0].count})`);
+                }
+
+                // Check till limit against current till count across this tenant
+                const { tills } = await import("@/server/db/schema");
+                const activeTills = await tx.select({ count: sql<number>`count(*)::int` }).from(tills).where(eq(tills.tenantId, data.id));
+                if (activeTills[0].count > tLimit) {
+                    throw new Error(`Till limit cannot be set below current till count (${activeTills[0].count})`);
+                }
+
+                await tx.update(tenants).set({
+                    plan: data.plan,
+                    outletLimit: oLimit,
+                    tillLimit: tLimit,
+                }).where(eq(tenants.id, data.id));
+
+                await logAuditAction({
+                    action: "Update Tenant Plan & Limits",
+                    entityType: "tenant",
+                    entityId: data.id,
+                    tenantId: data.id,
+                    beforeValue: { plan: current.plan, outletLimit: current.outletLimit, tillLimit: current.tillLimit },
+                    afterValue: { plan: data.plan, outletLimit: oLimit, tillLimit: tLimit }
+                }, tx);
+
+                return { success: true };
+            });
+        } catch (error: any) {
+            return { success: false, error: error.message || "Failed to update tenant plan and limits" };
+        }
+    });
+
+export const upgradeTenantPlanServerFn = createServerFn({ method: "POST" })
+    .validator((d: { id: string; plan?: string; outletLimit?: number; tillLimit?: number }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+        try {
+            return await db.transaction(async (tx) => {
+                const [current] = await tx.select().from(tenants).where(eq(tenants.id, data.id)).for('update');
+                if (!current) throw new Error("Tenant not found");
+                
+                const newPlan = data.plan || (current.plan === "Starter" ? "Growth" : "Enterprise");
+                const planDetails = getPlan(newPlan);
+                const oLimit = data.outletLimit !== undefined ? Math.floor(Number(data.outletLimit)) : planDetails.entitlements.outletLimit;
+                const tLimit = data.tillLimit !== undefined ? Math.floor(Number(data.tillLimit)) : planDetails.entitlements.tillLimit;
+
+                if (isNaN(oLimit) || oLimit < 1 || isNaN(tLimit) || tLimit < 1) {
+                    throw new Error("Outlet and till limits must be integers ≥ 1");
+                }
+
+                const activeBranches = await tx.select({ count: sql<number>`count(*)::int` }).from(branches).where(eq(branches.tenantId, data.id));
+                if (activeBranches[0].count > oLimit) {
+                    throw new Error(`Outlet limit cannot be set below current branch count (${activeBranches[0].count})`);
+                }
+
+                const { tills } = await import("@/server/db/schema");
+                const activeTills = await tx.select({ count: sql<number>`count(*)::int` }).from(tills).where(eq(tills.tenantId, data.id));
+                if (activeTills[0].count > tLimit) {
+                    throw new Error(`Till limit cannot be set below current till count (${activeTills[0].count})`);
+                }
+
+                await tx.update(tenants).set({
+                    plan: newPlan,
+                    outletLimit: oLimit,
+                    tillLimit: tLimit,
+                }).where(eq(tenants.id, data.id));
+
+                await logAuditAction({
+                    action: "Upgrade Tenant Plan",
+                    entityType: "tenant",
+                    entityId: data.id,
+                    tenantId: data.id,
+                    beforeValue: { plan: current.plan, outletLimit: current.outletLimit, tillLimit: current.tillLimit },
+                    afterValue: { plan: newPlan, outletLimit: oLimit, tillLimit: tLimit }
+                }, tx);
+
+                return { success: true, newPlan };
+            });
+        } catch (error: any) {
+            return { success: false, error: error.message || "Failed to upgrade plan" };
+        }
     });
 
 export const downgradeTenantPlanServerFn = createServerFn({ method: "POST" })
-    .validator((d: { id: string }) => d)
+    .validator((d: { id: string; plan?: string; outletLimit?: number; tillLimit?: number }) => d)
     .handler(async ({ data }) => {
         await ensureSuperAdmin();
-        let newPlan = "";
-        await db.transaction(async (tx) => {
-            const [tenant] = await tx.select({ plan: tenants.plan }).from(tenants).where(eq(tenants.id, data.id));
-            if (!tenant) throw new Error("Not found");
-            
-            newPlan = tenant.plan === "Enterprise" ? "Growth" : "Starter";
-            await tx.update(tenants).set({ plan: newPlan }).where(eq(tenants.id, data.id));
+        try {
+            return await db.transaction(async (tx) => {
+                const [current] = await tx.select().from(tenants).where(eq(tenants.id, data.id)).for('update');
+                if (!current) throw new Error("Tenant not found");
+                
+                const newPlan = data.plan || (current.plan === "Enterprise" ? "Growth" : "Starter");
+                const planDetails = getPlan(newPlan);
+                const oLimit = data.outletLimit !== undefined ? Math.floor(Number(data.outletLimit)) : planDetails.entitlements.outletLimit;
+                const tLimit = data.tillLimit !== undefined ? Math.floor(Number(data.tillLimit)) : planDetails.entitlements.tillLimit;
 
-            await logAuditAction({
-                action: "Downgrade Tenant Plan",
-                entityType: "tenant",
-                entityId: data.id,
-                tenantId: data.id,
-                beforeValue: { plan: tenant.plan },
-                afterValue: { plan: newPlan }
-            }, tx);
-        });
-        return { success: true, newPlan };
+                if (isNaN(oLimit) || oLimit < 1 || isNaN(tLimit) || tLimit < 1) {
+                    throw new Error("Outlet and till limits must be integers ≥ 1");
+                }
+
+                const activeBranches = await tx.select({ count: sql<number>`count(*)::int` }).from(branches).where(eq(branches.tenantId, data.id));
+                if (activeBranches[0].count > oLimit) {
+                    throw new Error(`Outlet limit cannot be set below current branch count (${activeBranches[0].count})`);
+                }
+
+                const { tills } = await import("@/server/db/schema");
+                const activeTills = await tx.select({ count: sql<number>`count(*)::int` }).from(tills).where(eq(tills.tenantId, data.id));
+                if (activeTills[0].count > tLimit) {
+                    throw new Error(`Till limit cannot be set below current till count (${activeTills[0].count})`);
+                }
+
+                await tx.update(tenants).set({
+                    plan: newPlan,
+                    outletLimit: oLimit,
+                    tillLimit: tLimit,
+                }).where(eq(tenants.id, data.id));
+
+                await logAuditAction({
+                    action: "Downgrade Tenant Plan",
+                    entityType: "tenant",
+                    entityId: data.id,
+                    tenantId: data.id,
+                    beforeValue: { plan: current.plan, outletLimit: current.outletLimit, tillLimit: current.tillLimit },
+                    afterValue: { plan: newPlan, outletLimit: oLimit, tillLimit: tLimit }
+                }, tx);
+
+                return { success: true, newPlan };
+            });
+        } catch (error: any) {
+            return { success: false, error: error.message || "Failed to downgrade plan" };
+        }
     });
 
 export const createBranchServerFn = createServerFn({ method: "POST" })
@@ -547,12 +707,21 @@ export const deleteBranchServerFn = createServerFn({ method: "POST" })
 
 export const getGlobalTaxSettingsServerFn = createServerFn({ method: "GET" })
     .handler(async () => {
-        await ensureSuperAdmin();
-        const [settings] = await db.select().from(platformSettings).limit(1);
-        if (settings) {
-            return { success: true, vatRate: settings.vatRate, inclusive: settings.vatInclusive };
+        const t0 = performance.now();
+        try {
+            await ensureSuperAdmin();
+            const [settings] = await db.select().from(platformSettings).limit(1);
+            const elapsed = Math.round(performance.now() - t0);
+            console.log(`[perf] getGlobalTaxSettingsServerFn ${elapsed}ms`);
+            if (settings) {
+                return { success: true, vatRate: settings.vatRate, inclusive: settings.vatInclusive };
+            }
+            return { success: true, vatRate: "5.00", inclusive: true };
+        } catch (error: any) {
+            const elapsed = Math.round(performance.now() - t0);
+            console.log(`[perf] getGlobalTaxSettingsServerFn (error: ${error.message}) ${elapsed}ms`);
+            return { success: false, vatRate: "5.00", inclusive: true, error: error.message };
         }
-        return { success: true, vatRate: "5.00", inclusive: true };
     });
 
 export const updateGlobalTaxSettingsServerFn = createServerFn({ method: "POST" })
@@ -584,15 +753,23 @@ export const updateGlobalTaxSettingsServerFn = createServerFn({ method: "POST" }
 
 export const getPlatformSettingsServerFn = createServerFn({ method: "GET" })
     .handler(async () => {
+        const t0 = performance.now();
         try {
             await ensureSuperAdmin();
             const settings = await db.select().from(platformSettings).limit(1);
             if (settings.length > 0) {
+                const elapsed = Math.round(performance.now() - t0);
+                console.log(`[perf] getPlatformSettingsServerFn ${elapsed}ms`);
                 return { success: true, data: settings[0] };
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error("Failed to fetch platform settings:", error);
+            const elapsed = Math.round(performance.now() - t0);
+            console.log(`[perf] getPlatformSettingsServerFn (error: ${error.message}) ${elapsed}ms`);
+            return { success: false, data: { currency: "AED", timezone: "Asia/Dubai", dateFormat: "DD/MM/YYYY" }, error: error.message };
         }
+        const elapsed = Math.round(performance.now() - t0);
+        console.log(`[perf] getPlatformSettingsServerFn ${elapsed}ms`);
         return { success: true, data: { currency: "AED", timezone: "Asia/Dubai", dateFormat: "DD/MM/YYYY" } };
     });
 
@@ -672,59 +849,15 @@ export const getAuditLogsServerFn = createServerFn({ method: "GET" })
 export const getAnalyticsServerFn = createServerFn({ method: "GET" })
     .validator((d: { startDate?: string; endDate?: string; tenantId?: string } | undefined) => d)
     .handler(async ({ data }) => {
+        const t0 = performance.now();
         await ensureSuperAdmin();
         
-        let orderQuery = db.select({
-            id: orders.id,
-            total: orders.total,
-            createdAt: orders.createdAt,
-            status: orders.status
-        }).from(orders);
-
         const conditions = [];
         if (data?.tenantId) conditions.push(eq(orders.tenantId, data.tenantId));
         if (data?.startDate) conditions.push(gte(orders.createdAt, new Date(data.startDate)));
         if (data?.endDate) conditions.push(lte(orders.createdAt, new Date(data.endDate)));
 
-        if (conditions.length > 0) {
-            orderQuery = orderQuery.where(and(...conditions)) as any;
-        }
-
-        const allOrders = await orderQuery;
-
-        let totalGmv = 0;
-        const salesByDate: Record<string, number> = {};
-
-        allOrders.forEach(o => {
-            totalGmv += Number(o.total);
-            const dateStr = new Date(o.createdAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
-            salesByDate[dateStr] = (salesByDate[dateStr] || 0) + Number(o.total);
-        });
-
-        const platformSeries = Object.keys(salesByDate).length > 0 
-            ? Object.entries(salesByDate).map(([date, sales]) => ({
-                t: date,
-                sales,
-                tills: 0, 
-                api: 0 // Removed Math.random() as requested
-            }))
-            : [{ t: "Today", sales: 0, tills: 0, api: 0 }];
-
-        // Tenant Distribution logic
-        const allTenants = await db.select({
-            status: tenants.status
-        }).from(tenants);
-        
-        let activeTenantsCount = 0;
-        let suspendedTenantsCount = 0;
-        let trialTenantsCount = 0;
-        let totalTenantsCount = allTenants.length;
-
-        for (const t of allTenants) {
-            if (t.status === 'Active') activeTenantsCount++;
-            else if (t.status === 'Suspended') suspendedTenantsCount++;
-            else if (t.status === 'Trial') trialTenantsCount++;
-        }
+        const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
         // Fetch real system events instead of recent orders
         let auditQuery = db.select({
@@ -738,12 +871,64 @@ export const getAnalyticsServerFn = createServerFn({ method: "GET" })
             auditQuery = auditQuery.where(eq(auditLogs.tenantId, data.tenantId)) as any;
         }
 
-        const recentAudits = await auditQuery;
+        const [gmvRes, salesByDayRows, allTenants, recentAudits] = await Promise.all([
+            db
+                .select({
+                    totalGmv: sql<string>`COALESCE(SUM(${orders.total}), 0)`,
+                })
+                .from(orders)
+                .where(whereClause),
+            db
+                .select({
+                    orderDate: sql<string>`DATE(${orders.createdAt})`,
+                    daySales: sql<string>`COALESCE(SUM(${orders.total}), 0)`,
+                })
+                .from(orders)
+                .where(whereClause)
+                .groupBy(sql`DATE(${orders.createdAt})`)
+                .orderBy(sql`DATE(${orders.createdAt}) ASC`),
+            db.select({
+                status: tenants.status
+            }).from(tenants),
+            auditQuery,
+        ]);
+
+        const totalGmv = Number(gmvRes[0]?.totalGmv || 0);
+
+        const salesByDate: Record<string, number> = {};
+        for (const row of salesByDayRows) {
+            const dateStr = new Date(row.orderDate + "T00:00:00Z").toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+            salesByDate[dateStr] = (salesByDate[dateStr] || 0) + Number(row.daySales);
+        }
+
+        const platformSeries = Object.keys(salesByDate).length > 0 
+            ? Object.entries(salesByDate).map(([date, sales]) => ({
+                t: date,
+                sales,
+                tills: 0, 
+                api: 0 // Removed Math.random() as requested
+            }))
+            : [{ t: "Today", sales: 0, tills: 0, api: 0 }];
+
+        // Tenant Distribution logic
+        let activeTenantsCount = 0;
+        let suspendedTenantsCount = 0;
+        let trialTenantsCount = 0;
+        let totalTenantsCount = allTenants.length;
+
+        for (const t of allTenants) {
+            if (t.status === 'Active') activeTenantsCount++;
+            else if (t.status === 'Suspended') suspendedTenantsCount++;
+            else if (t.status === 'Trial') trialTenantsCount++;
+        }
 
         const systemLogs = recentAudits.map(a => {
             const time = new Date(a.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             return [time, "INFO", `${a.action} on ${a.entityType}`];
         });
+
+        const elapsed = Math.round(performance.now() - t0);
+        console.log(`[perf] getAnalyticsServerFn ${elapsed}ms`);
 
         return { 
             success: true, 
@@ -1039,6 +1224,7 @@ export function computeSubscriptionStatus(currentPeriodEndDate: Date | string | 
 
 export const getBillingOverviewServerFn = createServerFn({ method: "GET" })
     .handler(async () => {
+        const t0 = performance.now();
         await ensureSuperAdmin();
 
         try {
@@ -1103,6 +1289,9 @@ export const getBillingOverviewServerFn = createServerFn({ method: "GET" })
 
             const overdueTenants = tenantBillingList.filter(t => t.status === "overdue");
             const dueSoonTenants = tenantBillingList.filter(t => t.status === "due_soon");
+
+            const elapsed = Math.round(performance.now() - t0);
+            console.log(`[perf] getBillingOverviewServerFn ${elapsed}ms`);
 
             return {
                 success: true,
@@ -1361,7 +1550,7 @@ export const updateTenantDueDateServerFn = createServerFn({ method: "POST" })
 
 export const getTenantInvoicesServerFn = createServerFn({ method: "GET" })
     .handler(async () => {
-
+        const t0 = performance.now();
         await ensureSuperAdmin();
         try {
             const invoiceRows = await db.select({
@@ -1384,12 +1573,18 @@ export const getTenantInvoicesServerFn = createServerFn({ method: "GET" })
                 mamoPaymentUrl: tenantInvoices.mamoPaymentUrl,
                 periodStart: tenantInvoices.periodStart,
                 periodEnd: tenantInvoices.periodEnd,
+                sentToClientAt: tenantInvoices.sentToClientAt,
+                reminderSentAt: tenantInvoices.reminderSentAt,
+                clientSeenAt: tenantInvoices.clientSeenAt,
                 createdAt: tenantInvoices.createdAt,
             })
             .from(tenantInvoices)
             .leftJoin(tenants, eq(tenantInvoices.tenantId, tenants.id))
             .leftJoin(tenantSettings, eq(tenantInvoices.tenantId, tenantSettings.tenantId))
             .orderBy(sql`${tenantInvoices.createdAt} DESC`);
+
+            const elapsed = Math.round(performance.now() - t0);
+            console.log(`[perf] getTenantInvoicesServerFn ${elapsed}ms`);
 
             return { success: true, invoices: invoiceRows };
         } catch (error: any) {
@@ -1717,6 +1912,63 @@ export const updateTenantInvoiceServerFn = createServerFn({ method: "POST" })
             return { success: false, error: error.message };
         }
     });
+
+export const sendTenantInvoiceToClientServerFn = createServerFn({ method: "POST" })
+    .validator((d: { invoiceId: string }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+        try {
+            const now = new Date();
+            const [updated] = await db
+                .update(tenantInvoices)
+                .set({
+                    sentToClientAt: now,
+                    clientSeenAt: null,
+                })
+                .where(eq(tenantInvoices.id, data.invoiceId))
+                .returning();
+
+            if (!updated) {
+                return { success: false, error: "Invoice not found" };
+            }
+
+            return { success: true, invoice: updated };
+        } catch (error: any) {
+            console.error("Send invoice to client error:", error);
+            return { success: false, error: error.message };
+        }
+    });
+
+export const sendTenantInvoiceReminderServerFn = createServerFn({ method: "POST" })
+    .validator((d: { invoiceId: string }) => d)
+    .handler(async ({ data }) => {
+        await ensureSuperAdmin();
+        try {
+            const now = new Date();
+            const [updated] = await db
+                .update(tenantInvoices)
+                .set({
+                    reminderSentAt: now,
+                })
+                .where(
+                    and(
+                        eq(tenantInvoices.id, data.invoiceId),
+                        sql`${tenantInvoices.paymentStatus} NOT IN ('paid', 'manual_paid')`
+                    )
+                )
+                .returning();
+
+            if (!updated) {
+                return { success: false, error: "Invoice not found or already paid" };
+            }
+
+            return { success: true, invoice: updated };
+        } catch (error: any) {
+            console.error("Send invoice reminder error:", error);
+            return { success: false, error: error.message };
+        }
+    });
+
 
 
 

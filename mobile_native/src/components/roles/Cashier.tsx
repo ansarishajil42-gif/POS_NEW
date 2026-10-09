@@ -10,6 +10,8 @@ import { useCashier } from '../../lib/CashierContext';
 import { Toast, type ToastType } from '../ui/Toast';
 import { apiClient } from '../../lib/apiClient';
 import { Search, Trash2, CreditCard, Banknote, Sparkles, Wallet, Printer, Scale, X } from 'lucide-react-native';
+import { EmployeeMyLeave } from '../payroll/EmployeeMyLeave';
+import { EmployeeMyPayslips } from '../payroll/EmployeeMyPayslips';
 
 export function CashierTill() {
   const { branch } = useAuth();
@@ -570,6 +572,10 @@ export function CashierShift() {
             <Text style={{ padding: 12, color: '#94a3b8', fontStyle: 'italic', textAlign: 'center' }}>No shifts closed in this session.</Text>
           )}
         </View>
+
+        {/* Employee Self-Service: My Leave & My Payslips */}
+        <EmployeeMyLeave />
+        <EmployeeMyPayslips />
       </ScreenBody>
       
       {/* CASH DROP SHEET */}

@@ -6,11 +6,7 @@ const getBaseUrl = () => {
     return process.env.EXPO_PUBLIC_API_URL;
   }
   
-  if (Platform.OS === 'android') {
-    return 'http://10.0.2.2:3000/api';
-  }
-  
-  return 'http://localhost:3000/api';
+  return 'https://posnew-production.up.railway.app/api';
 };
 
 export const API_BASE_URL = getBaseUrl();
@@ -109,6 +105,7 @@ export class ApiError extends Error {
 
 interface RequestOptions extends RequestInit {
   timeout?: number;
+  silent404?: boolean;
 }
 
 const fetchWithTimeout = async (url: string, options: RequestOptions = {}): Promise<Response> => {
@@ -187,9 +184,9 @@ const request = async <T>(endpoint: string, options: RequestOptions = {}): Promi
     }
 
     if (__DEV__) {
-      if (response.status === 404) {
+      if (response.status === 404 && !options.silent404) {
         console.warn(`[API Warn] ${response.status} ${url} - Endpoint not found (pending backend deployment)`);
-      } else {
+      } else if (response.status !== 404) {
         console.error(`[API Error] ${response.status} ${url} - ${errorMessage}`);
       }
     }

@@ -13,7 +13,7 @@ import {
   stockAdjustments,
   orderPayments
 } from "../db/schema.js";
-import { eq, and, desc, sql, gte } from "drizzle-orm";
+import { eq, and, desc, sql, gte, ilike, or, count } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middleware/auth.js";
 import { logAuditAction } from "./audit-helper.js";
 import bcrypt from "bcryptjs";
@@ -38,23 +38,58 @@ router.get("/data", async (req, res) => {
       .from(branches)
       .where(eq(branches.id, branchId));
 
-    // 2. Get local stock & products
-    const localStock = await db
-      .select({
-        id: stockLevels.id,
-        stock: stockLevels.stock,
-        priceOverride: stockLevels.priceOverride,
-        productId: products.id,
-        productName: products.name,
-        sku: products.barcode, // fallback sku to barcode
-        barcode: products.barcode,
-        category: products.category,
-        unit: products.unit,
-        basePrice: products.salePrice,
-      })
-      .from(stockLevels)
-      .innerJoin(products, eq(stockLevels.productId, products.id))
-      .where(eq(stockLevels.branchId, branchId));
+    // 2. Get local stock & products (with safe limit/pagination)
+    const stockPage = Math.max(1, parseInt((req.query.page as string) || "1", 10));
+    const stockLimit = Math.min(200, Math.max(1, parseInt((req.query.limit as string) || "50", 10)));
+    const stockSearch = ((req.query.search as string) || "").trim();
+    const stockCategory = ((req.query.category as string) || "").trim();
+
+    let stockConditions = [
+      eq(stockLevels.branchId, branchId),
+      eq(products.tenantId, tenantId),
+    ];
+    if (stockCategory && stockCategory !== "All") {
+      stockConditions.push(eq(products.category, stockCategory));
+    }
+    if (stockSearch) {
+      stockConditions.push(
+        or(
+          ilike(products.name, `%${stockSearch}%`),
+          ilike(products.barcode, `%${stockSearch}%`),
+          ilike(products.sku, `%${stockSearch}%`)
+        )!
+      );
+    }
+    const stockWhere = and(...stockConditions);
+    const stockOffset = (stockPage - 1) * stockLimit;
+
+    const [stockCountResult, localStock] = await Promise.all([
+      db
+        .select({ value: count() })
+        .from(stockLevels)
+        .innerJoin(products, eq(stockLevels.productId, products.id))
+        .where(stockWhere),
+      db
+        .select({
+          id: stockLevels.id,
+          stock: stockLevels.stock,
+          priceOverride: stockLevels.priceOverride,
+          productId: products.id,
+          productName: products.name,
+          sku: sql<string>`coalesce(${products.sku}, ${products.barcode})`,
+          barcode: products.barcode,
+          category: products.category,
+          unit: products.unit,
+          basePrice: products.salePrice,
+        })
+        .from(stockLevels)
+        .innerJoin(products, eq(stockLevels.productId, products.id))
+        .where(stockWhere)
+        .orderBy(products.name)
+        .limit(stockLimit)
+        .offset(stockOffset),
+    ]);
+    const stockTotal = Number(stockCountResult[0]?.value || 0);
 
     // 3. Get recent shifts (including cashier name)
     const shiftsList = await db
@@ -143,6 +178,9 @@ router.get("/data", async (req, res) => {
     res.json({
       branch: branchInfo || null,
       stock: localStock,
+      total: stockTotal,
+      page: stockPage,
+      limit: stockLimit,
       shifts: shiftsWithTillName,
       orders: recentOrders,
       requests: dbRequests,
@@ -152,6 +190,97 @@ router.get("/data", async (req, res) => {
     });
   } catch (error) {
     console.error("Store manager get data error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// 1.1 Dedicated Paginated Stock Fetch
+router.get("/stock", async (req, res) => {
+  const tenantId = (req as AuthRequest).user?.tenantId;
+  const branchId = (req as AuthRequest).user?.branchId;
+
+  if (!tenantId || !branchId) {
+    return res.status(400).json({ error: "Missing authorization context (tenantId/branchId)" });
+  }
+
+  try {
+    const page = Math.max(1, parseInt((req.query.page as string) || "1", 10));
+    const limit = Math.min(200, Math.max(1, parseInt((req.query.limit as string) || "50", 10)));
+    const search = ((req.query.search as string) || "").trim();
+    const category = ((req.query.category as string) || "").trim();
+
+    let conditions = [
+      eq(stockLevels.branchId, branchId),
+      eq(products.tenantId, tenantId),
+    ];
+    if (category && category !== "All") {
+      conditions.push(eq(products.category, category));
+    }
+    if (search) {
+      conditions.push(
+        or(
+          ilike(products.name, `%${search}%`),
+          ilike(products.barcode, `%${search}%`),
+          ilike(products.sku, `%${search}%`)
+        )!
+      );
+    }
+    const whereClause = and(...conditions);
+    const offset = (page - 1) * limit;
+
+    const [countResult, stockList, categoriesResult, lowStockCountResult] = await Promise.all([
+      db
+        .select({ value: count() })
+        .from(stockLevels)
+        .innerJoin(products, eq(stockLevels.productId, products.id))
+        .where(whereClause),
+      db
+        .select({
+          id: stockLevels.id,
+          stock: stockLevels.stock,
+          reorderLevel: stockLevels.reorderLevel,
+          priceOverride: stockLevels.priceOverride,
+          productId: products.id,
+          productName: products.name,
+          sku: sql<string>`coalesce(${products.sku}, ${products.barcode})`,
+          barcode: products.barcode,
+          category: products.category,
+          unit: products.unit,
+          basePrice: products.salePrice,
+        })
+        .from(stockLevels)
+        .innerJoin(products, eq(stockLevels.productId, products.id))
+        .where(whereClause)
+        .orderBy(products.name)
+        .limit(limit)
+        .offset(offset),
+      // Distinct categories for this branch
+      db
+        .selectDistinct({ category: products.category })
+        .from(stockLevels)
+        .innerJoin(products, eq(stockLevels.productId, products.id))
+        .where(and(eq(stockLevels.branchId, branchId), eq(products.tenantId, tenantId))),
+      // Low stock count across branch
+      db
+        .select({ value: count() })
+        .from(stockLevels)
+        .where(and(eq(stockLevels.branchId, branchId), sql`${stockLevels.stock} < 10`)),
+    ]);
+
+    const total = Number(countResult[0]?.value || 0);
+    const categories = ["All", ...categoriesResult.map((c) => c.category).filter(Boolean)];
+    const lowStockCount = Number(lowStockCountResult[0]?.value || 0);
+
+    res.json({
+      stock: stockList,
+      total,
+      page,
+      limit,
+      categories,
+      lowStockCount,
+    });
+  } catch (error) {
+    console.error("Store manager get stock error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

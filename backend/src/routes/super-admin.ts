@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
-import { eq, sql, and, or, ilike, ne } from "drizzle-orm";
-import { tenants, branches, tenantInvoices, tenantSubscriptions, tenantSettings, staffUsers, tenantPayments } from "../db/schema.js";
+import { eq, sql, and, or, ilike, ne, desc, gte, lte } from "drizzle-orm";
+import { tenants, branches, tenantInvoices, tenantSubscriptions, tenantSettings, staffUsers, tenantPayments, orders, platformSettings, auditLogs } from "../db/schema.js";
 import { requireAuth, AuthRequest } from "../middleware/auth.js";
 import bcrypt from "bcryptjs";
 import { createMamoPaymentLink } from "../lib/mamo-pay.js";
@@ -223,8 +223,8 @@ function calculateNextDueDate(startDate: Date, billingCycle: string, customDays?
 
 // Plan entitlements and pricing calculation
 const PLAN_DATA: Record<string, { outletLimit: number; tillLimit: number; monthlyOrderLimit: number; monthlyPrice: number; annualPricePerMonth: number }> = {
-  Starter: { outletLimit: 1, tillLimit: 3, monthlyOrderLimit: 10000, monthlyPrice: 899, annualPricePerMonth: 764 },
-  Growth: { outletLimit: 10, tillLimit: 10, monthlyOrderLimit: 150000, monthlyPrice: 1690, annualPricePerMonth: 1437 },
+  Starter: { outletLimit: 1, tillLimit: 3, monthlyOrderLimit: 10000, monthlyPrice: 400, annualPricePerMonth: 340 },
+  Growth: { outletLimit: 10, tillLimit: 10, monthlyOrderLimit: 150000, monthlyPrice: 1200, annualPricePerMonth: 1020 },
   Enterprise: { outletLimit: 999, tillLimit: 999, monthlyOrderLimit: 1000000, monthlyPrice: 4999, annualPricePerMonth: 4249 },
 };
 
@@ -1566,6 +1566,273 @@ router.get("/invoices/:id/pdf", async (req, res) => {
   } catch (error: any) {
     console.error("Get invoice PDF error:", error);
     res.status(500).json({ success: false, error: error.message || "Failed to generate invoice PDF" });
+  }
+});
+
+// ==========================================
+// PLATFORM ANALYTICS ENDPOINTS
+// ==========================================
+
+/**
+ * GET /api/super-admin/analytics/sales-volume
+ * Network-wide sales volume over time (mirrors web app getAnalyticsServerFn).
+ * Supports optional tenantId drilldown and date ranges.
+ * Platform-wide Super Admin analytics.
+ */
+router.get("/analytics/sales-volume", async (req, res) => {
+  try {
+    const { startDate, endDate, tenantId } = req.query;
+
+    let orderQuery = db
+      .select({
+        id: orders.id,
+        total: orders.total,
+        createdAt: orders.createdAt,
+        status: orders.status,
+      })
+      .from(orders);
+
+    const conditions: any[] = [];
+    if (tenantId && typeof tenantId === "string" && tenantId.trim() && tenantId !== "all") {
+      conditions.push(eq(orders.tenantId, tenantId.trim()));
+    }
+    if (startDate && typeof startDate === "string" && startDate.trim()) {
+      conditions.push(gte(orders.createdAt, new Date(startDate.trim())));
+    }
+    if (endDate && typeof endDate === "string" && endDate.trim()) {
+      conditions.push(lte(orders.createdAt, new Date(endDate.trim())));
+    }
+
+    if (conditions.length > 0) {
+      orderQuery = orderQuery.where(and(...conditions)) as any;
+    }
+
+    const allOrders = await orderQuery;
+
+    let totalGmv = 0;
+    const salesByDate: Record<string, number> = {};
+
+    allOrders.forEach((o) => {
+      const val = Number(o.total) || 0;
+      totalGmv += val;
+      const dateStr = new Date(o.createdAt).toLocaleDateString("en-US", {
+        day: "numeric",
+        month: "short",
+      });
+      salesByDate[dateStr] = (salesByDate[dateStr] || 0) + val;
+    });
+
+    const platformSeries =
+      Object.keys(salesByDate).length > 0
+        ? Object.entries(salesByDate).map(([date, sales]) => ({
+            t: date,
+            sales,
+            tills: 0,
+            api: 0,
+          }))
+        : [{ t: "Today", sales: 0, tills: 0, api: 0 }];
+
+    res.json({
+      success: true,
+      totalGmv,
+      platformSeries,
+      orderCount: allOrders.length,
+    });
+  } catch (error: any) {
+    console.error("Sales volume analytics error:", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to fetch sales volume" });
+  }
+});
+
+/**
+ * GET /api/super-admin/analytics/plan-distribution
+ * Count of tenants per plan tier (Starter, Growth, Enterprise).
+ * Platform-wide Super Admin metric.
+ */
+router.get("/analytics/plan-distribution", async (req, res) => {
+  try {
+    const allTenants = await db
+      .select({
+        plan: tenants.plan,
+        status: tenants.status,
+      })
+      .from(tenants)
+      .where(ne(tenants.status, "Archived"));
+
+    const plans: Record<string, number> = {
+      Starter: 0,
+      Growth: 0,
+      Enterprise: 0,
+    };
+    let total = 0;
+
+    allTenants.forEach((t) => {
+      total++;
+      const p = t.plan || "Starter";
+      plans[p] = (plans[p] || 0) + 1;
+    });
+
+    res.json({
+      success: true,
+      total,
+      plans,
+      breakdown: Object.entries(plans).map(([name, count]) => ({
+        plan: name,
+        count,
+        percentage: total > 0 ? Math.round((count / total) * 100) : 0,
+      })),
+    });
+  } catch (error: any) {
+    console.error("Plan distribution analytics error:", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to fetch plan distribution" });
+  }
+});
+
+/**
+ * GET /api/super-admin/analytics/activity-log
+ * Recent platform-level audit log entries across the fleet.
+ * Platform-wide Super Admin audit trail.
+ */
+router.get("/analytics/activity-log", async (req, res) => {
+  try {
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 25));
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const offset = (page - 1) * limit;
+
+    const rows = await db
+      .select({
+        id: auditLogs.id,
+        action: auditLogs.action,
+        entityType: auditLogs.entityType,
+        entityId: auditLogs.entityId,
+        details: auditLogs.details,
+        createdAt: auditLogs.createdAt,
+        tenantId: auditLogs.tenantId,
+        tenantName: tenants.name,
+        userName: staffUsers.name,
+      })
+      .from(auditLogs)
+      .leftJoin(tenants, eq(auditLogs.tenantId, tenants.id))
+      .leftJoin(staffUsers, eq(auditLogs.userId, staffUsers.id))
+      .orderBy(desc(auditLogs.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    res.json({
+      success: true,
+      logs: rows,
+    });
+  } catch (error: any) {
+    console.error("Activity log analytics error:", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to fetch activity log" });
+  }
+});
+
+// ==========================================
+// TAX & CURRENCY / PLATFORM SETTINGS ENDPOINTS
+// ==========================================
+
+/**
+ * GET /api/super-admin/platform-settings
+ * Returns platform-level configuration: VAT rate, inclusive toggle, base currency, timezone, date format.
+ * Platform-wide global configuration.
+ */
+router.get("/platform-settings", async (req, res) => {
+  try {
+    const settings = await db.select().from(platformSettings).limit(1);
+    if (settings.length > 0) {
+      const s = settings[0];
+      return res.json({
+        success: true,
+        settings: {
+          id: s.id,
+          currency: s.currency,
+          timezone: s.timezone,
+          dateFormat: s.dateFormat,
+          vatRate: s.vatRate,
+          vatInclusive: s.vatInclusive,
+          updatedAt: s.updatedAt,
+        },
+      });
+    }
+
+    return res.json({
+      success: true,
+      settings: {
+        currency: "AED",
+        timezone: "Asia/Dubai",
+        dateFormat: "DD/MM/YYYY",
+        vatRate: "5.00",
+        vatInclusive: true,
+      },
+    });
+  } catch (error: any) {
+    console.error("Get platform settings error:", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to fetch platform settings" });
+  }
+});
+
+/**
+ * PATCH /api/super-admin/platform-settings
+ * Updates platform-level configuration (VAT, currency, timezone, dateFormat).
+ * Platform-wide global configuration.
+ */
+router.patch("/platform-settings", async (req, res) => {
+  try {
+    const { currency, timezone, dateFormat, vatRate, vatInclusive } = req.body;
+    const existing = await db.select().from(platformSettings).limit(1);
+
+    const updateData: any = {
+      updatedAt: new Date(),
+    };
+    if (currency !== undefined) updateData.currency = String(currency).trim();
+    if (timezone !== undefined) updateData.timezone = String(timezone).trim();
+    if (dateFormat !== undefined) updateData.dateFormat = String(dateFormat).trim();
+    if (vatRate !== undefined) updateData.vatRate = String(vatRate).trim();
+    if (vatInclusive !== undefined) updateData.vatInclusive = Boolean(vatInclusive);
+
+    let saved;
+    if (existing.length > 0) {
+      const [updated] = await db
+        .update(platformSettings)
+        .set(updateData)
+        .where(eq(platformSettings.id, existing[0].id))
+        .returning();
+      saved = updated;
+    } else {
+      const [inserted] = await db
+        .insert(platformSettings)
+        .values({
+          currency: updateData.currency || "AED",
+          timezone: updateData.timezone || "Asia/Dubai",
+          dateFormat: updateData.dateFormat || "DD/MM/YYYY",
+          vatRate: updateData.vatRate || "5.00",
+          vatInclusive: updateData.vatInclusive ?? true,
+          ...updateData,
+        })
+        .returning();
+      saved = inserted;
+    }
+
+    try {
+      await db.insert(auditLogs).values({
+        action: "Update Platform Settings",
+        entityType: "platformSettings",
+        entityId: saved?.id || "global",
+        details: { currency, timezone, dateFormat, vatRate, vatInclusive },
+      });
+    } catch (auditErr) {
+      // Ignore audit logging error if any
+    }
+
+    res.json({
+      success: true,
+      settings: saved,
+      message: "Platform settings updated successfully",
+    });
+  } catch (error: any) {
+    console.error("Update platform settings error:", error);
+    res.status(500).json({ success: false, error: error.message || "Failed to update platform settings" });
   }
 });
 

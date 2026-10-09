@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import type { Role } from './types';
 import { ROLES } from './types';
+import { storage } from './apiClient';
 
 interface AuthState {
   role: Role | null;
@@ -8,7 +9,7 @@ interface AuthState {
   branch: string;
   user: any | null;
   signIn: (role: Role, userData?: any) => void;
-  signOut: () => void;
+  signOut: () => void | Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -36,9 +37,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setRole(r);
       if (userData) setUser(userData);
     },
-    signOut: () => {
+    signOut: async () => {
       setRole(null);
       setUser(null);
+      try {
+        await storage.clearSession();
+      } catch (err) {
+        console.error('[Storage Error] Failed to clear session on signOut', err);
+      }
     },
   }), [role, user]);
 

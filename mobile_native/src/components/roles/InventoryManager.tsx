@@ -28,6 +28,8 @@ import {
   XCircle,
   FileSpreadsheet
 } from 'lucide-react-native';
+import { EmployeeMyLeave } from '../payroll/EmployeeMyLeave';
+import { EmployeeMyPayslips } from '../payroll/EmployeeMyPayslips';
 
 export function InventoryHome() {
   const { branch } = useAuth();
@@ -85,7 +87,7 @@ export function InventoryHome() {
 
       const res = await exportOutOfStock(branchIdToExport, outOfStockOnly);
       if (!res || !res.success || !res.rows) {
-        showToast(res?.error || 'Failed to export inventory records', 'error');
+        showToast((res as any)?.error || 'Failed to export inventory records', 'error');
         return;
       }
 
@@ -447,6 +449,10 @@ export function InventoryHome() {
               <Text style={styles.noDataText}>No inventory matches your filters.</Text>
             )}
           </View>
+
+          {/* Employee Self-Service: My Leave & My Payslips */}
+          <EmployeeMyLeave />
+          <EmployeeMyPayslips />
         </ScrollView>
       </ScreenBody>
 
