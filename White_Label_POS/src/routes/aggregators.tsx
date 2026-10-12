@@ -753,15 +753,6 @@ function Aggregators() {
                     )
                   ) : null}
 
-                  <Button
-                    variant="outline"
-                    className="rounded-xl font-bold border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900 hover:border-slate-400 shadow-2xs transition-all text-xs sm:text-sm flex-1 sm:flex-initial"
-                    onClick={() => handlePreviewCsv(activeConnection.id)}
-                    disabled={isLoadingPreview}
-                  >
-                    <FileText className="mr-1.5 h-4 w-4 text-slate-600" />
-                    {isLoadingPreview ? "Generating..." : "Preview CSV"}
-                  </Button>
 
                   <div
                     className="flex-1 sm:flex-initial"
