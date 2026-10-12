@@ -1401,7 +1401,7 @@ function Aggregators() {
               size="sm"
               className="rounded-xl text-xs font-black bg-[#39ff14] hover:bg-[#32e012] text-slate-950 shadow-md shadow-[#39ff14]/30 hover:scale-[1.02] active:scale-[0.98] transition-all"
               onClick={handleSendToTalabatFromModal}
-              disabled={isSyncing || (!syncSummary && !csvPreview) || isLoadingPreview || displayData.recordCount === 0}
+              disabled={isSyncing || (!syncSummary && !csvPreview) || isLoadingPreview || (syncSummary?.recordCount ?? csvPreview?.recordCount) === 0}
             >
               {isSyncing ? (
                 <>
