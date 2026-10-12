@@ -109,6 +109,8 @@ function Aggregators() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [timeWindow, setTimeWindow] = useState<"all" | "1h" | "24h" | "7d" | "30d">("all");
+  const [filterProductCount, setFilterProductCount] = useState<number | null>(null);
+  const [isLoadingFilterCount, setIsLoadingFilterCount] = useState(false);
 
   function getWindowStartDate(window: "all" | "1h" | "24h" | "7d" | "30d"): string | null {
     const now = Date.now();
@@ -193,6 +195,40 @@ function Aggregators() {
   }
 
   const activeConnection = connections.find((c) => c.id === selectedConnId) || connections[0];
+
+  useEffect(() => {
+    const connId = selectedConnId || activeConnection?.id;
+    if (!connId) {
+      setFilterProductCount(null);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoadingFilterCount(true);
+    const windowStart = getWindowStartDate(timeWindow);
+
+    getSyncSummaryServerFn({ data: { connectionId: connId, windowStart } })
+      .then((res) => {
+        if (isMounted) {
+          if (res?.success && typeof res.recordCount === "number") {
+            setFilterProductCount(res.recordCount);
+          } else {
+            setFilterProductCount(null);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to fetch product count for filter:", err);
+        if (isMounted) setFilterProductCount(null);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingFilterCount(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedConnId, activeConnection?.id, timeWindow]);
 
   async function handlePreviewCsv(connId?: string) {
     const targetId = connId || selectedConnId || activeConnection?.id;
@@ -699,6 +735,24 @@ function Aggregators() {
                     </select>
                   </div>
 
+                  {/* Changes Count / Status next to filter */}
+                  {isLoadingFilterCount ? (
+                    <span className="text-xs font-medium text-slate-400 flex items-center gap-1.5 px-2 py-1 bg-slate-50 border border-slate-200/80 rounded-xl">
+                      <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
+                      <span>Checking changes...</span>
+                    </span>
+                  ) : filterProductCount !== null ? (
+                    filterProductCount === 0 ? (
+                      <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200/90 px-2.5 py-1.5 rounded-xl shadow-2xs">
+                        No changes in this period
+                      </span>
+                    ) : (
+                      <span className="text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200/90 px-2.5 py-1.5 rounded-xl shadow-2xs">
+                        <strong className="text-slate-900 font-bold">{filterProductCount.toLocaleString()}</strong> products will be sent
+                      </span>
+                    )
+                  ) : null}
+
                   <Button
                     variant="outline"
                     className="rounded-xl font-bold border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900 hover:border-slate-400 shadow-2xs transition-all text-xs sm:text-sm flex-1 sm:flex-initial"
@@ -709,18 +763,27 @@ function Aggregators() {
                     {isLoadingPreview ? "Generating..." : "Preview CSV"}
                   </Button>
 
-                  <div className="flex-1 sm:flex-initial" title={!activeConnection.isActive ? "Sync is disabled until this connection is verified and activated." : ""}>
+                  <div
+                    className="flex-1 sm:flex-initial"
+                    title={
+                      !activeConnection.isActive
+                        ? "Sync is disabled until this connection is verified and activated."
+                        : filterProductCount === 0
+                        ? "No changes in this period to send."
+                        : ""
+                    }
+                  >
                     <Button
                       className={`rounded-xl font-black border-0 shadow-md transition-all text-xs sm:text-sm w-full sm:w-auto ${
-                        !activeConnection.isActive
+                        !activeConnection.isActive || filterProductCount === 0
                           ? "bg-slate-200 text-slate-400 cursor-not-allowed shadow-none"
                           : "bg-[#39ff14] hover:bg-[#32e012] text-slate-950 shadow-[#39ff14]/35 hover:shadow-lg hover:shadow-[#39ff14]/45 hover:scale-[1.02] active:scale-[0.98]"
                       }`}
-                      disabled={!activeConnection.isActive || isSyncing || isLoadingPreview}
+                      disabled={!activeConnection.isActive || isSyncing || isLoadingPreview || filterProductCount === 0}
                       onClick={handleOpenSyncModal}
                     >
                       <UploadCloud className="mr-1.5 h-4 w-4" />
-                      {isLoadingPreview ? "Preparing..." : "Sync Now"}
+                      {isLoadingPreview ? "Preparing..." : "Send Now"}
                     </Button>
                   </div>
                 </div>
@@ -1338,7 +1401,7 @@ function Aggregators() {
               size="sm"
               className="rounded-xl text-xs font-black bg-[#39ff14] hover:bg-[#32e012] text-slate-950 shadow-md shadow-[#39ff14]/30 hover:scale-[1.02] active:scale-[0.98] transition-all"
               onClick={handleSendToTalabatFromModal}
-              disabled={isSyncing || (!syncSummary && !csvPreview) || isLoadingPreview}
+              disabled={isSyncing || (!syncSummary && !csvPreview) || isLoadingPreview || displayData.recordCount === 0}
             >
               {isSyncing ? (
                 <>

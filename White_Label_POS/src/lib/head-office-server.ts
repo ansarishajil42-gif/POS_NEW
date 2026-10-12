@@ -2985,7 +2985,7 @@ export const markTenantInvoicesSeenFn = createServerFn({ method: "POST" })
   });
 
 export const getExistingProductIdentifiersFn = createServerFn({ method: "POST" })
-  .validator((d: { branchIds?: string[]; barcodes?: string[] }) => d)
+  .validator((d: { branchIds?: string[]; barcodes?: string[]; skus?: string[] }) => d)
   .handler(async ({ data }) => {
     const sessionRes = await getSessionServerFn();
     if (
@@ -3011,6 +3011,7 @@ export const getExistingProductIdentifiersFn = createServerFn({ method: "POST" }
     const validBranchIds = tenantBranches.map((b) => b.id);
 
     const rawBarcodes = Array.isArray(data?.barcodes) ? data.barcodes : undefined;
+    const rawSkus = Array.isArray(data?.skus) ? data.skus : undefined;
     let existingProds: {
       id: string;
       name: string;
@@ -3019,11 +3020,15 @@ export const getExistingProductIdentifiersFn = createServerFn({ method: "POST" }
       category: string | null;
     }[] = [];
 
-    if (rawBarcodes !== undefined) {
+    if (rawBarcodes !== undefined || rawSkus !== undefined) {
       const cleanBarcodes = Array.from(
-        new Set(rawBarcodes.map((b) => String(b || "").trim()).filter(Boolean))
+        new Set((rawBarcodes || []).map((b) => String(b || "").trim()).filter(Boolean))
       );
-      if (cleanBarcodes.length === 0) {
+      const cleanSkus = Array.from(
+        new Set((rawSkus || []).map((s) => String(s || "").trim()).filter(Boolean))
+      );
+
+      if (cleanBarcodes.length === 0 && cleanSkus.length === 0) {
         return {
           success: true,
           existingProducts: [],
@@ -3032,6 +3037,20 @@ export const getExistingProductIdentifiersFn = createServerFn({ method: "POST" }
           branches: tenantBranches,
         };
       }
+
+      const orConditions = [];
+      if (cleanBarcodes.length > 0) {
+        orConditions.push(inArray(products.barcode, cleanBarcodes));
+      }
+      if (cleanSkus.length > 0) {
+        orConditions.push(
+          inArray(
+            sql`lower(trim(${products.sku}))`,
+            cleanSkus.map((s) => s.toLowerCase()),
+          ),
+        );
+      }
+
       existingProds = await db
         .select({
           id: products.id,
@@ -3044,7 +3063,7 @@ export const getExistingProductIdentifiersFn = createServerFn({ method: "POST" }
         .where(
           and(
             eq(products.tenantId, tenantId),
-            inArray(products.barcode, cleanBarcodes)
+            orConditions.length === 1 ? orConditions[0] : or(...orConditions),
           )
         );
     } else {
@@ -3095,15 +3114,13 @@ export const getExistingProductIdentifiersFn = createServerFn({ method: "POST" }
 
     return {
       success: true,
-      existingProducts: existingProds
-        .filter((p) => p.barcode && p.barcode.trim())
-        .map((p) => ({
-          id: p.id,
-          name: p.name,
-          barcode: p.barcode!.trim(),
-          sku: p.sku ? p.sku.trim() : "",
-          existingBranchIds: productBranchesMap.get(p.id) || [],
-        })),
+      existingProducts: existingProds.map((p) => ({
+        id: p.id,
+        name: p.name,
+        barcode: p.barcode ? p.barcode.trim() : "",
+        sku: p.sku ? p.sku.trim() : "",
+        existingBranchIds: productBranchesMap.get(p.id) || [],
+      })),
       existingBarcodes: Array.from(barcodesSet),
       existingSkus: Array.from(skusSet),
       branches: tenantBranches,
@@ -3188,6 +3205,7 @@ export const bulkImportProductsFn = createServerFn({ method: "POST" })
         stock?: number | null;
       }[];
       branchIds: string[];
+      batchNumber?: number;
     }) => d,
   )
   .handler(async ({ data }) => {
@@ -3253,6 +3271,7 @@ export const bulkImportProductsFn = createServerFn({ method: "POST" })
     // Collect candidate identifiers to query existing products in ONE batch
     const candidateProductIds = new Set<string>();
     const candidateBarcodes = new Set<string>();
+    const candidateSkus = new Set<string>();
 
     for (const item of data.products) {
       if (item.action === "skip") continue;
@@ -3263,17 +3282,30 @@ export const bulkImportProductsFn = createServerFn({ method: "POST" })
         const bc = String(item.barcode).trim();
         if (bc) candidateBarcodes.add(bc);
       }
+      if (item.sku) {
+        const skuVal = String(item.sku).trim();
+        if (skuVal) candidateSkus.add(skuVal);
+      }
     }
 
+    const tLookupStart = performance.now();
     const existingProductsList: (typeof products.$inferSelect)[] = [];
 
-    if (candidateProductIds.size > 0 || candidateBarcodes.size > 0) {
+    if (candidateProductIds.size > 0 || candidateBarcodes.size > 0 || candidateSkus.size > 0) {
       const conditions = [];
       if (candidateProductIds.size > 0) {
         conditions.push(inArray(products.id, Array.from(candidateProductIds)));
       }
       if (candidateBarcodes.size > 0) {
         conditions.push(inArray(products.barcode, Array.from(candidateBarcodes)));
+      }
+      if (candidateSkus.size > 0) {
+        conditions.push(
+          inArray(
+            sql`lower(trim(${products.sku}))`,
+            Array.from(candidateSkus).map((s) => s.toLowerCase()),
+          ),
+        );
       }
 
       const fetched = await db
@@ -3290,11 +3322,15 @@ export const bulkImportProductsFn = createServerFn({ method: "POST" })
 
     const existingById = new Map<string, typeof products.$inferSelect>();
     const existingByBarcode = new Map<string, typeof products.$inferSelect>();
+    const existingBySku = new Map<string, typeof products.$inferSelect>();
 
     for (const p of existingProductsList) {
       existingById.set(p.id, p);
       if (p.barcode) {
         existingByBarcode.set(p.barcode.trim(), p);
+      }
+      if (p.sku) {
+        existingBySku.set(p.sku.trim().toLowerCase(), p);
       }
     }
 
@@ -3328,6 +3364,7 @@ export const bulkImportProductsFn = createServerFn({ method: "POST" })
         }
       }
     }
+    const lookupMs = Math.round(performance.now() - tLookupStart);
 
     let createdCount = 0;
     let updatedCount = 0;
@@ -3335,309 +3372,235 @@ export const bulkImportProductsFn = createServerFn({ method: "POST" })
     let failedCount = 0;
     const failedRows: { barcode?: string; name?: string; reason: string }[] = [];
 
-    async function executeItemsChunk(
-      items: typeof data.products,
-      tx: any,
-    ): Promise<{ created: number; updated: number; skipped: number }> {
-      let chunkCreated = 0;
-      let chunkUpdated = 0;
-      let chunkSkipped = 0;
+    const toInsert: {
+      item: typeof data.products[0];
+      insertProduct: any;
+      targetStock: number;
+    }[] = [];
 
-      const toInsert: {
-        item: typeof data.products[0];
-        insertProduct: any;
-        targetStock: number;
-      }[] = [];
+    const toUpdate: {
+      item: typeof data.products[0];
+      updateProduct: any;
+      stockUpdates: { id: string; stock: number }[];
+      stockInserts: { productId: string; branchId: string; stock: number; reorderLevel: number }[];
+    }[] = [];
 
-      const toUpdate: {
-        item: typeof data.products[0];
-        updateProduct: any;
-        stockUpdates: { id: string; stock: number }[];
-        stockInserts: { productId: string; branchId: string; stock: number; reorderLevel: number }[];
-      }[] = [];
-
-      for (const item of items) {
-        const action = item.action || "create";
-        if (action === "skip") {
-          chunkSkipped++;
-          continue;
-        }
-
-        const nameStr = (item.name || "").trim();
-        if (!nameStr) {
-          throw new Error("Missing product name");
-        }
-
-        const retailPriceNum = cleanPrice(item.salePrice);
-        if (isNaN(retailPriceNum) || retailPriceNum <= 0) {
-          throw new Error("Invalid sale price (must be > 0)");
-        }
-
-        const barcodeVal = item.barcode ? String(item.barcode).trim() : "";
-
-        if (action === "update") {
-          let existing = item.existingProductId ? existingById.get(item.existingProductId) : undefined;
-          if (!existing && barcodeVal) {
-            existing = existingByBarcode.get(barcodeVal);
-          }
-          if (!existing) {
-            throw new Error("Existing product not found");
-          }
-
-          const salePriceStr = formatSalePrice(item.salePrice);
-          const categoryStr = (item.category || "").trim() || "Uncategorized";
-          const newSkuTrimmed = item.sku ? String(item.sku).trim() : null;
-          let finalSku = existing.sku;
-          if (!existing.sku || (newSkuTrimmed && existing.sku.trim().toLowerCase() === newSkuTrimmed.toLowerCase())) {
-            finalSku = newSkuTrimmed || existing.sku;
-          }
-
-          const isStockFilled =
-            item.stock !== undefined && item.stock !== null && typeof item.stock === "number" && !isNaN(item.stock);
-          const targetStock = isStockFilled ? Math.max(0, Math.floor(item.stock!)) : 0;
-
-          const stockUpdates: { id: string; stock: number }[] = [];
-          const stockInserts: { productId: string; branchId: string; stock: number; reorderLevel: number }[] = [];
-
-          for (const bId of validBranchIds) {
-            const existingLevel = existingStockLevelsMap.get(`${existing.id}_${bId}`);
-            if (existingLevel) {
-              if (isStockFilled) {
-                stockUpdates.push({ id: existingLevel.id, stock: targetStock });
-              }
-            } else {
-              stockInserts.push({
-                productId: existing.id,
-                branchId: bId,
-                stock: targetStock,
-                reorderLevel: 10,
-              });
-            }
-          }
-
-          toUpdate.push({
-            item,
-            updateProduct: {
-              id: existing.id,
-              name: nameStr,
-              salePrice: salePriceStr,
-              category: categoryStr,
-              sku: finalSku,
-            },
-            stockUpdates,
-            stockInserts,
-          });
-          continue;
-        }
-
-        // action === "create"
-        const salePriceStr = formatSalePrice(item.salePrice);
-        let parsedCost = "0.00";
-        if (item.costPrice !== undefined && item.costPrice !== null && item.costPrice !== "") {
-          const costNum = cleanPrice(item.costPrice);
-          if (!isNaN(costNum) && costNum >= 0) {
-            parsedCost = costNum.toFixed(2);
-          }
-        }
-        const categoryStr = (item.category || "").trim() || "Uncategorized";
-        const barcodeStr = barcodeVal || null;
-        const skuStr = item.sku ? String(item.sku).trim() : null;
-        const targetStock =
-          item.stock !== undefined && item.stock !== null && typeof item.stock === "number" && !isNaN(item.stock)
-            ? Math.max(0, Math.floor(item.stock))
-            : 0;
-
-        toInsert.push({
-          item,
-          insertProduct: {
-            tenantId,
-            name: nameStr,
-            barcode: barcodeStr,
-            sku: skuStr,
-            category: categoryStr,
-            unit: (item.unit || "").trim().toUpperCase() === "KG" ? "KG" : "PCS",
-            costPrice: parsedCost,
-            salePrice: salePriceStr,
-            isBatchTracked: Boolean(item.isBatchTracked),
-            isExpiryTracked: Boolean(item.isBatchTracked),
-          },
-          targetStock,
-        });
+    for (const item of data.products) {
+      const action = item.action || "create";
+      if (action === "skip") {
+        skippedCount++;
+        continue;
       }
 
-      // 1. Multi-row INSERT products and stock levels
-      if (toInsert.length > 0) {
-        const allStockToInsert: {
-          productId: string;
-          branchId: string;
-          stock: number;
-          reorderLevel: number;
-        }[] = [];
+      const nameStr = (item.name || "").trim();
+      if (!nameStr) {
+        throw new Error("Missing product name");
+      }
 
-        const PRODUCT_INSERT_CHUNK = 2000;
-        for (let i = 0; i < toInsert.length; i += PRODUCT_INSERT_CHUNK) {
-          const chunk = toInsert.slice(i, i + PRODUCT_INSERT_CHUNK);
-          const insertedRows = await tx
-            .insert(products)
-            .values(chunk.map((c) => c.insertProduct))
-            .returning({ id: products.id, barcode: products.barcode, sku: products.sku });
+      const retailPriceNum = cleanPrice(item.salePrice);
+      if (isNaN(retailPriceNum) || retailPriceNum <= 0) {
+        throw new Error("Invalid sale price (must be > 0)");
+      }
 
-          for (let j = 0; j < insertedRows.length; j++) {
-            const inserted = insertedRows[j];
-            const orig = chunk[j];
-            if (!inserted || !orig) continue;
+      const barcodeVal = item.barcode ? String(item.barcode).trim() : "";
 
-            // Keep cache up to date
-            existingById.set(inserted.id, {
-              ...orig.insertProduct,
-              id: inserted.id,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            } as any);
-            if (orig.insertProduct.barcode) {
-              existingByBarcode.set(orig.insertProduct.barcode.trim(), {
-                ...orig.insertProduct,
-                id: inserted.id,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-              } as any);
-            }
+      const skuVal = item.sku ? String(item.sku).trim().toLowerCase() : "";
 
-            for (const bId of validBranchIds) {
-              allStockToInsert.push({
-                productId: inserted.id,
-                branchId: bId,
-                stock: orig.targetStock,
-                reorderLevel: 10,
-              });
-            }
-          }
+      if (action === "update") {
+        let existing = item.existingProductId ? existingById.get(item.existingProductId) : undefined;
+        if (!existing && barcodeVal) {
+          existing = existingByBarcode.get(barcodeVal);
+        }
+        if (!existing && skuVal) {
+          existing = existingBySku.get(skuVal);
+        }
+        if (!existing) {
+          throw new Error("Existing product not found");
         }
 
-        const STOCK_INSERT_CHUNK = 5000;
-        for (let i = 0; i < allStockToInsert.length; i += STOCK_INSERT_CHUNK) {
-          const chunk = allStockToInsert.slice(i, i + STOCK_INSERT_CHUNK);
-          await tx.insert(stockLevels).values(chunk);
-          for (const lvl of chunk) {
-            existingStockLevelsMap.set(`${lvl.productId}_${lvl.branchId}`, {
-              id: "temp",
-              stock: lvl.stock,
+        const salePriceStr = formatSalePrice(item.salePrice);
+        const categoryStr = (item.category || "").trim() || "Uncategorized";
+        const newSkuTrimmed = item.sku ? String(item.sku).trim() : null;
+        let finalSku = existing.sku;
+        if (!existing.sku || (newSkuTrimmed && existing.sku.trim().toLowerCase() === newSkuTrimmed.toLowerCase())) {
+          finalSku = newSkuTrimmed || existing.sku;
+        }
+
+        const isStockFilled =
+          item.stock !== undefined && item.stock !== null && typeof item.stock === "number" && !isNaN(item.stock);
+        const targetStock = isStockFilled ? Math.max(0, Math.floor(item.stock!)) : 0;
+
+        const stockUpdates: { id: string; stock: number }[] = [];
+        const stockInserts: { productId: string; branchId: string; stock: number; reorderLevel: number }[] = [];
+
+        for (const bId of validBranchIds) {
+          const existingLevel = existingStockLevelsMap.get(`${existing.id}_${bId}`);
+          if (existingLevel) {
+            if (isStockFilled) {
+              stockUpdates.push({ id: existingLevel.id, stock: targetStock });
+            }
+          } else {
+            stockInserts.push({
+              productId: existing.id,
+              branchId: bId,
+              stock: targetStock,
+              reorderLevel: 10,
             });
           }
         }
 
-        chunkCreated = toInsert.length;
+        toUpdate.push({
+          item,
+          updateProduct: {
+            id: existing.id,
+            name: nameStr,
+            salePrice: salePriceStr,
+            category: categoryStr,
+            sku: finalSku,
+          },
+          stockUpdates,
+          stockInserts,
+        });
+        continue;
       }
 
-      // 2. Multi-row UPDATE products and stock levels
-      if (toUpdate.length > 0) {
-        const PRODUCT_UPDATE_CHUNK = 2000;
-        for (let i = 0; i < toUpdate.length; i += PRODUCT_UPDATE_CHUNK) {
-          const chunk = toUpdate.slice(i, i + PRODUCT_UPDATE_CHUNK);
-          const valueClauses = chunk.map(
-            (c) =>
-              sql`(${c.updateProduct.id}::uuid, ${c.updateProduct.name}::text, ${c.updateProduct.salePrice}::numeric, ${c.updateProduct.category}::text, ${c.updateProduct.sku}::text)`,
-          );
-          await tx.execute(sql`
-            UPDATE products AS p
-            SET
-              name = v.name,
-              sale_price = v.sale_price,
-              category = v.category,
-              sku = v.sku,
-              updated_at = NOW()
-            FROM (VALUES ${sql.join(valueClauses, sql`, `)}) AS v(id, name, sale_price, category, sku)
-            WHERE p.id = v.id AND p.tenant_id = ${tenantId}::uuid
-          `);
+      // action === "create"
+      const salePriceStr = formatSalePrice(item.salePrice);
+      let parsedCost = "0.00";
+      if (item.costPrice !== undefined && item.costPrice !== null && item.costPrice !== "") {
+        const costNum = cleanPrice(item.costPrice);
+        if (!isNaN(costNum) && costNum >= 0) {
+          parsedCost = costNum.toFixed(2);
         }
-
-        const allStockUpdates = toUpdate.flatMap((u) => u.stockUpdates);
-        const STOCK_UPDATE_CHUNK = 5000;
-        for (let i = 0; i < allStockUpdates.length; i += STOCK_UPDATE_CHUNK) {
-          const chunk = allStockUpdates.slice(i, i + STOCK_UPDATE_CHUNK);
-          const valueClauses = chunk.map((s) => sql`(${s.id}::uuid, ${s.stock}::integer)`);
-          await tx.execute(sql`
-            UPDATE stock_levels AS s
-            SET
-              stock = v.stock,
-              updated_at = NOW()
-            FROM (VALUES ${sql.join(valueClauses, sql`, `)}) AS v(id, stock)
-            WHERE s.id = v.id
-          `);
-        }
-
-        const allStockInserts = toUpdate.flatMap((u) => u.stockInserts);
-        for (let i = 0; i < allStockInserts.length; i += STOCK_UPDATE_CHUNK) {
-          const chunk = allStockInserts.slice(i, i + STOCK_UPDATE_CHUNK);
-          await tx.insert(stockLevels).values(chunk);
-        }
-
-        chunkUpdated = toUpdate.length;
       }
+      const categoryStr = (item.category || "").trim() || "Uncategorized";
+      const barcodeStr = barcodeVal || null;
+      const skuStr = item.sku ? String(item.sku).trim() : null;
+      const targetStock =
+        item.stock !== undefined && item.stock !== null && typeof item.stock === "number" && !isNaN(item.stock)
+          ? Math.max(0, Math.floor(item.stock))
+          : 0;
 
-      return { created: chunkCreated, updated: chunkUpdated, skipped: chunkSkipped };
+      toInsert.push({
+        item,
+        insertProduct: {
+          tenantId,
+          name: nameStr,
+          barcode: barcodeStr,
+          sku: skuStr,
+          category: categoryStr,
+          unit: (item.unit || "").trim().toUpperCase() === "KG" ? "KG" : "PCS",
+          costPrice: parsedCost,
+          salePrice: salePriceStr,
+          isBatchTracked: Boolean(item.isBatchTracked),
+          isExpiryTracked: Boolean(item.isBatchTracked),
+        },
+        targetStock,
+      });
     }
 
     try {
-      // Step 1: Try executing the full batch in a single transaction (fast path)
-      let fullBatchSucceeded = false;
-      try {
-        const fullRes = await db.transaction(async (tx) => {
-          return await executeItemsChunk(data.products, tx);
-        });
-        createdCount = fullRes.created;
-        updatedCount = fullRes.updated;
-        skippedCount = fullRes.skipped;
-        fullBatchSucceeded = true;
-      } catch (batchErr: any) {
-        const realBatchReason = extractRealDbError(batchErr);
-        console.warn(`[bulkImport] Batch failed (${realBatchReason}), retrying in sub-chunks of 500`);
-      }
+      let insertMs = 0;
+      let updateMs = 0;
+      let stockMs = 0;
 
-      // Step 2 & 3: If batch failed, retry in sub-chunks of 500; if a sub-chunk fails, insert rows 1 by 1
-      if (!fullBatchSucceeded) {
-        const SUB_CHUNK_SIZE = 500;
-        for (let i = 0; i < data.products.length; i += SUB_CHUNK_SIZE) {
-          const subChunk = data.products.slice(i, i + SUB_CHUNK_SIZE);
-          try {
-            const subRes = await db.transaction(async (tx) => {
-              return await executeItemsChunk(subChunk, tx);
-            });
-            createdCount += subRes.created;
-            updatedCount += subRes.updated;
-            skippedCount += subRes.skipped;
-          } catch (subErr: any) {
-            const realSubReason = extractRealDbError(subErr);
-            console.warn(
-              `[bulkImport] Sub-chunk ${Math.floor(i / SUB_CHUNK_SIZE) + 1} failed (${realSubReason}), inserting rows one by one`,
-            );
+      await db.transaction(async (tx) => {
+        // 1. Multi-row INSERT products (chunks of 1000) & multi-row INSERT stock_levels
+        if (toInsert.length > 0) {
+          const tInsertStart = performance.now();
+          const allStockToInsert: {
+            productId: string;
+            branchId: string;
+            stock: number;
+            reorderLevel: number;
+          }[] = [];
 
-            // Step 3: Insert rows one by one so only bad rows fail and all other rows still import
-            for (const singleItem of subChunk) {
-              if (singleItem.action === "skip") {
-                skippedCount++;
-                continue;
-              }
-              try {
-                const singleRes = await db.transaction(async (tx) => {
-                  return await executeItemsChunk([singleItem], tx);
-                });
-                createdCount += singleRes.created;
-                updatedCount += singleRes.updated;
-                skippedCount += singleRes.skipped;
-              } catch (singleErr: any) {
-                const reason = extractRealDbError(singleErr);
-                failedCount++;
-                failedRows.push({
-                  barcode: singleItem.barcode ? String(singleItem.barcode).trim() : undefined,
-                  name: singleItem.name || "Unknown",
-                  reason,
+          const PRODUCT_INSERT_CHUNK = 1000;
+          for (let i = 0; i < toInsert.length; i += PRODUCT_INSERT_CHUNK) {
+            const chunk = toInsert.slice(i, i + PRODUCT_INSERT_CHUNK);
+            const insertedRows = await tx
+              .insert(products)
+              .values(chunk.map((c) => c.insertProduct))
+              .returning({ id: products.id, barcode: products.barcode, sku: products.sku });
+
+            for (let j = 0; j < insertedRows.length; j++) {
+              const inserted = insertedRows[j];
+              const orig = chunk[j];
+              if (!inserted || !orig) continue;
+
+              for (const bId of validBranchIds) {
+                allStockToInsert.push({
+                  productId: inserted.id,
+                  branchId: bId,
+                  stock: orig.targetStock,
+                  reorderLevel: 10,
                 });
               }
             }
           }
+          insertMs = Math.round(performance.now() - tInsertStart);
+
+          const tStockInsertStart = performance.now();
+          const STOCK_INSERT_CHUNK = 1000;
+          for (let i = 0; i < allStockToInsert.length; i += STOCK_INSERT_CHUNK) {
+            const chunk = allStockToInsert.slice(i, i + STOCK_INSERT_CHUNK);
+            await tx.insert(stockLevels).values(chunk);
+          }
+          stockMs += Math.round(performance.now() - tStockInsertStart);
+
+          createdCount = toInsert.length;
         }
-      }
+
+        // 2. ONE UPDATE products ... FROM (VALUES ...) per 1000 updates, ONE stock UPDATE ... FROM (VALUES ...) per 1000
+        if (toUpdate.length > 0) {
+          const tUpdateStart = performance.now();
+          const PRODUCT_UPDATE_CHUNK = 1000;
+          for (let i = 0; i < toUpdate.length; i += PRODUCT_UPDATE_CHUNK) {
+            const chunk = toUpdate.slice(i, i + PRODUCT_UPDATE_CHUNK);
+            const valueClauses = chunk.map(
+              (c) =>
+                sql`(${c.updateProduct.id}::uuid, ${c.updateProduct.name}::text, ${c.updateProduct.salePrice}::numeric, ${c.updateProduct.category}::text, ${c.updateProduct.sku}::text)`,
+            );
+            await tx.execute(sql`
+              UPDATE products AS p
+              SET
+                name = v.name,
+                sale_price = v.sale_price,
+                category = v.category,
+                sku = v.sku,
+                updated_at = NOW()
+              FROM (VALUES ${sql.join(valueClauses, sql`, `)}) AS v(id, name, sale_price, category, sku)
+              WHERE p.id = v.id AND p.tenant_id = ${tenantId}::uuid
+            `);
+          }
+          updateMs = Math.round(performance.now() - tUpdateStart);
+
+          const tStockUpdateStart = performance.now();
+          const allStockUpdates = toUpdate.flatMap((u) => u.stockUpdates);
+          const STOCK_CHUNK = 1000;
+          for (let i = 0; i < allStockUpdates.length; i += STOCK_CHUNK) {
+            const chunk = allStockUpdates.slice(i, i + STOCK_CHUNK);
+            const valueClauses = chunk.map((s) => sql`(${s.id}::uuid, ${s.stock}::integer)`);
+            await tx.execute(sql`
+              UPDATE stock_levels AS s
+              SET
+                stock = v.stock,
+                updated_at = NOW()
+              FROM (VALUES ${sql.join(valueClauses, sql`, `)}) AS v(id, stock)
+              WHERE s.id = v.id
+            `);
+          }
+
+          const allStockInserts = toUpdate.flatMap((u) => u.stockInserts);
+          for (let i = 0; i < allStockInserts.length; i += STOCK_CHUNK) {
+            const chunk = allStockInserts.slice(i, i + STOCK_CHUNK);
+            await tx.insert(stockLevels).values(chunk);
+          }
+          stockMs += Math.round(performance.now() - tStockUpdateStart);
+
+          updatedCount = toUpdate.length;
+        }
+      });
 
       // Audit log: ONE entry per batch
       await logAuditAction({
@@ -3656,7 +3619,10 @@ export const bulkImportProductsFn = createServerFn({ method: "POST" })
       });
 
       const totalMs = Math.round(performance.now() - tBatchStart);
-      console.log(`[perf] import batch: total ${totalMs}ms (created: ${createdCount}, updated: ${updatedCount}, skipped: ${skippedCount}, failed: ${failedCount})`);
+      const batchNumber = (data as any).batchNumber ?? 1;
+      console.log(
+        `[perf] import batch ${batchNumber}: lookup ${lookupMs}ms, insert ${insertMs}ms, update ${updateMs}ms, stock ${stockMs}ms, total ${totalMs}ms`,
+      );
 
       return {
         success: true,

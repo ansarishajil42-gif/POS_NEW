@@ -9,6 +9,11 @@ import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 export default defineConfig({
     nitro: { 
         preset: "vercel",
+        vercel: {
+            functions: {
+                maxDuration: 60,
+            },
+        },
         externals: {
             // Force Nitro/Vercel to treat these as external Node modules 
             // and include them in the final deployment bundle

@@ -637,6 +637,12 @@ function HeadOffice() {
     "all" | "new" | "add_to_branch" | "exists_update" | "exists_skip" | "invalid"
   >("all");
 
+  // Conflict Resolution Modal States
+  const [conflictModalOpen, setConflictModalOpen] = useState(false);
+  const [conflictItems, setConflictItems] = useState<any[]>([]);
+  const [conflictChoices, setConflictChoices] = useState<Record<number, "update" | "remove">>({});
+  const [conflictPage, setConflictPage] = useState(1);
+
   // Platform Pricing States
   const [platformPricingOpen, setPlatformPricingOpen] = useState(false);
   const [salesChannelsList, setSalesChannelsList] = useState<any[]>([]);
@@ -952,10 +958,15 @@ function HeadOffice() {
     }
 
     const primaryBarcodeMap = new Map<string, any>();
+    const primarySkuMap = new Map<string, any>();
     for (const p of existingProds || []) {
       if (p && p.barcode) {
         const bStr = String(p.barcode).trim().toLowerCase();
         if (bStr) primaryBarcodeMap.set(bStr, p);
+      }
+      if (p && p.sku) {
+        const sStr = String(p.sku).trim().toLowerCase();
+        if (sStr) primarySkuMap.set(sStr, p);
       }
     }
 
@@ -977,7 +988,9 @@ function HeadOffice() {
       }
 
       const cleanBarcode = r.barcode ? String(r.barcode).trim().toLowerCase() : "";
-      const matched = cleanBarcode ? primaryBarcodeMap.get(cleanBarcode) : null;
+      const cleanSku = r.sku ? String(r.sku).trim().toLowerCase() : "";
+      const matched = (cleanBarcode ? primaryBarcodeMap.get(cleanBarcode) : null) ||
+                      (cleanSku ? primarySkuMap.get(cleanSku) : null);
 
       if (matched) {
         const existingInSelectedBranches = (matched.existingBranchIds || []).filter((bId: string) =>
@@ -986,6 +999,7 @@ function HeadOffice() {
 
         const updating = rowChoices[r.rowNumber] !== undefined ? rowChoices[r.rowNumber] : globalUpdateChoice;
         const classification = updating ? ("exists_update" as const) : ("exists_skip" as const);
+        const matchLabel = matched.barcode === r.barcode ? `Barcode ${r.barcode}` : `SKU ${r.sku}`;
 
         if (existingInSelectedBranches.length > 0) {
           const branchNames = existingInSelectedBranches
@@ -998,8 +1012,8 @@ function HeadOffice() {
             existingProductId: matched.id,
             matchedExistingName: matched.name,
             note: updating
-              ? `Barcode ${r.barcode} already exists in ${branchNames} — will update`
-              : `Barcode ${r.barcode} already exists in ${branchNames} — will skip`,
+              ? `${matchLabel} already exists in ${branchNames} — will update`
+              : `${matchLabel} already exists in ${branchNames} — will skip`,
           };
         } else {
           // Exists in tenant but in NONE of the selected branches
@@ -1010,8 +1024,8 @@ function HeadOffice() {
             existingProductId: matched.id,
             matchedExistingName: matched.name,
             note: updating
-              ? `Barcode ${r.barcode} exists in other branch — will be added to ${selectedBranchNamesStr || "selected branches"} — will update`
-              : `Barcode ${r.barcode} exists on website — will skip`,
+              ? `${matchLabel} exists in other branch — will be added to ${selectedBranchNamesStr || "selected branches"} — will update`
+              : `${matchLabel} exists on website — will skip`,
           };
         }
       } else {
@@ -1028,22 +1042,37 @@ function HeadOffice() {
     });
   };
 
-  const fetchExistingProductsByBarcodes = async (branchIds: string[], barcodes: string[]) => {
+  const fetchExistingProductsByBarcodesAndSkus = async (
+    branchIds: string[],
+    barcodes: string[],
+    skus: string[] = []
+  ) => {
     const CHUNK_SIZE = 5000;
-    const chunks: string[][] = [];
+    const maxLen = Math.max(barcodes.length, skus.length);
+    if (maxLen === 0) return [];
+
+    const barcodeChunks: string[][] = [];
+    const skuChunks: string[][] = [];
     for (let i = 0; i < barcodes.length; i += CHUNK_SIZE) {
-      chunks.push(barcodes.slice(i, i + CHUNK_SIZE));
+      barcodeChunks.push(barcodes.slice(i, i + CHUNK_SIZE));
     }
-    if (chunks.length === 0) return [];
+    for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
+      skuChunks.push(skus.slice(i, i + CHUNK_SIZE));
+    }
 
-    const results = await Promise.all(
-      chunks.map((chunk) =>
+    const chunkCount = Math.max(barcodeChunks.length, skuChunks.length);
+    const promises = [];
+    for (let i = 0; i < chunkCount; i++) {
+      const bChunk = barcodeChunks[i] || [];
+      const sChunk = skuChunks[i] || [];
+      promises.push(
         getExistingProductIdentifiersFn({
-          data: { branchIds, barcodes: chunk },
+          data: { branchIds, barcodes: bChunk, skus: sChunk },
         }).catch(() => null)
-      )
-    );
+      );
+    }
 
+    const results = await Promise.all(promises);
     const combined: {
       id: string;
       name: string;
@@ -1051,9 +1080,15 @@ function HeadOffice() {
       sku: string | null;
       existingBranchIds: string[];
     }[] = [];
+    const seenIds = new Set<string>();
     for (const res of results) {
       if (res?.existingProducts) {
-        combined.push(...res.existingProducts);
+        for (const p of res.existingProducts) {
+          if (!seenIds.has(p.id)) {
+            seenIds.add(p.id);
+            combined.push(p);
+          }
+        }
       }
     }
     return combined;
@@ -1318,26 +1353,17 @@ function HeadOffice() {
             errors.push("Price must be > 0");
           }
 
-          // File-level duplicate check for barcode & SKU
+          // File-level duplicate tracking for barcode & SKU (handled during conflict detection)
           if (cleanBarcode1) {
             const lowerBar = cleanBarcode1.toLowerCase();
-            if (seenFileBarcodes.has(lowerBar)) {
-              const prev = seenFileBarcodes.get(lowerBar)!;
-              errors.push(`Invalid – duplicate in file (row ${prev.row})`);
-            } else {
+            if (!seenFileBarcodes.has(lowerBar)) {
               seenFileBarcodes.set(lowerBar, { row: globalRowIndex, sheet: sheetName });
             }
           }
 
           if (cleanSku) {
             const lowerSku = cleanSku.toLowerCase();
-            if (seenFileSkus.has(lowerSku)) {
-              const prev = seenFileSkus.get(lowerSku)!;
-              const dupMsg = `Invalid – duplicate in file (row ${prev.row})`;
-              if (!errors.includes(dupMsg)) {
-                errors.push(dupMsg);
-              }
-            } else {
+            if (!seenFileSkus.has(lowerSku)) {
               seenFileSkus.set(lowerSku, { row: globalRowIndex, sheet: sheetName });
             }
           }
@@ -1408,9 +1434,16 @@ function HeadOffice() {
             .filter(Boolean)
         )
       );
+      const fileSkus = Array.from(
+        new Set(
+          allRawRows
+            .map((r) => (r.sku ? String(r.sku).trim() : ""))
+            .filter(Boolean)
+        )
+      );
 
       const tExistsStart = performance.now();
-      const existingProds = await fetchExistingProductsByBarcodes(importBranches, fileBarcodes);
+      const existingProds = await fetchExistingProductsByBarcodesAndSkus(importBranches, fileBarcodes, fileSkus);
       const tExistsEnd = performance.now();
       const existsCheckTime = tExistsEnd - tExistsStart;
 
@@ -1465,7 +1498,152 @@ function HeadOffice() {
     return stripped.length > 80 ? stripped.slice(0, 80) + "..." : stripped;
   };
 
-  const handleExecuteImport = async () => {
+  const detectConflicts = (
+    rows: any[],
+    existingProds: any[] = []
+  ): {
+    rowNumber: number;
+    name: string;
+    barcode: string;
+    sku: string;
+    conflictType: string;
+    existingProductName: string;
+    existingProductId?: string | null;
+    isLastInFile?: boolean;
+  }[] => {
+    const valid = rows.filter((r) => r.isValid);
+    const existingByBarcode = new Map<string, any>();
+    const existingBySku = new Map<string, any>();
+
+    for (const p of existingProds) {
+      if (p.barcode) {
+        existingByBarcode.set(String(p.barcode).trim().toLowerCase(), p);
+      }
+      if (p.sku) {
+        existingBySku.set(String(p.sku).trim().toLowerCase(), p);
+      }
+    }
+
+    // 1. Detect duplicates inside file (last occurrence wins on update)
+    const barcodeOccurrences = new Map<string, number[]>();
+    const skuOccurrences = new Map<string, number[]>();
+
+    for (const r of valid) {
+      if (r.barcode) {
+        const bc = String(r.barcode).trim().toLowerCase();
+        if (bc) {
+          const list = barcodeOccurrences.get(bc) || [];
+          list.push(r.rowNumber);
+          barcodeOccurrences.set(bc, list);
+        }
+      }
+      if (r.sku) {
+        const sk = String(r.sku).trim().toLowerCase();
+        if (sk) {
+          const list = skuOccurrences.get(sk) || [];
+          list.push(r.rowNumber);
+          skuOccurrences.set(sk, list);
+        }
+      }
+    }
+
+    const conflicts: {
+      rowNumber: number;
+      name: string;
+      barcode: string;
+      sku: string;
+      conflictType: string;
+      existingProductName: string;
+      existingProductId?: string | null;
+      isLastInFile?: boolean;
+    }[] = [];
+
+    const recordedRowConflict = new Set<number>();
+
+    for (const r of valid) {
+      const bc = r.barcode ? String(r.barcode).trim().toLowerCase() : "";
+      const sk = r.sku ? String(r.sku).trim().toLowerCase() : "";
+
+      // Check c) Same barcode appears more than once inside file
+      const bcRows = bc ? barcodeOccurrences.get(bc) || [] : [];
+      if (bcRows.length > 1) {
+        const isLast = bcRows[bcRows.length - 1] === r.rowNumber;
+        conflicts.push({
+          rowNumber: r.rowNumber,
+          name: r.name,
+          barcode: r.barcode || "—",
+          sku: r.sku || "—",
+          conflictType: isLast
+            ? `Duplicate barcode in file (appears ${bcRows.length}x, last row)`
+            : `Duplicate barcode in file (appears in rows ${bcRows.join(", ")})`,
+          existingProductName: isLast ? "File (winning row)" : "File (earlier row)",
+          existingProductId: null,
+          isLastInFile: isLast,
+        });
+        recordedRowConflict.add(r.rowNumber);
+        continue;
+      }
+
+      // Check c) Same SKU appears more than once inside file
+      const skRows = sk ? skuOccurrences.get(sk) || [] : [];
+      if (skRows.length > 1) {
+        const isLast = skRows[skRows.length - 1] === r.rowNumber;
+        conflicts.push({
+          rowNumber: r.rowNumber,
+          name: r.name,
+          barcode: r.barcode || "—",
+          sku: r.sku || "—",
+          conflictType: isLast
+            ? `Duplicate SKU in file (appears ${skRows.length}x, last row)`
+            : `Duplicate SKU in file (appears in rows ${skRows.join(", ")})`,
+          existingProductName: isLast ? "File (winning row)" : "File (earlier row)",
+          existingProductId: null,
+          isLastInFile: isLast,
+        });
+        recordedRowConflict.add(r.rowNumber);
+        continue;
+      }
+
+      // Check a) Same barcode already on website
+      const matchedByBc = bc ? existingByBarcode.get(bc) : null;
+      if (matchedByBc) {
+        conflicts.push({
+          rowNumber: r.rowNumber,
+          name: r.name,
+          barcode: r.barcode || "—",
+          sku: r.sku || "—",
+          conflictType: "Barcode exists on website",
+          existingProductName: matchedByBc.name || "Existing Product",
+          existingProductId: matchedByBc.id,
+        });
+        recordedRowConflict.add(r.rowNumber);
+        continue;
+      }
+
+      // Check b) Same SKU already on website on a product with a DIFFERENT barcode
+      const matchedBySku = sk ? existingBySku.get(sk) : null;
+      if (matchedBySku) {
+        const matchedBc = matchedBySku.barcode ? String(matchedBySku.barcode).trim().toLowerCase() : "";
+        if (matchedBc !== bc) {
+          conflicts.push({
+            rowNumber: r.rowNumber,
+            name: r.name,
+            barcode: r.barcode || "—",
+            sku: r.sku || "—",
+            conflictType: "SKU exists on website with different barcode",
+            existingProductName: matchedBySku.name || "Existing Product",
+            existingProductId: matchedBySku.id,
+          });
+          recordedRowConflict.add(r.rowNumber);
+          continue;
+        }
+      }
+    }
+
+    return conflicts;
+  };
+
+  const handleImportButtonClick = () => {
     const validRows = parsedRows.filter((r) => r.isValid);
     if (validRows.length === 0) {
       toast.error("No valid product rows to import.");
@@ -1477,10 +1655,89 @@ function HeadOffice() {
       return;
     }
 
+    const detected = detectConflicts(validRows, cachedExistingProds);
+    if (detected.length > 0) {
+      setConflictItems(detected);
+      // Pre-fill choices if user already had row choices, otherwise empty
+      const initialChoices: Record<number, "update" | "remove"> = {};
+      for (const item of detected) {
+        if (conflictChoices[item.rowNumber]) {
+          initialChoices[item.rowNumber] = conflictChoices[item.rowNumber];
+        }
+      }
+      setConflictChoices(initialChoices);
+      setConflictPage(1);
+      setConflictModalOpen(true);
+      return;
+    }
+
+    // No conflicts -> proceed directly
+    executeImportWithChoices({});
+  };
+
+  const handleApplyConflictChoicesAndImport = () => {
+    // Check that every conflict has a choice
+    const unchosen = conflictItems.find((c) => !conflictChoices[c.rowNumber]);
+    if (unchosen) {
+      toast.error(`Please select Update or Remove for row #${unchosen.rowNumber} (${unchosen.name})`);
+      return;
+    }
+
+    setConflictModalOpen(false);
+    executeImportWithChoices(conflictChoices);
+  };
+
+  const executeImportWithChoices = async (choices: Record<number, "update" | "remove">) => {
+    const validRows = parsedRows.filter((r) => r.isValid);
+    if (validRows.length === 0) {
+      toast.error("No valid product rows to import.");
+      return;
+    }
+
+    if (importBranches.length === 0) {
+      toast.error("Please select at least one branch for stock allocation.");
+      return;
+    }
+
+    // Build quick lookup for conflict items
+    const conflictByRow = new Map<number, typeof conflictItems[0]>();
+    for (const item of conflictItems) {
+      conflictByRow.set(item.rowNumber, item);
+    }
+
+    // Lookup for website products by barcode and SKU
+    const websiteProductByBarcode = new Map<string, any>();
+    const websiteProductBySku = new Map<string, any>();
+    for (const p of cachedExistingProds) {
+      if (p.barcode) {
+        websiteProductByBarcode.set(String(p.barcode).trim().toLowerCase(), p);
+      }
+      if (p.sku) {
+        websiteProductBySku.set(String(p.sku).trim().toLowerCase(), p);
+      }
+    }
+
+    // Filter out rows marked as 'remove'
+    let totalRemoved = 0;
+    const rowsToImport = validRows.filter((r) => {
+      const choice = choices[r.rowNumber];
+      if (choice === "remove") {
+        totalRemoved++;
+        return false;
+      }
+      return true;
+    });
+
+    if (rowsToImport.length === 0) {
+      toast.info(`All ${totalRemoved} conflicting rows were removed. Nothing to import.`);
+      setConflictModalOpen(false);
+      return;
+    }
+
     setIsImporting(true);
     const importStartTime = performance.now();
-    const CHUNK_SIZE = 5000;
-    const totalChunks = Math.ceil(validRows.length / CHUNK_SIZE);
+    const CHUNK_SIZE = 1000;
+    const totalChunks = Math.ceil(rowsToImport.length / CHUNK_SIZE);
     let totalCreated = 0;
     let totalUpdated = 0;
     let totalSkipped = 0;
@@ -1489,33 +1746,59 @@ function HeadOffice() {
     const allFailedRowDetails: { barcode?: string; name?: string; reason: string }[] = [];
 
     const loadToast = toast.loading(
-      `Importing ${validRows.length} products in ${totalChunks} batch${totalChunks > 1 ? "es" : ""}...`
+      `Importing ${rowsToImport.length} products in ${totalChunks} batch${totalChunks > 1 ? "es" : ""}...`
     );
 
     try {
       for (let i = 0; i < totalChunks; i++) {
         const start = i * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, validRows.length);
-        const chunkRows = validRows.slice(start, end);
+        const end = Math.min(start + CHUNK_SIZE, rowsToImport.length);
+        const chunkRows = rowsToImport.slice(start, end);
 
         toast.loading(
-          `Importing products... Batch ${i + 1}/${totalChunks} (${start + 1} - ${end} of ${validRows.length}) | Created: ${totalCreated}, Updated: ${totalUpdated}`,
+          `Importing products... Batch ${i + 1}/${totalChunks} (${start + 1} - ${end} of ${rowsToImport.length}) | Created: ${totalCreated}, Updated: ${totalUpdated}`,
           { id: loadToast }
         );
 
         const chunkProducts = chunkRows.map((r) => {
-          const willUpdate = isRowUpdating(r.rowNumber);
+          const conflict = conflictByRow.get(r.rowNumber);
+          const choice = choices[r.rowNumber];
+
           let action: "create" | "update" | "skip" = "create";
-          if (
-            r.classification === "exists" ||
-            r.classification === "exists_update" ||
-            r.classification === "exists_skip" ||
-            r.classification === "add_to_branch" ||
-            r.isExisting
-          ) {
-            action = willUpdate ? "update" : "skip";
+          let existingProductId: string | null = null;
+
+          if (choice === "update") {
+            const cleanBc = r.barcode ? String(r.barcode).trim().toLowerCase() : "";
+            const cleanSk = r.sku ? String(r.sku).trim().toLowerCase() : "";
+            const matchedOnWebsite =
+              (conflict && conflict.existingProductId
+                ? { id: conflict.existingProductId }
+                : null) ||
+              (r.existingProductId ? { id: r.existingProductId } : null) ||
+              (cleanBc ? websiteProductByBarcode.get(cleanBc) : null) ||
+              (cleanSk ? websiteProductBySku.get(cleanSk) : null);
+
+            if (matchedOnWebsite && matchedOnWebsite.id) {
+              action = "update";
+              existingProductId = matchedOnWebsite.id;
+            } else {
+              action = "create";
+              existingProductId = null;
+            }
           } else {
-            action = "create";
+            const willUpdate = isRowUpdating(r.rowNumber);
+            existingProductId = r.existingProductId || null;
+            if (
+              r.classification === "exists" ||
+              r.classification === "exists_update" ||
+              r.classification === "exists_skip" ||
+              r.classification === "add_to_branch" ||
+              r.isExisting
+            ) {
+              action = willUpdate ? "update" : "skip";
+            } else {
+              action = "create";
+            }
           }
 
           const rawStock = rowStocks[r.rowNumber];
@@ -1526,7 +1809,7 @@ function HeadOffice() {
 
           return {
             action,
-            existingProductId: r.existingProductId || null,
+            existingProductId,
             name: r.name,
             barcode: r.barcode,
             sku: r.sku,
@@ -1544,10 +1827,11 @@ function HeadOffice() {
             data: {
               products: chunkProducts,
               branchIds: importBranches,
+              batchNumber: i + 1,
             },
           });
           const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("Batch request timed out after 120 seconds")), 120000)
+            setTimeout(() => reject(new Error("Batch request timed out after 300 seconds")), 300000)
           );
 
           const res: any = await Promise.race([requestPromise, timeoutPromise]);
@@ -1585,16 +1869,19 @@ function HeadOffice() {
       toast.dismiss(loadToast);
 
       const elapsedSec = ((performance.now() - importStartTime) / 1000).toFixed(1);
-      const summaryMsg = `Created ${totalCreated}, Updated ${totalUpdated}, Skipped ${totalSkipped}, Failed ${totalFailed}`;
+      const summaryMsg = `Created ${totalCreated}, Updated ${totalUpdated}, Removed ${totalRemoved}`;
 
       if (totalFailed === 0 && failedChunks.length === 0) {
         toast.success(`Import complete in ${elapsedSec}s: ${summaryMsg}`);
         setImportModalOpen(false);
+        setConflictModalOpen(false);
         setRawFileRows([]);
         setParsedRows([]);
         setSheetStats([]);
         setRowStocks({});
         setRowUpdateChoices({});
+        setConflictItems([]);
+        setConflictChoices({});
         setImportFile(null);
         setImportFileName("");
         await handleFetchCatalog(1, catalogSearch);
@@ -4292,7 +4579,14 @@ function HeadOffice() {
                                           .filter(Boolean)
                                       )
                                     );
-                                    const prods = await fetchExistingProductsByBarcodes(next, fileBarcodes);
+                                    const fileSkus = Array.from(
+                                      new Set(
+                                        rawFileRows
+                                          .map((r) => (r.sku ? String(r.sku).trim() : ""))
+                                          .filter(Boolean)
+                                      )
+                                    );
+                                    const prods = await fetchExistingProductsByBarcodesAndSkus(next, fileBarcodes, fileSkus);
                                     setCachedExistingProds(prods);
                                     setParsedRows(reclassifyRows(rawFileRows, prods, next, data?.branches || [], updateExistingProducts, rowUpdateChoices));
                                   } catch (e) {
@@ -4343,7 +4637,14 @@ function HeadOffice() {
                                               .filter(Boolean)
                                           )
                                         );
-                                        const prods = await fetchExistingProductsByBarcodes(next, fileBarcodes);
+                                        const fileSkus = Array.from(
+                                          new Set(
+                                            rawFileRows
+                                              .map((r) => (r.sku ? String(r.sku).trim() : ""))
+                                              .filter(Boolean)
+                                          )
+                                        );
+                                        const prods = await fetchExistingProductsByBarcodesAndSkus(next, fileBarcodes, fileSkus);
                                         setCachedExistingProds(prods);
                                         setParsedRows(reclassifyRows(rawFileRows, prods, next, data?.branches || [], updateExistingProducts, rowUpdateChoices));
                                       } catch (e) {
@@ -4891,7 +5192,7 @@ function HeadOffice() {
                     <Button
                       type="button"
                       className="rounded-xl w-full sm:w-auto px-4 h-10 font-bold"
-                      onClick={handleExecuteImport}
+                      onClick={handleImportButtonClick}
                       disabled={
                         isImporting ||
                         isParsing ||
@@ -4901,7 +5202,7 @@ function HeadOffice() {
                     >
                       {isImporting ? (
                         <>
-                          <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> Importing in 5,000-row batches...
+                          <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> Importing in 1,000-row batches...
                         </>
                       ) : (
                         `Import ${parsedRows.filter((r) => r.isValid).length} Valid Products`
@@ -4909,6 +5210,210 @@ function HeadOffice() {
                     </Button>
                   </div>
                 </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Conflict Resolution Popup */}
+            <Dialog
+              open={conflictModalOpen}
+              onOpenChange={(open) => {
+                if (!isImporting) setConflictModalOpen(open);
+              }}
+            >
+              <DialogContent className="w-[95vw] max-w-4xl max-h-[85vh] flex flex-col overflow-hidden p-0 gap-0">
+                <DialogHeader className="p-4 sm:p-5 pb-3 shrink-0 border-b border-border/40 text-left">
+                  <DialogTitle className="flex items-center gap-2 text-base sm:text-lg text-ink font-bold">
+                    <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0" />
+                    Conflict Resolution ({conflictItems.length} conflicts found)
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-muted-foreground">
+                    Duplicates or existing product conflicts detected before import. Please choose whether to update the existing product or remove each row from this import.
+                  </DialogDescription>
+                </DialogHeader>
+
+                {(() => {
+                  const conflictUpdateCount = conflictItems.filter((c) => conflictChoices[c.rowNumber] === "update").length;
+                  const conflictRemoveCount = conflictItems.filter((c) => conflictChoices[c.rowNumber] === "remove").length;
+                  const conflictResolvedCount = conflictUpdateCount + conflictRemoveCount;
+                  const CONFLICT_PAGE_SIZE = 50;
+                  const totalConflictPages = Math.max(1, Math.ceil(conflictItems.length / CONFLICT_PAGE_SIZE));
+                  const paginatedConflictItems = conflictItems.slice(
+                    (conflictPage - 1) * CONFLICT_PAGE_SIZE,
+                    conflictPage * CONFLICT_PAGE_SIZE
+                  );
+
+                  return (
+                    <>
+                      <div className="p-3 sm:p-4 border-b border-border/30 bg-surface-2/30 flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                          <span className="text-xs font-semibold text-ink">
+                            Resolved: {conflictResolvedCount} of {conflictItems.length}
+                          </span>
+                          <span className="text-muted-foreground/50 text-xs hidden sm:inline">|</span>
+                          <span className="text-xs font-semibold text-ink">
+                            Update: <span className="font-bold text-primary">{conflictUpdateCount}</span> · Remove: <span className="font-bold text-destructive">{conflictRemoveCount}</span>
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 text-xs font-semibold"
+                            onClick={() => {
+                              const allUpdate: Record<number, "update" | "remove"> = {};
+                              for (const item of conflictItems) {
+                                // For duplicate items in file, earlier duplicate rows are removed and the last row updates/wins
+                                if (item.conflictType.includes("Duplicate") && item.conflictType.includes("in file") && !item.isLastInFile) {
+                                  allUpdate[item.rowNumber] = "remove";
+                                } else {
+                                  allUpdate[item.rowNumber] = "update";
+                                }
+                              }
+                              setConflictChoices(allUpdate);
+                            }}
+                          >
+                            Update all
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 text-xs font-semibold text-destructive hover:bg-destructive/10"
+                            onClick={() => {
+                              const allRemove: Record<number, "update" | "remove"> = {};
+                              for (const item of conflictItems) {
+                                allRemove[item.rowNumber] = "remove";
+                              }
+                              setConflictChoices(allRemove);
+                            }}
+                          >
+                            Remove all
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto overflow-x-auto p-0 min-w-0">
+                        <table className="w-full text-xs text-left border-collapse table-fixed">
+                          <thead className="bg-surface-2/60 text-muted-foreground uppercase text-[10px] tracking-wider sticky top-0 z-10 border-b">
+                            <tr>
+                              <th className="w-[50px] p-2 pl-3 font-bold">Row #</th>
+                              <th className="p-2 font-bold">Name</th>
+                              <th className="w-[105px] p-2 font-bold">Barcode</th>
+                              <th className="w-[95px] p-2 font-bold">SKU</th>
+                              <th className="w-[140px] p-2 font-bold">Conflict Type</th>
+                              <th className="w-[125px] p-2 font-bold">Existing Product</th>
+                              <th className="w-[160px] p-2 pr-3 text-center font-bold">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border/40">
+                            {paginatedConflictItems.map((c) => {
+                              const choice = conflictChoices[c.rowNumber];
+                              return (
+                                <tr key={c.rowNumber} className="hover:bg-surface-2/30 transition-colors">
+                                  <td className="p-2 pl-3 font-mono font-bold text-ink">#{c.rowNumber}</td>
+                                  <td className="p-2 font-medium text-ink truncate" title={c.name}>{c.name}</td>
+                                  <td className="p-2 font-mono truncate" title={c.barcode}>{c.barcode}</td>
+                                  <td className="p-2 font-mono truncate" title={c.sku}>{c.sku}</td>
+                                  <td className="p-2 text-amber-700 font-medium truncate" title={c.conflictType}>{c.conflictType}</td>
+                                  <td className="p-2 font-medium text-slate-700 truncate" title={c.existingProductName}>
+                                    {c.existingProductName}
+                                  </td>
+                                  <td className="p-2 pr-3 text-center whitespace-nowrap">
+                                    <div className="inline-flex items-center gap-1.5 justify-center">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setConflictChoices((prev) => ({
+                                            ...prev,
+                                            [c.rowNumber]: "update",
+                                          }))
+                                        }
+                                        className={`inline-flex items-center justify-center px-2 py-1 rounded-md text-xs font-semibold transition-all border ${
+                                          choice === "update"
+                                            ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                                            : "bg-surface text-muted-foreground border-border hover:bg-surface-2 hover:text-ink"
+                                        }`}
+                                      >
+                                        {choice === "update" && <Check className="h-3 w-3 mr-1 shrink-0" />}
+                                        Update
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setConflictChoices((prev) => ({
+                                            ...prev,
+                                            [c.rowNumber]: "remove",
+                                          }))
+                                        }
+                                        className={`inline-flex items-center justify-center px-2 py-1 rounded-md text-xs font-semibold transition-all border ${
+                                          choice === "remove"
+                                            ? "bg-destructive text-destructive-foreground border-destructive shadow-sm"
+                                            : "bg-surface text-muted-foreground border-border hover:bg-destructive/10 hover:text-destructive"
+                                        }`}
+                                      >
+                                        {choice === "remove" && <Check className="h-3 w-3 mr-1 shrink-0" />}
+                                        Remove
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <DialogFooter className="sticky bottom-0 z-10 shrink-0 border-t border-border/70 bg-surface/95 backdrop-blur-md p-3 sm:p-4 flex flex-row items-center justify-between gap-3 flex-wrap">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="rounded-xl px-4 h-9 font-semibold text-xs"
+                          onClick={() => setConflictModalOpen(false)}
+                        >
+                          Cancel
+                        </Button>
+
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-2.5 text-xs font-semibold"
+                            onClick={() => setConflictPage((p) => Math.max(1, p - 1))}
+                            disabled={conflictPage <= 1}
+                          >
+                            <ChevronLeft className="h-3.5 w-3.5 mr-0.5" />
+                            Prev
+                          </Button>
+                          <span className="text-xs font-medium text-muted-foreground whitespace-nowrap px-1">
+                            Page {conflictPage} of {totalConflictPages}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-2.5 text-xs font-semibold"
+                            onClick={() => setConflictPage((p) => Math.min(totalConflictPages, p + 1))}
+                            disabled={conflictPage >= totalConflictPages}
+                          >
+                            Next
+                            <ChevronRight className="h-3.5 w-3.5 ml-0.5" />
+                          </Button>
+                        </div>
+
+                        <Button
+                          type="button"
+                          className="rounded-xl px-5 h-9 font-bold text-xs"
+                          onClick={handleApplyConflictChoicesAndImport}
+                          disabled={isImporting || conflictItems.some((c) => !conflictChoices[c.rowNumber])}
+                        >
+                          Continue import
+                        </Button>
+                      </DialogFooter>
+                    </>
+                  );
+                })()}
               </DialogContent>
             </Dialog>
           </TabsContent>

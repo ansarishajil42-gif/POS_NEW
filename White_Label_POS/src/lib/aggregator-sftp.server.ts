@@ -340,15 +340,18 @@ export async function getSyncSummaryFromDb(
   const prefix = (conn.filenamePrefix || "assortment").trim();
   const fileName = `${prefix}_${storeId}.csv`;
   const remotePath = `${conn.remoteDirectory || "/Assortment"}/${fileName}`;
+  const aggregatorName = conn.aggregatorName || "talabat";
+  const channelKey = aggregatorName.toLowerCase().trim();
 
   // Ultra-fast COUNT query (counts matching products in <100ms without transferring row payloads)
   const countResult: any[] = await db.execute(sql`
     SELECT COUNT(*) as total
     FROM products p
     INNER JOIN stock_levels sl ON p.id = sl.product_id AND sl.branch_id = ${branchId}::uuid
+    LEFT JOIN product_channel_price_overrides o ON o.product_id = p.id AND o.tenant_id = p.tenant_id AND o.channel_key = ${channelKey}
     WHERE p.tenant_id = ${tenantId}::uuid
       AND (
-        ${filterDate ? sql`(p.created_at >= ${filterDate}::timestamp OR p.updated_at >= ${filterDate}::timestamp OR sl.updated_at >= ${filterDate}::timestamp)` : sql`TRUE`}
+        ${filterDate ? sql`(p.updated_at >= ${filterDate}::timestamp OR sl.updated_at >= ${filterDate}::timestamp OR o.updated_at >= ${filterDate}::timestamp)` : sql`TRUE`}
       );
   `);
 
@@ -464,8 +467,7 @@ export async function generateDirectCsvPreviewFromDb(
         LEFT JOIN product_channel_price_overrides o ON o.product_id = p.id AND o.tenant_id = p.tenant_id AND o.channel_key = ${channelKey}
         WHERE p.tenant_id = ${tenantId}::uuid
           AND (
-            p.created_at >= ${filterDate}::timestamp 
-            OR p.updated_at >= ${filterDate}::timestamp 
+            p.updated_at >= ${filterDate}::timestamp 
             OR sl.updated_at >= ${filterDate}::timestamp
             OR o.updated_at >= ${filterDate}::timestamp
           );
