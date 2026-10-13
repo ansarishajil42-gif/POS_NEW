@@ -19,7 +19,12 @@ export default defineConfig({
             // and include them in the final deployment bundle
             external: ["ssh2-sftp-client", "ssh2"]
 
-        }
+        },
+        traceDeps: ["tslib", "ssh2-sftp-client", "ssh2"],
+        virtual: {
+            "#sftp-trace": 'import "ssh2-sftp-client"; import "ssh2"; export default () => {};'
+        },
+        plugins: ["#sftp-trace"]
     },
     tanstackStart: {
         server: { entry: "server" },
