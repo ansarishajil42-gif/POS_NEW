@@ -56,6 +56,12 @@ import {
   type ConnectionConfig,
 } from "@/lib/aggregator-sftp";
 
+declare module "@/lib/aggregator-sftp" {
+  interface ConnectionConfig {
+    storeBranchId?: string;
+  }
+}
+
 export const Route = createFileRoute("/aggregators")({
   beforeLoad: async () => {
     const res = await getSessionServerFn();
@@ -138,6 +144,7 @@ function Aggregators() {
     sftpPassword: "",
     remoteDirectory: "/Assortment",
     vendorId: "",
+    storeBranchId: "",
     priceFormat: "price_discounted",
     syncFrequency: "manual",
     isPaused: false,
@@ -506,6 +513,7 @@ function Aggregators() {
                 sftpPassword: "",
                 remoteDirectory: "/Assortment",
                 vendorId: "",
+                storeBranchId: "",
                 priceFormat: "price_discounted",
                 syncFrequency: "manual",
                 isPaused: false,
@@ -619,6 +627,10 @@ function Aggregators() {
                     <div className="flex justify-between items-center bg-slate-50/80 rounded-lg px-2.5 py-1.5 border border-slate-100">
                       <span className="font-medium text-slate-500">Vendor ID:</span>
                       <span className="font-mono font-bold text-slate-800 truncate max-w-[150px]">{conn.vendorId || "—"}</span>
+                    </div>
+                    <div className="flex justify-between items-center bg-slate-50/80 rounded-lg px-2.5 py-1.5 border border-slate-100">
+                      <span className="font-medium text-slate-500">Talabat Branch ID:</span>
+                      <span className="font-mono font-bold text-slate-800 truncate max-w-[150px]">{conn.storeBranchId || "—"}</span>
                     </div>
                     <div className="flex justify-between items-center px-1">
                       <span className="font-medium">Sync Schedule:</span>
@@ -802,7 +814,7 @@ function Aggregators() {
                     <span className="text-slate-900 font-bold">5. Promo Fields:</span> All filled together or all left blank
                   </div>
                   <div className="bg-white/90 border border-slate-200/80 rounded-xl p-2.5 shadow-2xs">
-                    <span className="text-slate-900 font-bold">6. File Name:</span> <code className="text-[#25b507] font-bold break-all bg-[#39ff14]/20 px-1 py-0.5 rounded border border-[#39ff14]/30">&lt;filename_prefix&gt;_&lt;store_vendor_id&gt;.csv (e.g. danah_776282.csv)</code>
+                    <span className="text-slate-900 font-bold">6. File Name:</span> <code className="text-[#25b507] font-bold break-all bg-[#39ff14]/20 px-1 py-0.5 rounded border border-[#39ff14]/30">&lt;filename_prefix&gt;_&lt;store_branch_id&gt;.csv (e.g. danah_685570.csv)</code>
                   </div>
                 </div>
               </div>
@@ -1069,7 +1081,7 @@ function Aggregators() {
                 </select>
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 sm:col-span-2">
                 <Label htmlFor="vendorId" className="text-xs font-semibold">Username / Vendor ID</Label>
                 <Input
                   id="vendorId"
@@ -1091,6 +1103,21 @@ function Aggregators() {
                   value={formConn.filenamePrefix || ""}
                   onChange={(e) => setFormConn({ ...formConn, filenamePrefix: e.target.value })}
                   placeholder="e.g. danah, khaldiya, nahyan"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="storeBranchId" className="text-xs font-semibold">Talabat Branch ID</Label>
+                <Input
+                  id="storeBranchId"
+                  name="store_branch_id"
+                  autoComplete="off"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={formConn.storeBranchId || ""}
+                  onChange={(e) => setFormConn({ ...formConn, storeBranchId: e.target.value.replace(/\D/g, "") })}
+                  placeholder="e.g. 685570"
+                  required
                 />
               </div>
 

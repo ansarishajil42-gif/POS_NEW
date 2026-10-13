@@ -243,10 +243,11 @@ export const createTenantServerFn = createServerFn({ method: "POST" })
             return { success: true, tenant };
         } catch (error: any) {
             console.error("Tenant creation error:", error);
-            if (error.code === '23505') { 
-                return { success: false, error: "Email or Subdomain already exists" };
+            const pgCode = error.code ?? error.cause?.code;
+            if (pgCode === '23505') { 
+                return { success: false, error: "This subdomain or email is already used by another company" };
             }
-            if (error.code === '23502') {
+            if (pgCode === '23502') {
                 return { success: false, error: "Missing required field: " + (error.column || "Unknown") };
             }
             return { success: false, error: "Failed to create tenant and admin: " + (error.message || "Unknown database error") };

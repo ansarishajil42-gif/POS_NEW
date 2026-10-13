@@ -32,7 +32,7 @@ export async function getAggregatorConnectionsFromDb(tenantId: string) {
   }
 
   const rows: any[] = await db.execute(sql`
-    SELECT id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, sftp_password, remote_directory, vendor_id, store_vendor_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, last_scheduled_sync_at, has_pending_changes, is_active, created_at, updated_at
+    SELECT id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, sftp_password, remote_directory, vendor_id, store_vendor_id, store_branch_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, last_scheduled_sync_at, has_pending_changes, is_active, created_at, updated_at
     FROM aggregator_connections
     WHERE tenant_id = ${tenantId}::uuid
     ORDER BY created_at DESC;
@@ -50,6 +50,7 @@ export async function getAggregatorConnectionsFromDb(tenantId: string) {
     remoteDirectory: r.remote_directory || "/Assortment",
     vendorId: r.vendor_id || "",
     storeVendorId: r.store_vendor_id || "",
+    storeBranchId: r.store_branch_id || "",
     filenamePrefix: r.filename_prefix || "",
     priceFormat: r.price_format || "price_discounted",
     syncFrequency: r.sync_frequency || "manual",
@@ -99,6 +100,7 @@ export async function saveAggregatorConnectionToDb(data: any, tenantId: string) 
     data.sftpPassword && data.sftpPassword !== "••••••••" ? data.sftpPassword.trim() : null;
   const vendorId = (data.vendorId || "").trim();
   const storeVendorId = (data.storeVendorId || "").trim();
+  const storeBranchId = (data.storeBranchId || "").trim();
   const filenamePrefix = (data.filenamePrefix || "").trim();
   const remoteDirectory = (data.remoteDirectory || "assortment").trim();
   const priceFormat = data.priceFormat || "price_discounted";
@@ -127,6 +129,7 @@ export async function saveAggregatorConnectionToDb(data: any, tenantId: string) 
           remote_directory = ${remoteDirectory},
           vendor_id = ${vendorId},
           store_vendor_id = ${storeVendorId},
+          store_branch_id = ${storeBranchId},
           filename_prefix = ${filenamePrefix},
           price_format = ${priceFormat},
           sync_frequency = ${syncFrequency},
@@ -134,7 +137,7 @@ export async function saveAggregatorConnectionToDb(data: any, tenantId: string) 
           is_active = ${isActive},
           updated_at = NOW()
       WHERE id::text = ${data.id} AND tenant_id = ${tenantId}::uuid
-      RETURNING id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, vendor_id, store_vendor_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at;
+      RETURNING id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, vendor_id, store_vendor_id, store_branch_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at;
     `);
 
     const saved = updated[0];
@@ -153,6 +156,7 @@ export async function saveAggregatorConnectionToDb(data: any, tenantId: string) 
         remoteDirectory: saved.remote_directory,
         vendorId: saved.vendor_id,
         storeVendorId: saved.store_vendor_id,
+        storeBranchId: saved.store_branch_id,
         filenamePrefix: saved.filename_prefix,
         priceFormat: saved.price_format,
         syncFrequency: saved.sync_frequency,
@@ -167,11 +171,11 @@ export async function saveAggregatorConnectionToDb(data: any, tenantId: string) 
 
   const inserted: any[] = await db.execute(sql`
     INSERT INTO aggregator_connections (
-      tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, sftp_password, remote_directory, vendor_id, store_vendor_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at
+      tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, sftp_password, remote_directory, vendor_id, store_vendor_id, store_branch_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at
     ) VALUES (
-      ${tenantId}::uuid, ${branchId}::uuid, ${aggregatorName}, ${sftpHost}, ${sftpPort}, ${sftpUsername}, ${encryptedPassword}, ${remoteDirectory}, ${vendorId}, ${storeVendorId}, ${filenamePrefix}, ${priceFormat}, ${syncFrequency}, ${isPaused}, 0, ${isActive}, NOW(), NOW()
+      ${tenantId}::uuid, ${branchId}::uuid, ${aggregatorName}, ${sftpHost}, ${sftpPort}, ${sftpUsername}, ${encryptedPassword}, ${remoteDirectory}, ${vendorId}, ${storeVendorId}, ${storeBranchId}, ${filenamePrefix}, ${priceFormat}, ${syncFrequency}, ${isPaused}, 0, ${isActive}, NOW(), NOW()
     )
-    RETURNING id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, vendor_id, store_vendor_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at;
+    RETURNING id, tenant_id, branch_id, aggregator_name, sftp_host, sftp_port, sftp_username, vendor_id, store_vendor_id, store_branch_id, filename_prefix, price_format, sync_frequency, is_paused, consecutive_failures, is_active, created_at, updated_at;
   `);
 
   const saved = inserted[0];
@@ -190,6 +194,7 @@ export async function saveAggregatorConnectionToDb(data: any, tenantId: string) 
       remoteDirectory: saved.remote_directory,
       vendorId: saved.vendor_id,
       storeVendorId: saved.store_vendor_id,
+      storeBranchId: saved.store_branch_id,
       filenamePrefix: saved.filename_prefix,
       priceFormat: saved.price_format,
       syncFrequency: saved.sync_frequency,
@@ -308,7 +313,7 @@ export async function getSyncSummaryFromDb(
     try {
       const list: any[] = await db.execute(
         sql`
-          SELECT c.id, c.tenant_id, c.branch_id, c.vendor_id, c.store_vendor_id, c.filename_prefix, c.price_format, c.aggregator_name, c.remote_directory, b.tenant_id as branch_tenant_id
+          SELECT c.id, c.tenant_id, c.branch_id, c.vendor_id, c.store_vendor_id, c.store_branch_id, c.filename_prefix, c.price_format, c.aggregator_name, c.remote_directory, b.tenant_id as branch_tenant_id
           FROM aggregator_connections c
           LEFT JOIN branches b ON c.branch_id = b.id
           WHERE c.id::text = ${connectionId}
@@ -321,6 +326,7 @@ export async function getSyncSummaryFromDb(
           branchId: list[0].branch_id,
           vendorId: list[0].vendor_id,
           storeVendorId: list[0].store_vendor_id,
+          storeBranchId: list[0].store_branch_id,
           filenamePrefix: list[0].filename_prefix,
           priceFormat: list[0].price_format,
           aggregatorName: list[0].aggregator_name,
@@ -336,7 +342,9 @@ export async function getSyncSummaryFromDb(
 
   const tenantId = conn.tenantId;
   const branchId = conn.branchId;
-  const storeId = (conn.storeVendorId || conn.vendorId || "vendor").trim();
+  const storeBranchId = (conn.storeBranchId || "").trim();
+  const fallbackStoreId = (conn.storeVendorId || conn.vendorId || "vendor").trim();
+  const storeId = storeBranchId || fallbackStoreId;
   const prefix = (conn.filenamePrefix || "assortment").trim();
   const fileName = `${prefix}_${storeId}.csv`;
   const remotePath = `${conn.remoteDirectory || "/Assortment"}/${fileName}`;
@@ -393,7 +401,7 @@ export async function generateDirectCsvPreviewFromDb(
     try {
       const list: any[] = await db.execute(
         sql`
-          SELECT c.id, c.tenant_id, c.branch_id, c.vendor_id, c.store_vendor_id, c.filename_prefix, c.price_format, c.aggregator_name, c.remote_directory, b.tenant_id as branch_tenant_id
+          SELECT c.id, c.tenant_id, c.branch_id, c.vendor_id, c.store_vendor_id, c.store_branch_id, c.filename_prefix, c.price_format, c.aggregator_name, c.remote_directory, b.tenant_id as branch_tenant_id
           FROM aggregator_connections c
           LEFT JOIN branches b ON c.branch_id = b.id
           WHERE c.id::text = ${connectionId}
@@ -406,6 +414,7 @@ export async function generateDirectCsvPreviewFromDb(
           branchId: list[0].branch_id,
           vendorId: list[0].vendor_id,
           storeVendorId: list[0].store_vendor_id,
+          storeBranchId: list[0].store_branch_id,
           filenamePrefix: list[0].filename_prefix,
           priceFormat: list[0].price_format,
           aggregatorName: list[0].aggregator_name,
@@ -426,6 +435,7 @@ export async function generateDirectCsvPreviewFromDb(
 
   const vendorId = (conn.vendorId || "vendor_id").trim();
   const storeVendorId = (conn.storeVendorId || "").trim();
+  const storeBranchId = (conn.storeBranchId || "").trim();
   const filenamePrefix = (conn.filenamePrefix || "").trim();
   const priceFormat = conn.priceFormat || "price_discounted";
   const aggregatorName = conn.aggregatorName || "talabat";
@@ -602,10 +612,11 @@ export async function generateDirectCsvPreviewFromDb(
   );
 
   const t_csv_start = Date.now();
+  const effectiveStoreId = storeBranchId || storeVendorId;
   const adapter = getAdapter(aggregatorName);
   const fileResult = adapter.generateFile(adapterItems, {
     vendorId,
-    storeVendorId,
+    storeVendorId: effectiveStoreId,
     filenamePrefix,
     priceFormat,
   });
@@ -656,7 +667,9 @@ export async function triggerAggregatorSyncFromDb(
   const conn = connList[0];
   if (!conn) return { success: false, error: "Connection configuration not found." };
 
-  const storeId = (conn.store_vendor_id || conn.vendor_id || "vendor").trim();
+  const storeBranchId = (conn.store_branch_id || "").trim();
+  const fallbackStoreId = (conn.store_vendor_id || conn.vendor_id || "vendor").trim();
+  const storeId = storeBranchId || fallbackStoreId;
   const prefix = (conn.filename_prefix || "assortment").trim();
   const defaultFileName = `${prefix}_${storeId}.csv`;
 
