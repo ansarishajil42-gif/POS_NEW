@@ -1,6 +1,6 @@
 import { db } from "@/server/db";
 import { branches, tenants } from "@/server/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { logAuditAction } from "@/lib/audit-logger";
 
 export async function createBranchInternal(data: { tenantId: string; name: string; address: string; userId?: string }) {
@@ -12,10 +12,10 @@ export async function createBranchInternal(data: { tenantId: string; name: strin
     if (!tenantRec) throw new Error("Tenant not found.");
 
     // The user requested: "Define whether active or all branches count toward the limit."
-    // We count ALL non-deleted branches (which matches the original logic activeBranches[0].count).
+    // Count only active branches toward the limit
     const activeBranches = await tx.select({ count: sql<number>`count(*)::int` })
       .from(branches)
-      .where(eq(branches.tenantId, data.tenantId));
+      .where(and(eq(branches.tenantId, data.tenantId), eq(branches.status, "Active")));
       
     if (activeBranches[0].count >= tenantRec.outletLimit) {
       throw new Error(`Branch limit reached (${activeBranches[0].count} of ${tenantRec.outletLimit}). Ask the platform admin to increase your outlet limit.`);

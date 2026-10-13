@@ -147,7 +147,7 @@ export const getCatalogProductsFn = createServerFn({ method: "GET" })
       const tenantId = await getHeadOfficeTenant();
 
       const dbBranches = await db.query.branches.findMany({
-        where: eq(branches.tenantId, tenantId),
+        where: and(eq(branches.tenantId, tenantId), eq(branches.status, "Active")),
       });
 
       const page = Math.max(1, Number(data?.page) || 1);
@@ -417,7 +417,7 @@ export const getHeadOfficeDataFn = createServerFn({ method: "GET" })
       }),
       settingsPromise,
       db.query.branches.findMany({
-        where: eq(branches.tenantId, tenantId),
+        where: and(eq(branches.tenantId, tenantId), eq(branches.status, "Active")),
       }),
       productsPromise,
       db.query.batches.findMany({
@@ -1163,7 +1163,7 @@ export const createProductFn = createServerFn({ method: "POST" })
         const tenantBranches = await tx
           .select({ id: branches.id })
           .from(branches)
-          .where(eq(branches.tenantId, tenantId));
+          .where(and(eq(branches.tenantId, tenantId), eq(branches.status, "Active")));
         if (tenantBranches.length > 0) {
           const stockInserts = tenantBranches.map((b) => ({
             productId: newProduct.id,
@@ -1852,7 +1852,7 @@ export const createStaffFn = createServerFn({ method: "POST" })
     const [branch] = await db
       .select()
       .from(branches)
-      .where(and(eq(branches.id, data.branchId), eq(branches.tenantId, tenantId)));
+      .where(and(eq(branches.id, data.branchId), eq(branches.tenantId, tenantId), eq(branches.status, "Active")));
     if (!branch) throw new Error("Invalid or unauthorized branch.");
 
     const [existingUser] = await db
@@ -1940,7 +1940,7 @@ export const updateStaffFn = createServerFn({ method: "POST" })
     const [branch] = await db
       .select()
       .from(branches)
-      .where(and(eq(branches.id, data.branchId), eq(branches.tenantId, tenantId)));
+      .where(and(eq(branches.id, data.branchId), eq(branches.tenantId, tenantId), eq(branches.status, "Active")));
     if (!branch) throw new Error("Invalid or unauthorized branch.");
 
     if (data.email !== existingUser.email) {
@@ -2917,7 +2917,7 @@ export const getMyTenantBillingFn = createServerFn({ method: "GET" })
       const branchRows = await db
         .select({ id: branches.id })
         .from(branches)
-        .where(eq(branches.tenantId, tenantId));
+        .where(and(eq(branches.tenantId, tenantId), eq(branches.status, "Active")));
 
       const branchCount = branchRows.length;
 
@@ -3004,8 +3004,8 @@ export const getExistingProductIdentifiersFn = createServerFn({ method: "POST" }
       .from(branches)
       .where(
         requestedBranchIds.length > 0
-          ? and(eq(branches.tenantId, tenantId), inArray(branches.id, requestedBranchIds))
-          : eq(branches.tenantId, tenantId),
+          ? and(eq(branches.tenantId, tenantId), inArray(branches.id, requestedBranchIds), eq(branches.status, "Active"))
+          : and(eq(branches.tenantId, tenantId), eq(branches.status, "Active")),
       );
 
     const validBranchIds = tenantBranches.map((b) => b.id);
@@ -3237,6 +3237,7 @@ export const bulkImportProductsFn = createServerFn({ method: "POST" })
         and(
           eq(branches.tenantId, tenantId),
           inArray(branches.id, data.branchIds),
+          eq(branches.status, "Active"),
         ),
       );
 
