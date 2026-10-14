@@ -345,7 +345,11 @@ export async function getSyncSummaryFromDb(
   const storeBranchId = (conn.storeBranchId || "").trim();
   const fallbackStoreId = (conn.storeVendorId || conn.vendorId || "vendor").trim();
   const storeId = storeBranchId || fallbackStoreId;
-  const prefix = (conn.filenamePrefix || "assortment").trim();
+  const prefix =
+    (conn.filenamePrefix || "")
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9_-]/g, "") || "assortment";
   const fileName = `${prefix}_${storeId}.csv`;
   const remotePath = `${conn.remoteDirectory || "/Assortment"}/${fileName}`;
   const aggregatorName = conn.aggregatorName || "talabat";
@@ -670,7 +674,11 @@ export async function triggerAggregatorSyncFromDb(
   const storeBranchId = (conn.store_branch_id || "").trim();
   const fallbackStoreId = (conn.store_vendor_id || conn.vendor_id || "vendor").trim();
   const storeId = storeBranchId || fallbackStoreId;
-  const prefix = (conn.filename_prefix || "assortment").trim();
+  const prefix =
+    (conn.filename_prefix || "")
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9_-]/g, "") || "assortment";
   const defaultFileName = `${prefix}_${storeId}.csv`;
 
   if (!conn.is_active) {

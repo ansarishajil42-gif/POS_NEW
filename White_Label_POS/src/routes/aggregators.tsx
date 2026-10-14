@@ -381,8 +381,13 @@ function Aggregators() {
 
   async function handleSaveConnection(e: React.FormEvent) {
     e.preventDefault();
+    const sanitizedPrefix = (formConn.filenamePrefix || "").toLowerCase().trim().replace(/[^a-z0-9_-]/g, "");
+    if (!sanitizedPrefix) {
+      toast.error("Filename Prefix is required (lowercase, a-z, 0-9, _, - only).");
+      return;
+    }
     try {
-      const res = await saveAggregatorConnectionServerFn({ data: formConn });
+      const res = await saveAggregatorConnectionServerFn({ data: { ...formConn, filenamePrefix: sanitizedPrefix } });
       if (res?.success) {
         toast.success("Connection saved successfully.");
         setShowConfigModal(false);
@@ -1103,7 +1108,13 @@ function Aggregators() {
                   value={formConn.filenamePrefix || ""}
                   onChange={(e) => setFormConn({ ...formConn, filenamePrefix: e.target.value })}
                   placeholder="e.g. danah, khaldiya, nahyan"
+                  required
                 />
+                <p className="text-xs text-muted-foreground">
+                  File name: {(formConn.filenamePrefix || "").toLowerCase().trim().replace(/[^a-z0-9_-]/g, "") && (formConn.storeBranchId || "").trim()
+                    ? `${(formConn.filenamePrefix || "").toLowerCase().trim().replace(/[^a-z0-9_-]/g, "")}_${(formConn.storeBranchId || "").trim()}.csv`
+                    : "—  (fill Filename Prefix and Talabat Branch ID)"}
+                </p>
               </div>
 
               <div className="space-y-1.5">

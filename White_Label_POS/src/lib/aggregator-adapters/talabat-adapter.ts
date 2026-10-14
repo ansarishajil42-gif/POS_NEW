@@ -12,115 +12,53 @@ export const talabatAdapter: AggregatorAdapter = {
   aggregatorName: "talabat",
 
   generateFile(products: ProductData[], connection: ConnectionConfigAdapter): GeneratedFileResult {
-    const now = new Date();
-    const future = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+    // Deduplication & field mapping: Keep bottom row for duplicate items
+    const uniqueItemsMap = new Map<string, { sku: string; price: string; active: string }>();
 
-    const priceFormat = connection.priceFormat || "price_discounted";
+    for (const p of products) {
+      // Rule 2: sku = product barcode (keep leading zeros). If barcode empty -> use product.sku. If both empty -> SKIP.
+      const barcode = p.barcode != null ? String(p.barcode).trim() : "";
+      const sku = p.sku != null ? String(p.sku).trim() : "";
+      const resolvedSku = barcode || sku;
 
-    let firstPriceCol = "price";
-    let promoPriceCol = "discounted_price";
+      if (!resolvedSku) {
+        continue;
+      }
 
-    if (priceFormat === "original_discounted") {
-      firstPriceCol = "original_price";
-      promoPriceCol = "discounted_price";
-    } else if (priceFormat === "original_price") {
-      firstPriceCol = "original_price";
-      promoPriceCol = "price";
+      // Rule 3: price = the Talabat price, max 2 decimals
+      const rawPrice = parseFloat(String(p.price ?? "0"));
+      const priceNum = isNaN(rawPrice) ? 0 : Number(rawPrice.toFixed(2));
+      const formattedPrice = String(priceNum);
+
+      // Rule 4: active = 1 if stock > 0, else 0
+      const activeVal = p.active ? "1" : "0";
+
+      // Rule 5: No duplicate sku rows
+      uniqueItemsMap.set(resolvedSku, {
+        sku: resolvedSku,
+        price: formattedPrice,
+        active: activeVal,
+      });
     }
 
-    const headers = [
-      "barcode",
-      "sku",
-      firstPriceCol,
-      "active",
-      "reason",
-      "start_date",
-      "end_date",
-      "campaign_status",
-      promoPriceCol,
-      "max_no_of_orders",
-    ];
-
-    // Deduplication: Keep bottom row for duplicate items
-    const uniqueItemsMap = new Map<string, ProductData>();
-    products.forEach((item, idx) => {
-      const key = (item.barcode && item.barcode.trim()) || (item.sku && item.sku.trim()) || item.id || `item_${idx}`;
-      uniqueItemsMap.set(key, item);
-    });
-
-    const finalItems = Array.from(uniqueItemsMap.values());
-
-    let activePromoCount = 0;
-    const rows: string[] = [headers.join(",")];
-
-    finalItems.forEach((p, idx) => {
-      // 1. Populate EITHER barcode OR sku (never both, never neither)
-      let barcode = "";
-      let sku = "";
-
-      if (p.barcode && p.barcode.trim()) {
-        barcode = p.barcode.trim();
-        sku = "";
-      } else if (p.sku && p.sku.trim()) {
-        barcode = "";
-        sku = p.sku.trim();
-      } else {
-        barcode = `51513131500${idx + 1}`;
-        sku = "";
-      }
-
-      // 2. Assortment mandatory fields
-      const priceVal = parseFloat(p.price || "15.00").toFixed(2);
-      const activeVal = p.active !== false ? "1" : "0";
-
-      // 3. Promotion fields block rule
-      let reason = "";
-      let startDt = "";
-      let endDt = "";
-      let campaignStatus = "";
-      let promoPrice = "";
-      let maxOrders = "";
-
-      if (p.promotion) {
-        activePromoCount++;
-        reason = "competitiveness";
-        startDt = formatTimestamp(p.promotion.startDate || now);
-        endDt = formatTimestamp(p.promotion.endDate || future);
-        campaignStatus = "1";
-        promoPrice = parseFloat(p.promotion.discountedPrice || "0.00").toFixed(2);
-        maxOrders = p.promotion.maxNoOfOrders || "500";
-      }
-
-      const row = [
-        barcode,
-        sku,
-        priceVal,
-        activeVal,
-        reason,
-        startDt,
-        endDt,
-        campaignStatus,
-        promoPrice,
-        maxOrders,
-      ].map((v) => (v.includes(",") ? `"${v}"` : v));
-
-      rows.push(row.join(","));
-    });
-
-    let warning: string | undefined = undefined;
-    if (activePromoCount > 20000) {
-      warning = `Active promotions count (${activePromoCount}) exceeds the 20,000 SKU limit per campaign file.`;
+    // Rule 1 & 5: Exactly 3 columns in this order: sku, price, active. Header line exactly sku,price,active
+    const rows: string[] = ["sku,price,active"];
+    for (const item of uniqueItemsMap.values()) {
+      rows.push(`${item.sku},${item.price},${item.active}`);
     }
 
     const cleanVendorId = (connection.storeVendorId || connection.vendorId || "vendor_id").trim();
-    const prefix = (connection.filenamePrefix || "assortment").trim();
+    const prefix =
+      (connection.filenamePrefix || "")
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9_-]/g, "") || "assortment";
     const fileName = `${prefix}_${cleanVendorId}.csv`;
 
     return {
       fileName,
       fileContent: rows.join("\n"),
-      recordCount: finalItems.length,
-      warning,
+      recordCount: uniqueItemsMap.size,
     };
   },
 };
